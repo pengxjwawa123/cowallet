@@ -1,0 +1,126 @@
+name: Flutter CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/flutter-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'mobile/**'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+
+      - name: Get dependencies
+        working-directory: ./mobile
+        run: flutter pub get
+
+      - name: Run analyzer
+        working-directory: ./mobile
+        run: flutter analyze
+
+      - name: Check formatting
+        working-directory: ./mobile
+        run: dart format --set-exit-if-changed .
+
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+
+      - name: Get dependencies
+        working-directory: ./mobile
+        run: flutter pub get
+
+      - name: Run tests
+        working-directory: ./mobile
+        run: flutter test
+
+  build-android:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+
+      - name: Get dependencies
+        working-directory: ./mobile
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: ./mobile
+        run: flutter build apk --split-per-abi
+        continue-on-error: true
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v3
+        if: success()
+        with:
+          name: android-apk
+          path: mobile/build/app/outputs/flutter-apk/
+
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+
+      - name: Get dependencies
+        working-directory: ./mobile
+        run: flutter pub get
+
+      - name: Build iOS
+        working-directory: ./mobile
+        run: flutter build ios --no-codesign
+        continue-on-error: true
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v3
+        if: success()
+        with:
+          name: ios-build
+          path: mobile/build/ios/

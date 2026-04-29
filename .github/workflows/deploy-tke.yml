@@ -1,0 +1,107 @@
+name: Deploy to TKE
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+env:
+  TKE_CLUSTER_ID: cls-c63h33ne
+  TKE_REGION: ap-singapore
+  DEPLOYMENT_NAME: cowallet
+  REGISTRY: sgccr.ccs.tencentyun.com
+  IMAGE_NAME: cowallet
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure Tencent Cloud credentials
+        run: |
+          mkdir -p ~/.tencent
+          cat > ~/.tencent/config << EOF
+          TENCENTCLOUD_SECRET_ID=${{ secrets.TENCENTCLOUD_SECRET_ID }}
+          TENCENTCLOUD_SECRET_KEY=${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+          TENCENTCLOUD_REGION=ap-singapore
+          EOF
+          chmod 600 ~/.tencent/config
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Get TKE kubeconfig
+        run: |
+          # 使用腾讯云 SDK 获取 kubeconfig
+          # 实际命令取决于你的腾讯云 SDK 安装
+          echo "Retrieving kubeconfig for cluster: ${{ env.TKE_CLUSTER_ID }}"
+          
+          # 示例（需要根据实际情况修改）
+          # tke-cli get-kubeconfig --cluster-id=${{ env.TKE_CLUSTER_ID }} > ~/.kube/config
+          
+          # 临时使用环境变量方式（如果 TKE 提供）
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Verify cluster connection
+        run: kubectl cluster-info
+
+      - name: Generate image tag
+        id: image
+        run: |
+          COMMIT_SHA=${{ github.sha }}
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            TAG=${SHORT_SHA}
+          fi
+          
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Update deployment
+        run: |
+          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} \
+            api-server=${{ steps.image.outputs.image }} \
+            mpc-relay=${{ steps.image.outputs.image }} \
+            indexer=${{ steps.image.outputs.image }} \
+            worker=${{ steps.image.outputs.image }} \
+            -n cowallet \
+            --record
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} \
+            -n cowallet \
+            --timeout=5m
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Deployment successful!"
+          kubectl get pods -n cowallet
+          kubectl describe deployment ${{ env.DEPLOYMENT_NAME }} -n cowallet
+
+      - name: Create Slack notification
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Deployment to TKE: ${{ job.status }}
+            Cluster: ${{ env.TKE_CLUSTER_ID }}
+            Image: ${{ steps.image.outputs.image }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        continue-on-error: true
