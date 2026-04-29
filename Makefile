@@ -1,15 +1,27 @@
-.PHONY: help docker-up docker-down docker-logs docker-clean docker-build
+.PHONY: help docker-up docker-down docker-logs docker-clean docker-build \
+	local-init local-start local-migrate local-build local-stop local-status
 
 help:
-	@echo "cowallet Docker 命令速览"
+	@echo "cowallet 部署命令速览"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "启动:       make docker-up       # 启动所有服务"
-	@echo "停止:       make docker-down     # 停止所有服务"
-	@echo "日志:       make docker-logs     # 查看实时日志"
-	@echo "清理:       make docker-clean    # 停止并删除所有数据"
-	@echo "重建:       make docker-rebuild  # 重新构建镜像"
-	@echo "检查:       make docker-ps       # 显示服务状态"
+	@echo "【本地直接部署（推荐）】"
+	@echo "  初始化:    make local-init       # 一次性初始化环境"
+	@echo "  启动:      make local-start      # 启动所有服务"
+	@echo "  迁移:      make local-migrate    # 运行数据库迁移"
+	@echo "  构建:      make local-build      # 编译 Rust 项目"
+	@echo "  停止:      make local-stop       # 停止所有服务"
+	@echo "  状态:      make local-status     # 显示服务状态"
+	@echo ""
+	@echo "【Docker 部署】"
+	@echo "  启动:      make docker-up       # 启动所有服务"
+	@echo "  停止:      make docker-down     # 停止所有服务"
+	@echo "  日志:      make docker-logs     # 查看实时日志"
+	@echo "  清理:      make docker-clean    # 停止并删除所有数据"
+	@echo "  重建:      make docker-rebuild  # 重新构建镜像"
+	@echo "  检查:      make docker-ps       # 显示服务状态"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "📖 详见: DEPLOY.md（本地部署详细指南）"
 
 docker-up:
 	@echo "🚀 启动 cowallet 服务..."
@@ -69,14 +81,93 @@ lint:
 docker-fresh: docker-clean docker-build docker-up
 	@echo "✨ 全新部署完成！"
 
-# 本地开发
-dev-up:
-	@echo "🚀 启动本地开发环境（不含 Docker）..."
-	@echo "请手动启动："
-	@echo "  brew services start postgresql@16"
-	@echo "  nats-server -js"
-	@echo "  redis-server"
-	@echo "然后运行：make dev-run"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 本地直接部署命令
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 设置环境变量
+export DATABASE_URL = postgres://postgres@localhost:5432/cowallet
+export REDIS_URL = redis://localhost:6379
+export NATS_URL = nats://localhost:4222
+export RPC_URL = https://sepolia.base.org
+export RPC_WS_URL = wss://sepolia.base.org
+export RUST_LOG = info,api_server=debug
+
+local-init:
+	@echo "🔧 初始化本地部署环境..."
+	@echo "📋 检查前置条件..."
+	@command -v postgres >/dev/null 2>&1 || (echo "❌ 需要安装 PostgreSQL: brew install postgresql@16" && exit 1)
+	@command -v redis-server >/dev/null 2>&1 || (echo "❌ 需要安装 Redis: brew install redis" && exit 1)
+	@command -v nats-server >/dev/null 2>&1 || (echo "❌ 需要安装 NATS: brew install nats-server" && exit 1)
+	@command -v cargo >/dev/null 2>&1 || (echo "❌ 需要安装 Rust: https://rustup.rs" && exit 1)
+	@command -v sqlx >/dev/null 2>&1 || (echo "⏳ 安装 sqlx-cli..." && cargo install sqlx-cli --no-default-features --features postgres)
+	@echo "✅ 所有前置条件已满足"
+	@echo ""
+	@echo "🚀 启动基础服务..."
+	@brew services start postgresql@16 > /dev/null 2>&1 || true
+	@brew services start redis > /dev/null 2>&1 || true
+	@sleep 2
+	@echo "✅ PostgreSQL 已启动"
+	@echo "✅ Redis 已启动"
+	@echo ""
+	@echo "📦 初始化数据库..."
+	@createdb -U postgres cowallet 2>/dev/null || echo "⚠️  数据库已存在"
+	@echo ""
+	@echo "📝 运行数据库迁移..."
+	@sqlx migrate run --source backend/migrations
+	@echo "✅ 数据库迁移完成"
+	@echo ""
+	@echo "📌 下一步:"
+	@echo "   终端 1: nats-server -js"
+	@echo "   终端 2: make local-start"
+
+local-start:
+	@echo "🎯 启动 cowallet 服务..."
+	@echo "🔌 连接信息："
+	@echo "   API:      http://localhost:3000"
+	@echo "   Database: $(DATABASE_URL)"
+	@echo "   Redis:    $(REDIS_URL)"
+	@echo "   NATS:     $(NATS_URL)"
+	@echo ""
+	@cargo run --release --bin api-server
+
+local-migrate:
+	@echo "📝 运行数据库迁移..."
+	@sqlx migrate run --source backend/migrations
+	@echo "✅ 迁移完成"
+
+local-build:
+	@echo "🔨 编译 Rust 项目..."
+	@cargo build --release
+	@echo "✅ 编译完成"
+
+local-stop:
+	@echo "⛔ 停止所有服务..."
+	@pkill -f "api-server" || true
+	@pkill -f "mpc-relay" || true
+	@pkill -f "indexer" || true
+	@pkill -f "worker" || true
+	@echo "✅ 应用已停止"
+	@echo ""
+	@echo "💡 系统服务仍在运行，可使用以下命令停止:"
+	@echo "   brew services stop postgresql@16"
+	@echo "   brew services stop redis"
+	@echo "   pkill -f nats-server"
+
+local-status:
+	@echo "📊 服务状态检查..."
+	@echo ""
+	@echo "🔍 PostgreSQL:"
+	@psql -U postgres -c "SELECT version();" 2>/dev/null || echo "❌ 未连接"
+	@echo ""
+	@echo "🔍 Redis:"
+	@redis-cli ping 2>/dev/null || echo "❌ 未连接"
+	@echo ""
+	@echo "🔍 NATS:"
+	@(pgrep -f "nats-server" >/dev/null && echo "✅ 运行中" || echo "❌ 未运行")
+	@echo ""
+	@echo "🔍 API 服务:"
+	@(curl -s http://localhost:3000/health | head -c 50 2>/dev/null && echo "" || echo "❌ 未连接")
 
 dev-run:
 	@echo "▶️  启动开发服务..."
