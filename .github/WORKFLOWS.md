@@ -28,12 +28,6 @@ cowallet 项目包含完整的 GitHub Actions CI/CD 流程：
 | `TENCENTCLOUD_SECRET_KEY` | 腾讯云 API 密钥 | CAM 控制台 → 访问密钥 → API 密钥 |
 | `KUBECONFIG` | Kubernetes 配置文件（Base64编码） | TKE 控制台 → 连接信息 |
 
-### 可选：Slack 通知
-
-| Secret 名称 | 描述 | 获取方式 |
-|------------|------|--------|
-| `SLACK_WEBHOOK` | Slack Incoming Webhook | [Slack API](https://api.slack.com/messaging/webhooks) |
-
 ## 工作流详细说明
 
 ### 1. docker-build.yml (Docker 构建)
@@ -167,7 +161,6 @@ TCR_PASSWORD=xxx
 TENCENTCLOUD_SECRET_ID=xxx
 TENCENTCLOUD_SECRET_KEY=xxx
 KUBECONFIG=xxx (base64编码的内容)
-SLACK_WEBHOOK=https://hooks.slack.com/services/xxx (可选)
 ```
 
 ### 第三步：验证工作流
@@ -256,13 +249,6 @@ if: contains(github.event.head_commit.message, '[full-test]')
 访问 `Settings → Actions → General`，配置：
 - 工作流超时 (默认 360 分钟)
 - 日志保留策略 (默认 90 天)
-
-### Slack 集成
-
-所有部署操作会发送 Slack 通知，包括：
-- ✅ 部署成功
-- ❌ 部署失败
-- 镜像标签和集群信息
 
 ## 安全最佳实践
 
