@@ -1,0 +1,54 @@
+.PHONY: deps up migrate dev run-api run-relay run-indexer run-worker logs down
+
+# 安装依赖
+deps:
+	cargo install sqlx-cli --no-default-features --features postgres
+
+# 启动基础服务
+up:
+	docker compose up -d
+	@sleep 3
+	@echo "✅ Services started. Waiting for PostgreSQL..."
+	@docker compose exec -T postgres pg_isready -U postgres || sleep 5
+
+# 数据库迁移
+migrate:
+	export DATABASE_URL=postgres://postgres:postgres@localhost:5432/cowallet && \
+	sqlx migrate run --source backend/migrations
+
+# 开发模式：启动所有服务并运行 API
+dev: up migrate
+	@echo "🚀 Starting development environment..."
+	cargo run --bin api-server
+
+# 运行 API 服务
+run-api:
+	cargo run --bin api-server
+
+# 运行 MPC 中继
+run-relay:
+	cargo run --bin mpc-relay
+
+# 运行索引器
+run-indexer:
+	cargo run --bin indexer
+
+# 运行工作线程
+run-worker:
+	cargo run --bin worker
+
+# 查看日志
+logs:
+	docker compose logs -f
+
+# 停止所有服务
+down:
+	docker compose down
+
+# 重新启动
+restart: down up migrate
+
+# 清理（包括数据库）
+clean: down
+	docker volume prune -f
+	cargo clean
