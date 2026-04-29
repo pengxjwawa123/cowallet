@@ -1,0 +1,30 @@
+[package]
+name = "api-server"
+description = "Axum HTTP API — auth, MPC coordination, transactions, policy, AI proxy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mpc-core = { path = "../../crates/mpc-core" }
+chain-evm = { path = "../../crates/chain-evm" }
+policy-engine = { path = "../../crates/policy-engine" }
+ai-bridge = { path = "../../crates/ai-bridge" }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+sqlx = { workspace = true }
+redis = { workspace = true }
+async-nats = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+hex = { workspace = true }
+alloy-primitives = { workspace = true }

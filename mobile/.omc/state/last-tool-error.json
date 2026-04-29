@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"dart analyze lib/services/\",\"timeout\":60000,\"description\":\"Run dart analyze on the new services directory\"}",
+  "error": "Exit code 3\nAnalyzing services...\n\n  error - locator.dart:22:33 - 1 positional argument expected by 'JsonRpcChainService.new', but 0 found. Try adding the missing argument. - not_enough_positional_arguments\n  error - locator.dart:25:7 - 4 positional arguments expected by 'DartTxService.new', but 0 found. Try adding the missing arguments. - not_enough_positional_arguments\n  error - locator.dart:25:7 - The named parameter 'wallet' isn't defined. Try correcting the name to an existing named paramet...",
+  "timestamp": "2026-04-28T10:58:15.244Z",
+  "retry_count": 1
+}

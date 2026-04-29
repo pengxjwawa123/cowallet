@@ -1,0 +1,3099 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no"/>
+<meta name="theme-color" content="#faf9f5"/>
+<title>cowallet · the wallet that reads you back</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,ital,wght@9..144,0,400;9..144,0,500;9..144,0,600;9..144,1,400;9..144,1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* Paper / ink palette — Claude Design */
+    --bg-paper:#faf9f5; --bg-subtle:#f1ead9; --bg-card:#ffffff; --bg-hover:#efe7d3;
+    --ink-1:#141008; --ink-2:#4a3f32; --ink-3:#8a7a6c; --ink-4:#b8a898;
+    --line:#e7dfcd; --line-strong:#d5c9b0;
+
+    /* Accent: Claude orange — dominant color */
+    --accent:#D97757; --accent-hover:#c96744; --accent-soft:#f7e3d8; --accent-soft-2:#fbefe4;
+
+    /* Signals */
+    --danger:#c0392b; --danger-soft:#f7dcd8;
+    --success:#5a7a4e; --success-soft:#e1ecd9;
+    --warn:#b8832b; --warn-soft:#f4e8cd;
+    --gold:#a88a4a; --gold-soft:#f4ecd5;
+    --info:#3d6b8c; --info-soft:#dce8f0;
+
+    /* Type — serif-led */
+    --serif:"Noto Serif SC","Fraunces",Georgia,serif;
+    --serif-en:"Fraunces","Noto Serif SC",Georgia,serif;
+    --sans:"Inter","Noto Serif SC",-apple-system,BlinkMacSystemFont,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+
+  /* Reset */
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    height:100%;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 0%, #ede4ce 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 50% 100%, #ede4ce 0%, transparent 60%),
+      #e8e1cf;
+    color:var(--ink-1);font-family:var(--sans);font-size:15px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  }
+  body{display:flex;flex-direction:column;align-items:center;padding:28px 12px 60px;min-height:100vh;overflow-x:hidden}
+  button{font:inherit;cursor:pointer;background:none;border:0;color:inherit}
+  input,textarea{font:inherit}
+  ::selection{background:var(--accent-soft);color:var(--ink-1)}
+
+  /* Bilingual rendering — CSS ::before reads the attribute matching current body lang */
+  body.lang-zh [data-zh]::before{content:attr(data-zh)}
+  body.lang-en [data-en]::before{content:attr(data-en)}
+
+  /* =================================================================
+     TOPBAR — outside the phone (prototype meta)
+     ================================================================= */
+  .topbar{
+    width:100%;max-width:540px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 8px 18px;font-size:12px;color:var(--ink-3);font-family:var(--mono);flex-shrink:0
+  }
+  .topbar .brand{display:flex;align-items:center;gap:8px;font-family:var(--serif-en);font-weight:600;font-size:15px;color:var(--ink-2);letter-spacing:-0.01em}
+  .topbar .brand .pulse{
+    width:8px;height:8px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 0 3px var(--accent-soft);
+    animation:pulse-dot 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse-dot{0%,100%{box-shadow:0 0 0 3px var(--accent-soft)}50%{box-shadow:0 0 0 6px var(--accent-soft)}}
+
+  .lang-toggle{display:flex;border:1px solid var(--line-strong);border-radius:999px;padding:2px;background:var(--bg-paper)}
+  .lang-toggle button{padding:4px 11px;font-size:11px;font-family:var(--mono);color:var(--ink-3);border-radius:999px;cursor:pointer;letter-spacing:0.04em}
+  .lang-toggle button.on{background:var(--ink-1);color:var(--bg-paper)}
+
+  /* =================================================================
+     PHONE FRAME
+     ================================================================= */
+  .phone{
+    width:100%;max-width:412px;aspect-ratio:9/19.5;
+    background:var(--bg-paper);
+    border-radius:48px;border:11px solid #1a1612;
+    position:relative;overflow:hidden;
+    box-shadow:
+      0 50px 100px -30px rgba(20,16,8,.45),
+      0 20px 40px -15px rgba(20,16,8,.25),
+      inset 0 0 0 1px rgba(255,255,255,.05);
+  }
+  .phone::before{
+    content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+    width:110px;height:28px;background:#1a1612;border-radius:0 0 18px 18px;z-index:90;
+  }
+  .phone::after{
+    content:"";position:absolute;left:50%;bottom:6px;transform:translateX(-50%);
+    width:110px;height:4px;background:rgba(20,16,8,.18);border-radius:2px;z-index:60;
+  }
+
+  .screen{position:absolute;inset:0;overflow:hidden;display:flex;flex-direction:column;background:var(--bg-paper)}
+
+  .status-bar{
+    height:46px;flex-shrink:0;display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 26px 5px;font-size:14px;font-weight:600;color:var(--ink-1);
+    font-feature-settings:"tnum";
+  }
+  .status-bar .right{display:flex;align-items:center;gap:6px}
+  .status-bar svg{width:14px;height:14px}
+
+  /* App header per view */
+  .app-header{
+    padding:12px 20px 10px;display:flex;align-items:center;justify-content:space-between;
+    flex-shrink:0;background:var(--bg-paper);position:relative;z-index:5
+  }
+  .app-header .title{display:flex;align-items:center;gap:10px;font-family:var(--serif-en);font-weight:600;font-size:18px;letter-spacing:-0.01em;min-width:0}
+  .app-header .title .orb-mini{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffbfa6 0%,#D97757 55%,#9a4a31 100%);flex-shrink:0;box-shadow:0 2px 6px rgba(217,119,87,.3)}
+  .app-header .actions{display:flex;align-items:center;gap:4px}
+  .iconbtn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);cursor:pointer;transition:background .12s}
+  .iconbtn:hover,.iconbtn:active{background:var(--bg-subtle)}
+  .iconbtn svg{width:18px;height:18px;stroke-width:1.7}
+
+  .body{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+  .body::-webkit-scrollbar{display:none}
+  .body-inner{padding:6px 20px 140px}
+
+  /* =================================================================
+     BOTTOM NAV — with ask pill in the center
+     ================================================================= */
+  .tabbar{
+    position:absolute;left:0;right:0;bottom:0;height:88px;
+    background:linear-gradient(to top,rgba(250,249,245,1) 60%,rgba(250,249,245,0));
+    display:flex;align-items:flex-start;justify-content:space-around;
+    padding:14px 0 22px;z-index:30;pointer-events:none;
+  }
+  .tabbar .item{
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    color:var(--ink-3);font-size:10px;cursor:pointer;padding:6px 12px;border-radius:10px;
+    font-weight:500;pointer-events:auto;transition:color .12s
+  }
+  .tabbar .item.active{color:var(--accent)}
+  .tabbar .item svg{width:22px;height:22px;stroke-width:1.6}
+  .tabbar .item-label{letter-spacing:0.02em;margin-top:1px}
+
+  .tabbar .ask-pill{
+    position:absolute;left:50%;top:-2px;transform:translateX(-50%);
+    width:56px;height:56px;border-radius:50%;
+    background:var(--ink-1);color:var(--bg-paper);
+    display:grid;place-items:center;cursor:pointer;pointer-events:auto;
+    box-shadow:0 6px 20px -2px rgba(20,16,8,.45),inset 0 1px 0 rgba(255,255,255,.08);
+    transition:transform .12s;
+  }
+  .tabbar .ask-pill:active{transform:translateX(-50%) scale(0.94)}
+  .tabbar .ask-orb{
+    width:26px;height:26px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#ffbfa6 0%,#D97757 55%,#9a4a31 100%);
+    animation:orb-idle 3.8s ease-in-out infinite;
+  }
+  @keyframes orb-idle{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+  .tabbar .ask-label{
+    position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);
+    font-family:var(--mono);font-size:9px;letter-spacing:0.1em;color:var(--accent);
+    text-transform:uppercase;font-weight:600;pointer-events:none;white-space:nowrap
+  }
+
+  /* =================================================================
+     COMPOSER (chat input)
+     ================================================================= */
+  .composer{
+    position:absolute;left:12px;right:12px;bottom:94px;z-index:25;
+    background:var(--bg-card);
+    border:1px solid var(--line-strong);border-radius:24px;
+    padding:8px 8px 8px 14px;
+    box-shadow:0 8px 24px -8px rgba(20,16,8,.12);
+  }
+  .composer-row{display:flex;align-items:center;gap:8px}
+  .composer input{flex:1;border:0;outline:0;background:transparent;font-size:14.5px;color:var(--ink-1);min-width:0;padding:10px 2px}
+  .composer input::placeholder{color:var(--ink-3)}
+  .composer-tools{display:flex;align-items:center;gap:2px;flex-shrink:0}
+  .ctool{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;color:var(--ink-2);cursor:pointer;transition:background .12s}
+  .ctool:hover,.ctool:active{background:var(--bg-subtle)}
+  .ctool svg{width:16px;height:16px;stroke-width:1.8}
+  .send-btn{width:36px;height:36px;border-radius:50%;background:var(--ink-1);color:var(--bg-paper);display:grid;place-items:center;cursor:pointer;flex-shrink:0;transition:transform .1s}
+  .send-btn:active{transform:scale(0.94)}
+  .send-btn svg{width:15px;height:15px}
+
+  /* Attachments preview above composer */
+  .attach-row{display:flex;gap:6px;padding:0 4px 8px;flex-wrap:wrap}
+  .attach-chip{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:4px 10px 4px 4px;background:var(--bg-subtle);border-radius:999px;font-size:12px;
+  }
+  .attach-chip .thumb{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);display:grid;place-items:center;color:var(--accent-hover);flex-shrink:0;font-size:10px;font-weight:600}
+  .attach-chip .x{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);font-size:10px}
+  .attach-chip .x:hover{background:var(--line)}
+
+  /* =================================================================
+     CARDS / COMPONENTS
+     ================================================================= */
+  .card{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;padding:14px}
+  .card.subtle{background:var(--bg-subtle);border:0}
+  .card.accent{background:var(--accent-soft);border:1px solid #e9c7b4}
+  .card.warn{background:var(--warn-soft);border:1px solid #e4d2a8}
+  .card.danger{background:var(--danger-soft);border:1px solid #ebc3bd}
+  .card.success{background:var(--success-soft);border:1px solid #c9d7bc}
+  .card.gold{background:var(--gold-soft);border:1px solid #ddd0a0}
+  .card.info{background:var(--info-soft);border:1px solid #c2d4e2}
+  .card.dark{background:var(--ink-1);color:var(--bg-paper);border:0}
+
+  .card-label{font-family:var(--mono);font-size:10px;letter-spacing:0.12em;color:var(--ink-3);text-transform:uppercase;margin-bottom:8px}
+  .section-label{font-family:var(--mono);font-size:10px;letter-spacing:0.18em;color:var(--ink-3);text-transform:uppercase;margin:22px 0 10px;display:flex;align-items:center;gap:8px}
+  .section-label::before{content:"—";color:var(--accent)}
+  .section-label::after{content:"";flex:1;height:1px;background:var(--line);margin-left:6px}
+
+  /* Chips */
+  .chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--line-strong);border-radius:999px;font-size:11px;color:var(--ink-2);background:var(--bg-card);font-family:var(--mono);letter-spacing:0.04em}
+  .chip.green{background:var(--success-soft);border-color:#c9d7bc;color:var(--success)}
+  .chip.red{background:var(--danger-soft);border-color:#ebc3bd;color:var(--danger)}
+  .chip.amber{background:var(--warn-soft);border-color:#e4d2a8;color:var(--warn)}
+  .chip.accent{background:var(--accent-soft);border-color:#e9c7b4;color:var(--accent-hover)}
+  .chip.gold{background:var(--gold-soft);border-color:#ddd0a0;color:var(--gold)}
+  .chip.info{background:var(--info-soft);border-color:#c2d4e2;color:var(--info)}
+  .chip .d{width:5px;height:5px;border-radius:50%}
+  .chip.green .d{background:var(--success)}
+  .chip.amber .d{background:var(--warn)}
+  .chip.red .d{background:var(--danger)}
+  .chip.accent .d{background:var(--accent);animation:pulse-dot 2s infinite}
+
+  /* Buttons */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:12px 18px;border-radius:14px;font-size:14.5px;font-weight:500;border:1px solid transparent;cursor:pointer;transition:transform .08s,background .12s;font-family:inherit}
+  .btn:active{transform:scale(0.98)}
+  .btn-primary{background:var(--ink-1);color:var(--bg-paper)}
+  .btn-accent{background:var(--accent);color:#fff;box-shadow:0 4px 14px -2px rgba(217,119,87,.35)}
+  .btn-outline{background:transparent;border-color:var(--line-strong);color:var(--ink-1)}
+  .btn-ghost{color:var(--ink-2)}
+  .btn-danger{background:var(--danger);color:#fff}
+  .btn-full{width:100%}
+  .btn-lg{padding:15px 20px;font-size:15px;border-radius:999px}
+  .btn-pill{border-radius:999px}
+
+  /* View system — only one active */
+  .view{display:none;animation:view-in .25s ease-out}
+  .view.active{display:block}
+  @keyframes view-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+  /* utility */
+  .row{display:flex;align-items:center;gap:10px}
+  .row.between{justify-content:space-between}
+  .row.gap-4{gap:4px}
+  .row.gap-6{gap:6px}
+  .row.gap-12{gap:12px}
+  .stack{display:flex;flex-direction:column}
+  .stack-4{gap:4px}
+  .stack-6{gap:6px}
+  .stack-8{gap:8px}
+  .stack-12{gap:12px}
+  .stack-16{gap:16px}
+  .mt-1{margin-top:4px}.mt-2{margin-top:8px}.mt-3{margin-top:12px}.mt-4{margin-top:16px}.mt-5{margin-top:20px}.mt-6{margin-top:24px}.mt-8{margin-top:32px}
+  .mb-1{margin-bottom:4px}.mb-2{margin-bottom:8px}.mb-3{margin-bottom:12px}.mb-4{margin-bottom:16px}.mb-5{margin-bottom:20px}.mb-6{margin-bottom:24px}
+  .text-sm{font-size:13px}
+  .text-xs{font-size:12px}
+  .text-lg{font-size:16px}
+  .text-serif{font-family:var(--serif)}
+  .text-mono{font-family:var(--mono)}
+  .muted{color:var(--ink-3)}
+  .accent-ink{color:var(--accent)}
+  .tabular{font-feature-settings:"tnum"}
+
+  /* =================================================================
+     ORB — signature element
+     ================================================================= */
+  .orb{
+    position:relative;display:inline-block;border-radius:50%;
+    animation:orb-breathe 3.8s ease-in-out infinite;flex-shrink:0;
+  }
+  .orb svg{width:100%;height:100%;display:block}
+  @keyframes orb-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+  .orb.thinking{animation-duration:1.8s}
+
+  /* =================================================================
+     TEST HINT BELOW THE PHONE
+     ================================================================= */
+  .hint{
+    max-width:540px;width:100%;margin:20px auto 0;padding:14px 18px;
+    background:rgba(250,249,245,.5);border:1px dashed var(--line-strong);border-radius:14px;
+    font-size:11.5px;color:var(--ink-3);line-height:1.7;flex-shrink:0
+  }
+  .hint b{color:var(--ink-2);font-family:var(--mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;margin-right:4px}
+
+  /* =================================================================
+     ONBOARDING
+     ================================================================= */
+  .onboarding{position:absolute;inset:0;z-index:100;background:var(--bg-paper);display:flex;flex-direction:column;overflow:hidden}
+  .onboarding.hiding{animation:onb-out .4s ease-in forwards}
+  @keyframes onb-out{to{opacity:0;transform:scale(0.96)}}
+  .stage{flex:1;display:none;flex-direction:column;overflow:hidden;animation:stage-in .3s ease-out}
+  .stage.active{display:flex}
+  @keyframes stage-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+  .onb-top{display:flex;align-items:center;justify-content:space-between;padding:10px 20px 4px;flex-shrink:0}
+  .onb-back{display:inline-flex;align-items:center;gap:5px;color:var(--ink-2);cursor:pointer;font-size:13px;min-width:60px;padding:6px 0}
+  .onb-back svg{width:16px;height:16px;stroke-width:1.8}
+  .onb-dots{display:flex;gap:5px;align-items:center}
+  .onb-dots span{height:3px;border-radius:2px;background:var(--line-strong);transition:all .2s;width:4px}
+  .onb-dots span.active{width:22px;background:var(--accent)}
+  .onb-dots span.done{width:4px;background:var(--accent)}
+  .onb-skip-top{font-family:var(--mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-3);cursor:pointer;min-width:60px;text-align:right;padding:6px 0}
+  .onb-skip-top:hover{color:var(--ink-1)}
+
+  .onb-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 24px 16px;display:flex;flex-direction:column}
+  .onb-body::-webkit-scrollbar{display:none}
+  .onb-footer{padding:0 24px 28px;flex-shrink:0}
+  .onb-skip{display:block;width:100%;text-align:center;margin-top:10px;padding:8px;font-size:13px;color:var(--ink-3);text-decoration:underline;text-underline-offset:3px}
+
+  .onb-h1{font-family:var(--serif);font-weight:500;font-size:26px;line-height:1.2;letter-spacing:-0.01em;margin:14px 0 8px;color:var(--ink-1)}
+  .onb-h1-center{font-family:var(--serif);font-weight:500;font-size:24px;line-height:1.25;letter-spacing:-0.01em;text-align:center;margin:24px 0 8px;color:var(--ink-1)}
+  .onb-sub{font-size:14px;color:var(--ink-2);line-height:1.6;margin-bottom:22px;max-width:340px}
+  .onb-sub-center{font-size:13.5px;color:var(--ink-2);line-height:1.6;text-align:center;max-width:300px;margin:0 auto 28px}
+
+  /* ======= HERO (stage 1) — needs extra polish ======= */
+  .hero-top{display:flex;align-items:center;justify-content:space-between;padding:14px 22px 4px;flex-shrink:0}
+  .brand-sig{display:flex;align-items:center;gap:10px}
+  .brand-sig .orb-small{
+    width:20px;height:20px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#ffbfa6 0%,#D97757 55%,#9a4a31 100%);
+    box-shadow:0 2px 8px rgba(217,119,87,.35),inset 0 1px 2px rgba(255,255,255,.35);
+  }
+  .brand-sig .name{font-family:var(--serif-en);font-weight:600;font-size:18px;letter-spacing:-0.015em}
+  .brand-sig .name .ai{color:var(--accent)}
+  .lang-mini{display:flex;border:1px solid var(--line-strong);border-radius:999px;padding:2px;background:var(--bg-paper)}
+  .lang-mini button{padding:3px 9px;font-size:10px;font-family:var(--mono);color:var(--ink-3);border-radius:999px;letter-spacing:0.08em}
+  .lang-mini button.on{background:var(--ink-1);color:var(--bg-paper)}
+
+  .hero-content{flex:1;overflow-y:auto;padding:0 24px;display:flex;flex-direction:column;justify-content:center}
+  .hero-content::-webkit-scrollbar{display:none}
+  .hero-orb{display:flex;justify-content:center;padding:8px 0 20px}
+
+  .hero-kicker{font-family:var(--mono);font-size:10.5px;letter-spacing:0.22em;text-transform:uppercase;color:var(--accent);margin-bottom:12px;text-align:center}
+
+  .hero-h1{
+    font-family:var(--serif);font-weight:500;font-size:34px;line-height:1.1;letter-spacing:-0.02em;
+    text-align:center;margin-bottom:16px;color:var(--ink-1);
+  }
+  .hero-h1 em{
+    font-family:var(--serif-en);font-style:italic;color:var(--accent);font-weight:500;
+  }
+
+  .hero-explain{font-size:14px;line-height:1.65;color:var(--ink-2);text-align:center;max-width:320px;margin:0 auto 22px}
+
+  .hero-feats{display:flex;flex-direction:column;gap:10px;margin-bottom:6px}
+  .hero-feat{display:flex;align-items:center;gap:12px}
+  .hero-feat-icon{
+    width:36px;height:36px;border-radius:10px;color:#fff;display:grid;place-items:center;flex-shrink:0;
+    box-shadow:0 2px 6px rgba(20,16,8,.15);
+  }
+  .hero-feat-icon svg{width:18px;height:18px}
+  .hero-feat-text .h{font-family:var(--serif);font-size:14px;font-weight:500;line-height:1.3;color:var(--ink-1)}
+  .hero-feat-text .s{font-size:11.5px;color:var(--ink-3);margin-top:1px;line-height:1.4}
+
+  .hero-footer{padding:14px 24px 26px;flex-shrink:0}
+  .hero-secondary{display:block;width:100%;text-align:center;padding:12px;font-size:13.5px;color:var(--ink-2);margin-top:10px;transition:color .1s;cursor:pointer}
+  .hero-secondary:hover{color:var(--ink-1)}
+  .hero-legal{font-size:10.5px;color:var(--ink-3);text-align:center;line-height:1.5;margin-top:10px;max-width:320px;margin-left:auto;margin-right:auto}
+
+  /* ======= OPTION CARDS (stage 2 & later pickers) ======= */
+  .opt-card{
+    display:flex;align-items:center;gap:12px;width:100%;padding:16px;
+    background:var(--bg-card);border:1px solid var(--line);border-radius:16px;
+    cursor:pointer;transition:transform .08s,border-color .12s,background .12s;text-align:left;
+    margin-bottom:10px;font-family:inherit;
+  }
+  .opt-card:active{transform:scale(0.99)}
+  .opt-card:hover{border-color:var(--line-strong);background:var(--bg-hover)}
+  .opt-icon{width:48px;height:48px;border-radius:12px;display:grid;place-items:center;flex-shrink:0;color:#fff;box-shadow:0 4px 10px -2px rgba(20,16,8,.18)}
+  .opt-icon svg{width:22px;height:22px}
+  .opt-body{flex:1;min-width:0}
+  .opt-head{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
+  .opt-title{font-family:var(--serif);font-size:15.5px;font-weight:500;line-height:1.25;color:var(--ink-1)}
+  .opt-tag{font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-hover);font-weight:600}
+  .opt-desc{font-size:12.5px;color:var(--ink-2);line-height:1.55}
+  .opt-chev{color:var(--ink-4);font-size:20px;flex-shrink:0;font-family:var(--serif-en)}
+
+  /* ======= CREATING ANIMATION (stage 3) ======= */
+  .create-center{justify-content:center;align-items:center;text-align:center}
+  .create-progress{width:100%;max-width:280px;margin:30px 0 18px}
+  .create-bar{height:6px;background:var(--bg-subtle);border-radius:4px;overflow:hidden}
+  .create-fill{height:100%;background:linear-gradient(90deg,#ffad8a,var(--accent));border-radius:4px;transition:width .25s ease-out;width:0}
+  .create-pct{font-family:var(--mono);font-size:11px;letter-spacing:0.08em;color:var(--ink-3);margin-top:8px}
+
+  .create-lines{display:flex;flex-direction:column;gap:9px;margin-top:8px;font-family:var(--serif);font-size:13px;color:var(--ink-3);text-align:left}
+  .cl{display:flex;align-items:center;gap:10px;transition:color .2s}
+  .cl-dot{width:14px;height:14px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:9px;flex-shrink:0;transition:background .2s}
+  .cl.waiting .cl-dot{background:var(--line-strong)}
+  .cl.done .cl-dot{background:var(--success)}
+  .cl.done .cl-dot::after{content:"✓";font-family:var(--sans);font-weight:700;font-size:8px}
+  .cl.pending .cl-dot{background:transparent;border:1.5px solid var(--warn);color:var(--warn)}
+  .cl.pending .cl-dot::after{content:"…";font-family:var(--sans);font-weight:700;font-size:10px;margin-top:-4px}
+  .cl.done{color:var(--ink-1)}
+  .cl.pending{color:var(--warn)}
+
+  /* ======= IMPORTING (stage 4) ======= */
+  .warn-strict{background:var(--danger-soft);border:1px solid #ebc3bd;border-radius:12px;padding:12px 14px;margin-bottom:14px}
+  .warn-strict-head{display:flex;align-items:center;gap:6px;font-family:var(--serif);font-size:13px;font-weight:600;color:#8c2a1f;line-height:1.3;margin-bottom:4px}
+  .warn-strict-head span:first-child{font-size:16px}
+  .warn-strict-body{font-size:11.5px;color:#8c2a1f;line-height:1.55}
+  .imp-ta{
+    width:100%;min-height:130px;padding:14px;resize:vertical;
+    background:var(--bg-card);border:1px solid var(--line-strong);border-radius:14px;
+    font-family:var(--mono);font-size:13.5px;line-height:1.7;color:var(--ink-1);outline:none;
+  }
+  .imp-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .imp-ta::placeholder{color:var(--ink-4);font-family:var(--mono)}
+  .imp-meta{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:0 2px}
+  .imp-count{font-size:12px;color:var(--ink-3)}
+  .imp-count b{color:var(--ink-1);font-family:var(--mono);font-weight:600;margin:0 2px}
+  .imp-paste{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);cursor:pointer;padding:6px 2px}
+  .imp-paste svg{width:13px;height:13px}
+
+  /* ======= BIO (stage 5) ======= */
+  .bio-center{justify-content:center;align-items:center;text-align:center}
+  .bio-ring{width:144px;height:144px;display:grid;place-items:center;position:relative;margin-top:20px}
+  .bio-frame{
+    width:100px;height:100px;border-radius:28px;border:3px solid var(--ink-1);
+    display:grid;place-items:center;color:var(--ink-1);transition:all .3s;
+  }
+  .bio-frame svg{width:54px;height:54px}
+  .bio-ring.scanning .bio-frame{border-color:var(--accent);color:var(--accent);animation:bio-pulse 1.4s infinite}
+  .bio-ring.scanning::before{content:"";position:absolute;inset:22px;border-radius:28px;border:2px solid var(--accent);animation:bio-ping 1.4s infinite}
+  @keyframes bio-pulse{50%{opacity:.55}}
+  @keyframes bio-ping{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.2)}}
+  .bio-ring.done .bio-frame{background:var(--success);color:#fff;border-color:var(--success);box-shadow:0 6px 20px -4px rgba(90,122,78,.4)}
+
+  /* ======= NAME (stage 6) ======= */
+  .name-center{justify-content:center}
+  .name-intro{margin-bottom:20px}
+  .name-input{
+    width:100%;padding:16px 18px;background:var(--bg-card);
+    border:1px solid var(--line-strong);border-radius:14px;
+    font-family:var(--serif);font-size:20px;color:var(--ink-1);outline:none;
+    letter-spacing:-0.01em;
+  }
+  .name-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .name-input::placeholder{color:var(--ink-4);font-weight:400}
+  .name-hint{font-size:11.5px;color:var(--ink-3);margin-top:10px;text-align:center}
+
+  /* ======= READY (stage 7) ======= */
+  .ready-center{justify-content:center;align-items:center;text-align:center;padding-top:30px}
+  .ready-orb{position:relative;display:inline-block;margin-bottom:22px}
+  .ready-badge{
+    position:absolute;right:-6px;top:-6px;
+    width:42px;height:42px;border-radius:50%;background:var(--success);
+    display:grid;place-items:center;color:#fff;
+    box-shadow:0 6px 18px -2px rgba(90,122,78,.4);
+    animation:badge-pop .5s ease-out;
+  }
+  @keyframes badge-pop{from{transform:scale(0) rotate(-20deg)}to{transform:scale(1) rotate(0)}}
+  .ready-badge svg{width:20px;height:20px;stroke-width:3}
+  .ready-title{font-family:var(--serif);font-size:32px;font-weight:500;line-height:1.15;letter-spacing:-0.02em;margin-bottom:10px;color:var(--ink-1)}
+  .ready-sub{font-size:14px;color:var(--ink-2);line-height:1.55;margin-bottom:28px;max-width:300px}
+
+  .ready-what{width:100%;max-width:360px;margin:0 auto}
+  .ready-what-label{font-family:var(--mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);text-align:center;margin-bottom:12px}
+  .ready-item{display:flex;gap:12px;padding:12px 14px;background:var(--bg-card);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;text-align:left}
+  .ri-num{
+    width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent-hover);
+    display:grid;place-items:center;font-family:var(--serif-en);font-weight:600;font-size:13px;flex-shrink:0;margin-top:1px
+  }
+  .ri-body{flex:1;min-width:0}
+  .ri-h{font-family:var(--serif);font-size:13.5px;font-weight:500;line-height:1.3;color:var(--ink-1);margin-bottom:3px}
+  .ri-s{font-size:11.5px;color:var(--ink-3);line-height:1.5}
+
+  /* ======= PERSONA (stage 8) ======= */
+  .persona-card{
+    display:flex;align-items:center;gap:12px;width:100%;padding:14px;
+    background:var(--bg-card);border:1px solid var(--line);border-radius:16px;
+    cursor:pointer;transition:transform .08s,border-color .12s,background .12s;text-align:left;
+    margin-bottom:8px;font-family:inherit;
+  }
+  .persona-card:active{transform:scale(0.99)}
+  .persona-card:hover{border-color:var(--line-strong);background:var(--bg-hover)}
+  .persona-icon{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;flex-shrink:0;color:#fff;box-shadow:0 3px 10px -2px rgba(20,16,8,.18)}
+  .persona-icon svg{width:20px;height:20px}
+  .persona-body{flex:1;min-width:0}
+  .persona-head{display:flex;align-items:center;gap:8px;margin-bottom:3px;flex-wrap:wrap}
+  .persona-name{font-family:var(--serif);font-size:15px;font-weight:500;color:var(--ink-1)}
+  .persona-tag{font-family:var(--mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent-hover);font-weight:600}
+  .persona-desc{font-size:12px;color:var(--ink-2);line-height:1.5}
+  .onb-skip-bottom{display:block;margin:16px auto 0;padding:10px;font-family:var(--mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--ink-3);cursor:pointer}
+  .onb-skip-bottom:hover{color:var(--ink-1)}
+
+  /* =================================================================
+     HOME VIEW
+     ================================================================= */
+  .home-status{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:6px 12px;background:var(--success-soft);border-radius:999px;
+    font-size:11.5px;color:var(--success);font-family:var(--mono);letter-spacing:0.02em;
+    margin:8px 0 16px;
+  }
+  .home-status .d{width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px rgba(90,122,78,.15);animation:pulse-dot 2.5s infinite}
+
+  .home-greet{
+    font-family:var(--serif);font-weight:500;font-size:32px;line-height:1.15;letter-spacing:-0.02em;
+    margin-bottom:8px;color:var(--ink-1);
+  }
+  .home-greet em{font-family:var(--serif-en);font-style:italic;color:var(--accent);font-weight:500;font-size:33px}
+  .home-slogan{
+    font-size:14px;color:var(--ink-2);line-height:1.55;margin-bottom:22px;max-width:320px;
+    font-family:var(--serif);
+  }
+
+  .home-balance{margin:18px 0 18px;padding:18px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .home-balance-label{font-family:var(--mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px}
+  .home-balance-amt{
+    font-family:var(--serif-en);font-weight:500;font-size:38px;letter-spacing:-0.02em;
+    display:flex;align-items:baseline;gap:1px;color:var(--ink-1)
+  }
+  .home-balance-amt .u{font-size:18px;color:var(--ink-3);margin-right:3px}
+  .home-balance-amt .sub{font-size:20px;color:var(--ink-3);font-weight:400}
+  .home-balance-change{font-size:12px;margin-top:6px;display:flex;align-items:center;gap:8px}
+
+  .home-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px}
+  .home-action{
+    display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;
+    background:var(--bg-card);border:1px solid var(--line);border-radius:14px;
+    cursor:pointer;transition:all .12s;font-family:inherit;
+  }
+  .home-action:hover{background:var(--bg-hover);border-color:var(--line-strong)}
+  .home-action:active{transform:scale(0.97)}
+  .home-action.primary{background:var(--ink-1);border-color:var(--ink-1);color:var(--bg-paper)}
+  .home-action.primary:hover{background:#000}
+  .ha-icon{width:32px;height:32px;border-radius:50%;background:var(--bg-subtle);color:var(--ink-2);display:grid;place-items:center}
+  .home-action.primary .ha-icon{background:rgba(255,255,255,.1);color:var(--bg-paper)}
+  .ha-icon svg{width:16px;height:16px}
+  .ha-label{font-size:11.5px;font-weight:500;letter-spacing:0.01em}
+
+  .try-stack{display:flex;flex-direction:column;gap:8px}
+  .try-card{
+    display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;
+    background:var(--bg-card);border:1px solid var(--line);border-radius:14px;
+    cursor:pointer;transition:all .12s;text-align:left;font-family:inherit;
+  }
+  .try-card:hover{border-color:var(--accent);background:var(--accent-soft-2)}
+  .try-card:active{transform:scale(0.99)}
+  .try-icon{font-size:20px;flex-shrink:0;width:28px;text-align:center}
+  .try-text{flex:1;min-width:0}
+  .try-text .th{font-family:var(--serif);font-size:14px;font-weight:500;line-height:1.3;color:var(--ink-1)}
+  .try-text .ts{font-size:11.5px;color:var(--ink-3);margin-top:1px}
+  .try-arr{color:var(--ink-4);font-family:var(--serif-en);font-size:16px;flex-shrink:0;transition:transform .15s}
+  .try-card:hover .try-arr{transform:translateX(3px);color:var(--accent)}
+
+  .activity-card{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .act-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)}
+  .act-row:last-child{border-bottom:0}
+  .act-icon{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:14px;font-weight:700;flex-shrink:0}
+  .act-body{flex:1;min-width:0}
+  .act-h{font-size:13.5px;font-weight:500;color:var(--ink-1);line-height:1.3}
+  .act-s{font-size:11px;color:var(--ink-3);margin-top:2px;font-family:var(--mono);letter-spacing:0.02em}
+  .act-amt{font-family:var(--mono);font-weight:600;font-size:13px;color:var(--ink-1);flex-shrink:0}
+
+  .showcase-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .showcase-card{
+    display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:14px;
+    background:var(--bg-card);border:1px solid var(--line);border-radius:16px;
+    cursor:pointer;transition:all .15s;text-align:left;font-family:inherit;min-height:120px;
+  }
+  .showcase-card:hover{border-color:var(--accent);background:var(--accent-soft-2);transform:translateY(-1px);box-shadow:0 6px 16px -4px rgba(217,119,87,.2)}
+  .showcase-card:active{transform:translateY(0) scale(0.99)}
+  .sc-icon{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:#fff;box-shadow:0 4px 10px -2px rgba(20,16,8,.2)}
+  .sc-icon svg{width:18px;height:18px}
+  .sc-title{font-family:var(--serif);font-size:14px;font-weight:500;line-height:1.25;color:var(--ink-1);margin-top:auto}
+  .sc-desc{font-size:11px;color:var(--ink-3);line-height:1.4}
+
+  /* =================================================================
+     WALLET VIEW
+     ================================================================= */
+  .wallet-summary{padding:14px 0 18px;border-bottom:1px solid var(--line);margin-bottom:18px}
+  .ws-label{font-family:var(--mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px}
+  .ws-amt{font-family:var(--serif-en);font-weight:500;font-size:38px;letter-spacing:-0.02em;color:var(--ink-1)}
+  .ws-change{font-size:12px;margin-top:6px}
+
+  .ws-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px}
+  .ws-actions .btn{padding:11px;font-size:13px;border-radius:12px}
+
+  .asset-list{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .asset-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .asset-row:last-child{border-bottom:0}
+  .asset-sym{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-family:var(--serif-en);font-size:14px;flex-shrink:0}
+  .asset-body{flex:1;min-width:0}
+  .asset-name{font-family:var(--serif);font-size:14px;font-weight:500;line-height:1.3}
+  .asset-sub{font-size:11.5px;color:var(--ink-3);margin-top:2px;font-family:var(--mono);letter-spacing:0.02em}
+  .asset-value{font-family:var(--mono);font-weight:600;font-size:14px;color:var(--ink-1);text-align:right;flex-shrink:0}
+  .asset-chg{font-family:var(--mono);font-size:11px;margin-top:2px;font-weight:500}
+
+  .sec-intro{font-size:12.5px;color:var(--ink-3);line-height:1.5;margin-bottom:10px}
+  .sec-card{
+    display:block;width:100%;padding:14px;background:var(--bg-card);border:1px solid var(--line);
+    border-radius:16px;cursor:pointer;transition:all .12s;text-align:left;font-family:inherit;
+  }
+  .sec-card:hover{border-color:var(--gold);background:var(--gold-soft)}
+  .sec-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .sec-item{padding:10px 8px;background:var(--bg-subtle);border-radius:10px;text-align:center}
+  .sec-name{font-family:var(--mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px}
+  .sec-val{font-family:var(--serif-en);font-weight:600;font-size:17px;color:var(--ink-1);letter-spacing:-0.01em}
+  .sec-sub{font-size:10.5px;color:var(--ink-3);margin-top:2px;font-family:var(--mono)}
+  .sec-cta{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11px;letter-spacing:0.06em;color:var(--gold);font-weight:600}
+  .sec-link{font-family:var(--mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--accent);cursor:pointer;padding:4px}
+  .sec-link:hover{color:var(--accent-hover)}
+
+  .yield-card{background:var(--success-soft);border:1px solid #c9d7bc;border-radius:16px;padding:14px}
+
+  /* =================================================================
+     AGENTS VIEW
+     ================================================================= */
+  .agents-hero{
+    padding:18px 16px;margin:8px 0 6px;border-radius:18px;
+    background:linear-gradient(135deg,#f9ede0 0%,#f7e3d8 100%);
+    border:1px solid #e9c7b4;position:relative;overflow:hidden;
+  }
+  .agents-hero::before{
+    content:"";position:absolute;top:-30px;right:-30px;width:120px;height:120px;
+    background:radial-gradient(circle,var(--accent),transparent 70%);opacity:.15;
+  }
+  .ah-label{font-family:var(--mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--accent-hover);margin-bottom:8px;font-weight:600;position:relative}
+  .ah-title{font-family:var(--serif);font-weight:500;font-size:20px;line-height:1.25;letter-spacing:-0.01em;color:var(--ink-1);margin-bottom:6px;position:relative}
+  .ah-sub{font-size:12.5px;color:var(--ink-2);line-height:1.55;position:relative}
+
+  .agent-card{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:10px}
+  .agent-avatar{width:36px;height:36px;border-radius:10px;color:#fff;display:grid;place-items:center;font-weight:700;font-family:var(--serif-en);font-size:15px;flex-shrink:0}
+  .agent-usage{padding-top:8px;border-top:1px dashed var(--line);margin-top:10px}
+  .au-row{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:6px}
+  .au-label{color:var(--ink-3);font-family:var(--mono);letter-spacing:0.04em;text-transform:uppercase;font-size:10px}
+  .au-val{font-family:var(--mono);color:var(--ink-1);font-weight:600}
+  .au-bar{height:4px;background:var(--bg-subtle);border-radius:3px;overflow:hidden}
+  .au-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
+  .agent-meta{font-size:11px;color:var(--ink-3);margin-top:8px;font-family:var(--mono);letter-spacing:0.02em}
+
+  .skill-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .skill-card{
+    display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:12px 10px;
+    background:var(--bg-card);border:1px solid var(--line);border-radius:14px;cursor:pointer;
+    transition:all .12s;font-family:inherit;text-align:left;min-height:108px;
+  }
+  .skill-card:hover{border-color:var(--accent);background:var(--accent-soft-2);transform:translateY(-1px)}
+  .skill-card.installed{border-color:var(--success);background:rgba(225,236,217,.4)}
+  .skill-icon{width:30px;height:30px;border-radius:9px;display:grid;place-items:center}
+  .skill-icon svg{width:16px;height:16px}
+  .skill-name{font-family:var(--serif);font-size:12.5px;font-weight:500;line-height:1.25;color:var(--ink-1);margin-top:auto}
+  .skill-meta{margin-top:auto}
+
+  .proto-list{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .proto-row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line)}
+  .proto-row:last-child{border-bottom:0}
+  .proto-row.dim{opacity:.6}
+  .proto-name{display:flex;align-items:center;gap:6px;font-family:var(--serif);font-size:13px;font-weight:500;flex-shrink:0;min-width:0;flex-wrap:wrap}
+  .proto-desc{flex:1;font-size:11px;color:var(--ink-3);min-width:0;line-height:1.4}
+
+  /* =================================================================
+     SETTINGS VIEW
+     ================================================================= */
+  .big-card{
+    display:block;width:100%;padding:16px;background:var(--bg-card);border:1px solid var(--line);
+    border-radius:18px;cursor:pointer;transition:all .12s;text-align:left;font-family:inherit;margin-bottom:14px;
+  }
+  .big-card:hover{border-color:var(--line-strong);background:var(--bg-hover)}
+  .bc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+  .bc-title{font-family:var(--serif);font-size:16px;font-weight:500;line-height:1.3;color:var(--ink-1)}
+  .bc-sub{font-size:12px;color:var(--ink-3);margin-top:2px;line-height:1.45}
+  .bc-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .kk{display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 6px;border-radius:10px;background:var(--bg-subtle);border:1px solid transparent}
+  .kk.healthy{background:var(--success-soft);border-color:#c9d7bc}
+  .kk.warn{background:var(--warn-soft);border-color:#e4d2a8}
+  .kk-ico{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:var(--bg-card);color:var(--ink-1)}
+  .kk.healthy .kk-ico{color:var(--success)}
+  .kk.warn .kk-ico{color:var(--warn)}
+  .kk-name{font-family:var(--serif);font-size:11.5px;font-weight:500;color:var(--ink-1);text-align:center;line-height:1.2}
+
+  .setting-list{background:var(--bg-card);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .sl-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .1s}
+  .sl-row:hover{background:var(--bg-hover)}
+  .sl-row:last-child{border-bottom:0}
+  .sl-ico{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-weight:700;flex-shrink:0;font-size:14px}
+  .sl-ico svg{width:14px;height:14px}
+  .sl-body{flex:1;min-width:0}
+  .sl-h{font-family:var(--serif);font-size:13.5px;font-weight:500;color:var(--ink-1);line-height:1.3}
+  .sl-s{font-size:11px;color:var(--ink-3);margin-top:2px;line-height:1.45}
+  .sl-arr{color:var(--ink-3);font-size:12px;font-family:var(--serif-en);flex-shrink:0}
+
+  .signoff{
+    text-align:center;padding:24px 0 0;font-family:var(--mono);font-size:10px;letter-spacing:0.12em;
+    text-transform:uppercase;color:var(--ink-3);display:flex;flex-direction:column;gap:4px;
+  }
+
+  /* =================================================================
+     KEYS DETAIL
+     ================================================================= */
+  .keys-hero{padding:10px 0 4px}
+  .keys-h1{font-family:var(--serif);font-weight:500;font-size:26px;line-height:1.18;letter-spacing:-0.02em;margin-bottom:8px;color:var(--ink-1)}
+  .keys-h1 em{font-family:var(--serif-en);font-style:italic;color:var(--accent);font-weight:500}
+  .keys-sub{font-size:13px;color:var(--ink-2);line-height:1.55;margin-bottom:20px}
+  .keys-three{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+  .keys-card{padding:14px;border-radius:14px;background:var(--bg-card);border:1px solid var(--line)}
+  .keys-card.healthy{background:var(--success-soft);border-color:#c9d7bc}
+  .keys-card.warn{background:var(--warn-soft);border-color:#e4d2a8}
+  .keys-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px}
+  .keys-big-ico{width:40px;height:40px;border-radius:10px;background:var(--bg-card);display:grid;place-items:center;color:var(--ink-1);flex-shrink:0}
+  .keys-card.healthy .keys-big-ico{color:var(--success)}
+  .keys-card.warn .keys-big-ico{color:var(--warn)}
+  .keys-top > div:nth-child(2){flex:1;min-width:0}
+  .keys-title{font-family:var(--serif);font-size:14.5px;font-weight:500;color:var(--ink-1);line-height:1.3}
+  .keys-where{font-size:11.5px;color:var(--ink-3);margin-top:1px;line-height:1.45}
+  .keys-meta{font-size:12px;color:var(--success);font-family:var(--mono);letter-spacing:0.02em}
+  .keys-card.warn .keys-meta{color:var(--warn)}
+
+  /* =================================================================
+     CHAT VIEW (full-screen when ASK tapped)
+     ================================================================= */
+  .chat-scroll{padding:0}
+  .chat-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 10px 30px}
+  .chat-empty-h{font-family:var(--serif);font-size:22px;font-weight:500;letter-spacing:-0.01em;color:var(--ink-1);margin-bottom:6px}
+  .chat-empty-s{font-size:13px;color:var(--ink-3);margin-bottom:28px}
+  .chat-suggestions{display:flex;flex-direction:column;gap:8px;width:100%;max-width:320px}
+  .chat-sug{
+    padding:11px 14px;background:var(--bg-card);border:1px solid var(--line);border-radius:999px;
+    font-size:13px;color:var(--ink-1);cursor:pointer;transition:all .12s;text-align:center;font-family:inherit;
+  }
+  .chat-sug:hover{border-color:var(--accent);background:var(--accent-soft-2);color:var(--accent-hover)}
+
+  .msg-thread{display:flex;flex-direction:column;gap:14px;padding:12px 0}
+  .msg-user{
+    align-self:flex-end;max-width:80%;background:var(--ink-1);color:var(--bg-paper);
+    padding:10px 14px;border-radius:18px 18px 4px 18px;font-size:14px;line-height:1.5;
+    animation:bubble-in .25s ease-out;
+  }
+  .msg-user .img-thumb{display:block;max-width:200px;border-radius:12px;margin-bottom:6px}
+  @keyframes bubble-in{from{opacity:0;transform:translateY(6px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+  .msg-ai{max-width:100%;animation:bubble-in .3s ease-out}
+  .msg-ai .who{font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .msg-ai .who::before{content:"";width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffbfa6 0%,#D97757 55%,#9a4a31 100%);box-shadow:0 0 0 2px var(--accent-soft)}
+  .msg-ai .body{font-size:14px;line-height:1.6;color:var(--ink-1)}
+  .msg-ai .tools{display:flex;gap:4px;margin-top:8px;opacity:0;transition:opacity .15s}
+  .msg-ai:hover .tools{opacity:1}
+  .msg-tool{
+    display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:8px;
+    font-family:var(--mono);font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink-3);
+    background:var(--bg-subtle);cursor:pointer;transition:all .1s;border:0;
+  }
+  .msg-tool:hover{background:var(--line);color:var(--ink-1)}
+  .msg-tool svg{width:11px;height:11px}
+  .msg-tool.copied{color:var(--success);background:var(--success-soft)}
+
+  .intent-card{
+    background:var(--bg-card);border:2px solid var(--accent);border-radius:14px;padding:14px;margin-top:10px;
+    animation:bubble-in .35s ease-out;
+  }
+  .intent-card .hd{font-family:var(--mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent-hover);margin-bottom:6px;display:flex;align-items:center;gap:6px;font-weight:600}
+  .intent-card .hd::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);animation:pulse-dot 1.8s infinite}
+  .intent-card h4{font-family:var(--serif);font-size:15px;font-weight:500;line-height:1.35;color:var(--ink-1);margin-bottom:6px}
+  .intent-card .sub{font-size:13px;color:var(--ink-2);line-height:1.55}
+  .intent-card .actions{margin-top:12px;display:flex;gap:8px}
+  .intent-card .actions .btn{flex:1;padding:9px;font-size:12.5px;border-radius:10px}
+
+  .thinking-dots{display:inline-flex;gap:3px;align-items:center;padding:4px 0}
+  .thinking-dots span{width:6px;height:6px;border-radius:50%;background:var(--ink-3);animation:think-dot 1.3s ease-in-out infinite}
+  .thinking-dots span:nth-child(2){animation-delay:.15s}
+  .thinking-dots span:nth-child(3){animation-delay:.3s}
+  @keyframes think-dot{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
+
+  /* =================================================================
+     Voice recording bar
+     ================================================================= */
+  .voice-bar{
+    position:absolute;left:12px;right:12px;bottom:94px;z-index:26;
+    background:var(--accent);border-radius:24px;padding:14px 18px;
+    display:none;align-items:center;gap:12px;color:#fff;font-family:var(--mono);font-size:12px;letter-spacing:0.06em;
+    box-shadow:0 8px 24px -8px rgba(217,119,87,.5);
+  }
+  .voice-bar.show{display:flex;animation:bubble-in .2s}
+  .voice-bar .v-wave{display:flex;gap:3px;align-items:center;flex:1}
+  .voice-bar .v-wave span{width:3px;background:#fff;border-radius:2px;animation:v-wave 1s ease-in-out infinite}
+  .voice-bar .v-wave span:nth-child(1){height:8px;animation-delay:0s}
+  .voice-bar .v-wave span:nth-child(2){height:14px;animation-delay:.1s}
+  .voice-bar .v-wave span:nth-child(3){height:20px;animation-delay:.2s}
+  .voice-bar .v-wave span:nth-child(4){height:14px;animation-delay:.3s}
+  .voice-bar .v-wave span:nth-child(5){height:8px;animation-delay:.4s}
+  @keyframes v-wave{0%,100%{transform:scaleY(0.6)}50%{transform:scaleY(1)}}
+  .voice-bar .v-time{font-weight:600}
+  .voice-cancel{color:#fff;opacity:.8;cursor:pointer;font-size:11px;padding:4px 8px}
+  .voice-cancel:hover{opacity:1}
+
+</style>
+</head>
+<body class="lang-zh">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <span class="pulse"></span>
+      <span>cowallet<span style="color:var(--accent)">.ai</span></span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-left:6px;letter-spacing:0.08em">v1.0 · PROTOTYPE</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button id="btn-demo" style="padding:7px 14px;background:var(--ink-1);color:#fff;border:0;border-radius:999px;font-family:var(--mono);font-size:11px;letter-spacing:0.08em;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:500">
+        <svg width="10" height="11" viewBox="0 0 10 11" fill="currentColor" style="margin-left:-2px"><path d="M1 1 L9 5.5 L1 10 Z"/></svg>
+        <span data-zh="自动演示" data-en="Auto demo"></span>
+      </button>
+      <div class="lang-toggle">
+        <button id="btn-en">EN</button>
+        <button id="btn-zh" class="on">中</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== THE PHONE ========== -->
+  <div class="phone">
+
+    <!-- ========== ONBOARDING — 8 stages, from welcome through persona pick ========== -->
+    <div class="onboarding" id="onb">
+
+      <!-- status bar stays visible through onboarding -->
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="right">
+          <svg viewBox="0 0 18 18" fill="currentColor"><path d="M9 4a5 5 0 0 0-4.95 4.3.8.8 0 0 0 .58.91l.1.02a.8.8 0 0 0 .91-.6 3.4 3.4 0 0 1 6.72 0 .8.8 0 0 0 1.59-.33A5 5 0 0 0 9 4z"/><circle cx="9" cy="11" r="2"/></svg>
+          <svg viewBox="0 0 18 18" fill="currentColor"><path d="M3 7v4h2V7zM7 5v8h2V5zM11 3v12h2V3zM15 1v16h2V1z"/></svg>
+          <svg viewBox="0 0 26 14" style="width:22px" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="22" height="8" rx="2"/><rect x="3" y="5" width="17" height="4" fill="currentColor"/></svg>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 1: HERO — the big first-impression screen ========= -->
+      <div class="stage active" data-stage="hero">
+        <div class="hero-top">
+          <div class="brand-sig">
+            <span class="orb-small"></span>
+            <span class="name"><span>cowallet</span><span class="ai">.ai</span></span>
+          </div>
+          <div class="lang-mini">
+            <button data-onb-lang="en">EN</button>
+            <button data-onb-lang="zh" class="on">中</button>
+          </div>
+        </div>
+
+        <div class="hero-content">
+          <!-- Main orb -->
+          <div class="hero-orb">
+            <div class="orb" style="width:140px;height:140px">
+              <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <radialGradient id="orbG1" cx="38%" cy="30%" r="68%">
+                    <stop offset="0%" stop-color="#ffd4bc"/>
+                    <stop offset="45%" stop-color="#D97757"/>
+                    <stop offset="100%" stop-color="#8a3f2a"/>
+                  </radialGradient>
+                  <radialGradient id="orbH1" cx="35%" cy="28%" r="22%">
+                    <stop offset="0%" stop-color="#fff8ef" stop-opacity="0.95"/>
+                    <stop offset="100%" stop-color="#fff8ef" stop-opacity="0"/>
+                  </radialGradient>
+                  <filter id="orbGlow1"><feGaussianBlur stdDeviation="10"/></filter>
+                </defs>
+                <circle cx="100" cy="100" r="92" fill="#D97757" opacity="0.15" filter="url(#orbGlow1)"/>
+                <circle cx="100" cy="100" r="80" fill="url(#orbG1)"/>
+                <ellipse cx="78" cy="66" rx="28" ry="18" fill="url(#orbH1)"/>
+                <circle cx="138" cy="140" r="7" fill="#fff8ef" opacity="0.3"/>
+              </svg>
+            </div>
+          </div>
+
+          <!-- Slogan: one sentence anyone can understand -->
+          <div class="hero-kicker" data-zh="数字钱包 · 会听懂人话" data-en="Digital wallet · speaks your language"></div>
+
+          <h1 class="hero-h1">
+            <span data-zh="会听你说话的" data-en="A wallet that"></span><br/>
+            <span data-zh="" data-en="actually"></span>
+            <em data-zh="钱包" data-en="listens"></em><span data-zh="。" data-en="."></span>
+          </h1>
+
+          <p class="hero-explain" data-zh="就像给你家请了个管家——你说&ldquo;帮我转 100 块给小明&rdquo;,它就去做;你不会说也没关系,它有按钮。" data-en="Like hiring a butler for your money — say &ldquo;send $100 to Sarah&rdquo; and it does it. Don&rsquo;t feel like talking? Buttons work too."></p>
+
+          <div class="hero-feats">
+            <div class="hero-feat">
+              <div class="hero-feat-icon" style="background:var(--success)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
+              </div>
+              <div class="hero-feat-text">
+                <div class="h" data-zh="只有你能动你的钱" data-en="Only you can move your money"></div>
+                <div class="s" data-zh="我们也进不来" data-en="Not even us"></div>
+              </div>
+            </div>
+            <div class="hero-feat">
+              <div class="hero-feat-icon" style="background:var(--info)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/></svg>
+              </div>
+              <div class="hero-feat-text">
+                <div class="h" data-zh="100+ 个金融网络" data-en="100+ financial networks"></div>
+                <div class="s" data-zh="全世界通用" data-en="Works worldwide"></div>
+              </div>
+            </div>
+            <div class="hero-feat">
+              <div class="hero-feat-icon" style="background:var(--accent)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2v4M12 18v4M4 12H2M22 12h-2M6 6l-2-2M20 20l-2-2M6 18l-2 2M20 4l-2 2"/><circle cx="12" cy="12" r="4"/></svg>
+              </div>
+              <div class="hero-feat-text">
+                <div class="h" data-zh="AI 帮你跑腿" data-en="AI does the errands"></div>
+                <div class="s" data-zh="你只需说一句话" data-en="Just say the word"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-footer">
+          <button class="btn btn-accent btn-lg btn-full" data-onb="go-start">
+            <span data-zh="开始使用" data-en="Get started"></span>
+          </button>
+          <button class="hero-secondary" data-onb="have-wallet">
+            <span data-zh="我已经有钱包了" data-en="I already have a wallet"></span>
+            <span style="color:var(--accent)">→</span>
+          </button>
+          <div class="hero-legal" data-zh="继续即表示同意服务条款与隐私政策" data-en="By continuing you agree to our Terms and Privacy Policy"></div>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 2: START — three paths ========= -->
+      <div class="stage" data-stage="start" style="display:none">
+        <div class="onb-top">
+          <button class="onb-back" data-onb="back-hero">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            <span data-zh="返回" data-en="Back"></span>
+          </button>
+          <div class="onb-dots"><span class="active"></span><span></span><span></span></div>
+          <div style="width:60px"></div>
+        </div>
+
+        <div class="onb-body">
+          <h1 class="onb-h1" data-zh="这是你的第一个钱包吗?" data-en="Is this your first wallet?"></h1>
+          <p class="onb-sub" data-zh="两分钟就能开好。选一个最适合你的方式。" data-en="Takes two minutes. Pick what fits you."></p>
+
+          <button class="opt-card" data-onb="pick-create">
+            <div class="opt-icon" style="background:var(--accent)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </div>
+            <div class="opt-body">
+              <div class="opt-head">
+                <span class="opt-title" data-zh="我是新用户,帮我开一个" data-en="I'm new — set one up for me"></span>
+                <span class="opt-tag" data-zh="推荐" data-en="Best"></span>
+              </div>
+              <div class="opt-desc" data-zh="最简单。我们帮你把钥匙安全保管在三个地方。不用背一长串词。" data-en="Easiest. We split the key safely across three places. No long phrases to memorize."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+
+          <button class="opt-card" data-onb="pick-import">
+            <div class="opt-icon" style="background:var(--success)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.85 12.15L21 2M18 5l3 3M15 8l3 3"/></svg>
+            </div>
+            <div class="opt-body">
+              <div class="opt-head">
+                <span class="opt-title" data-zh="我已经有一个钱包" data-en="I have a wallet already"></span>
+              </div>
+              <div class="opt-desc" data-zh="用那 12 或 24 个单词的&ldquo;找回密码&rdquo;把它搬进来。" data-en="Bring it in using those 12 or 24 recovery words."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+
+          <button class="opt-card" data-onb="pick-hw">
+            <div class="opt-icon" style="background:var(--ink-1)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z"/></svg>
+            </div>
+            <div class="opt-body">
+              <div class="opt-head">
+                <span class="opt-title" data-zh="我有一个硬件钱包" data-en="I have a hardware wallet"></span>
+              </div>
+              <div class="opt-desc" data-zh="Ledger、Trezor 之类的实物钥匙。" data-en="Ledger, Trezor — physical key devices."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 3: CREATING — key generation animation ========= -->
+      <div class="stage" data-stage="creating" style="display:none">
+        <div class="onb-top">
+          <div style="width:60px"></div>
+          <div class="onb-dots"><span class="done"></span><span class="active"></span><span></span></div>
+          <div style="width:60px"></div>
+        </div>
+
+        <div class="onb-body create-center">
+          <div class="orb thinking" style="width:120px;height:120px;margin-bottom:28px">
+            <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="orbG2" cx="38%" cy="30%" r="68%">
+                  <stop offset="0%" stop-color="#ffe0cb"/>
+                  <stop offset="45%" stop-color="#D97757"/>
+                  <stop offset="100%" stop-color="#a04b32"/>
+                </radialGradient>
+              </defs>
+              <circle cx="100" cy="100" r="82" fill="url(#orbG2)"/>
+              <ellipse cx="78" cy="68" rx="28" ry="18" fill="#fff8ef" opacity="0.5"/>
+            </svg>
+          </div>
+
+          <h1 class="onb-h1-center" data-zh="正在帮你把钥匙分成三份" data-en="Splitting your key into three pieces"></h1>
+          <p class="onb-sub-center" data-zh="就像一份保险,任何一份丢了,剩下两份还能开门。完整的钥匙从不出现过。" data-en="Like an insurance policy — if one piece is lost, the other two still open the door. The whole key never exists in one place."></p>
+
+          <div class="create-progress">
+            <div class="create-bar"><div class="create-fill" id="create-fill"></div></div>
+            <div class="create-pct" id="create-pct">0%</div>
+          </div>
+
+          <div class="create-lines">
+            <div class="cl waiting" id="cl-1">
+              <span class="cl-dot"></span>
+              <span class="cl-txt" data-zh="这台手机里存一份" data-en="One piece on this phone"></span>
+            </div>
+            <div class="cl waiting" id="cl-2">
+              <span class="cl-dot"></span>
+              <span class="cl-txt" data-zh="云端保险柜存一份" data-en="One piece in the cloud safe"></span>
+            </div>
+            <div class="cl pending" id="cl-3">
+              <span class="cl-dot"></span>
+              <span class="cl-txt" data-zh="找回凭证存在你这儿(稍后设置)" data-en="Recovery piece in your hands (set up later)"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 4: IMPORTING — recovery phrase entry ========= -->
+      <div class="stage" data-stage="importing" style="display:none">
+        <div class="onb-top">
+          <button class="onb-back" data-onb="back-start">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            <span data-zh="返回" data-en="Back"></span>
+          </button>
+          <div class="onb-dots"><span class="active"></span><span></span><span></span></div>
+          <div style="width:60px"></div>
+        </div>
+
+        <div class="onb-body">
+          <h1 class="onb-h1" data-zh="输入你的 12 或 24 个&ldquo;找回词&rdquo;" data-en="Enter your 12 or 24 recovery words"></h1>
+          <p class="onb-sub" data-zh="就是当初创建钱包时写下来的那一串单词。用空格分开。" data-en="The words you wrote down when you first set up your wallet. Separated by spaces."></p>
+
+          <div class="warn-strict">
+            <div class="warn-strict-head">
+              <span>⚠</span>
+              <span data-zh="永远不要在网页上输入这些词" data-en="Never enter these on a website"></span>
+            </div>
+            <div class="warn-strict-body" data-zh="cowallet 只在这个输入框里问你要。任何客服、空投网站都不会问。看到就是骗子。" data-en="cowallet only asks here. No support rep, no airdrop site will ever ask. If they do, it&rsquo;s a scam."></div>
+          </div>
+
+          <textarea id="imp-ta" class="imp-ta" spellcheck="false" autocorrect="off" autocapitalize="none"
+            data-zh-placeholder="一个词 一个词 空格隔开…"
+            data-en-placeholder="word word word word…"></textarea>
+
+          <div class="imp-meta">
+            <span class="imp-count" id="imp-count"><span data-zh="已输入 " data-en="Entered: "></span><b>0</b> / 24</span>
+            <button class="imp-paste" data-onb="imp-paste">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span data-zh="粘贴" data-en="Paste"></span>
+            </button>
+          </div>
+
+          <button class="btn btn-accent btn-lg btn-full" id="imp-submit" data-onb="imp-submit" disabled style="opacity:.4;margin-top:16px">
+            <span data-zh="导入我的钱包" data-en="Import my wallet"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 5: BIO — Face ID ========= -->
+      <div class="stage" data-stage="bio" style="display:none">
+        <div class="onb-top">
+          <div style="width:60px"></div>
+          <div class="onb-dots"><span class="done"></span><span class="done"></span><span class="active"></span></div>
+          <div style="width:60px"></div>
+        </div>
+
+        <div class="onb-body bio-center">
+          <div class="bio-ring" id="bio-ring">
+            <div class="bio-frame">
+              <svg id="bio-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
+                <path d="M9 10v0.5M15 10v0.5M12 10v4M10 16c.8.6 1.3.8 2 .8s1.2-.2 2-.8"/>
+              </svg>
+            </div>
+          </div>
+
+          <h1 class="onb-h1-center" id="bio-title" data-zh="每次花钱用人脸确认" data-en="Confirm with your face"></h1>
+          <p class="onb-sub-center" id="bio-sub" data-zh="就像手机解锁一样。你的脸不会离开这台手机。" data-en="Just like unlocking your phone. Your face never leaves this device."></p>
+        </div>
+
+        <div class="onb-footer">
+          <button class="btn btn-accent btn-lg btn-full" id="bio-activate" data-onb="bio-activate">
+            <span data-zh="打开人脸识别" data-en="Turn on Face ID"></span>
+          </button>
+          <button class="onb-skip" data-onb="bio-skip">
+            <span data-zh="改用密码" data-en="Use a passcode instead"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 6: NAME ========= -->
+      <div class="stage" data-stage="name" style="display:none">
+        <div class="onb-top">
+          <div style="width:60px"></div>
+          <div class="onb-dots"><span class="done"></span><span class="done"></span><span class="done"></span></div>
+          <button class="onb-skip-top" data-onb="name-skip">
+            <span data-zh="跳过" data-en="Skip"></span>
+          </button>
+        </div>
+
+        <div class="onb-body name-center">
+          <div class="name-intro">
+            <h1 class="onb-h1" data-zh="我该怎么叫你?" data-en="What should I call you?"></h1>
+            <p class="onb-sub" data-zh="起个名字就行,不用真名。" data-en="A nickname works. No real name needed."></p>
+          </div>
+          <input type="text" class="name-input" id="name-input" maxlength="32"
+            data-zh-placeholder="比如 小明 / 老王 / Alice"
+            data-en-placeholder="e.g. Alice, Mike, or a nickname" autocomplete="off"/>
+          <p class="name-hint" data-zh="存在你手机里,不会上传。" data-en="Stays on your phone. Never uploaded."></p>
+        </div>
+
+        <div class="onb-footer">
+          <button class="btn btn-accent btn-lg btn-full" data-onb="name-continue">
+            <span data-zh="下一步" data-en="Continue"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 7: READY ========= -->
+      <div class="stage" data-stage="ready" style="display:none">
+        <div class="onb-body ready-center">
+          <div class="ready-orb">
+            <div class="orb" style="width:120px;height:120px">
+              <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <radialGradient id="orbG3" cx="38%" cy="30%" r="68%">
+                    <stop offset="0%" stop-color="#ffd4bc"/>
+                    <stop offset="45%" stop-color="#D97757"/>
+                    <stop offset="100%" stop-color="#8a3f2a"/>
+                  </radialGradient>
+                </defs>
+                <circle cx="100" cy="100" r="82" fill="url(#orbG3)"/>
+                <ellipse cx="78" cy="66" rx="28" ry="18" fill="#fff8ef" opacity="0.5"/>
+              </svg>
+            </div>
+            <div class="ready-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+          </div>
+
+          <h1 class="ready-title" id="ready-title">
+            <span data-zh="都搞定了。" data-en="All set."></span>
+          </h1>
+          <p class="ready-sub" data-zh="你的钱包已经可以用了。" data-en="Your wallet is ready to use."></p>
+
+          <div class="ready-what">
+            <div class="ready-what-label" data-zh="接下来可以做这些" data-en="What you can do next"></div>
+            <div class="ready-item">
+              <span class="ri-num">1</span>
+              <div class="ri-body">
+                <div class="ri-h" data-zh="收到的第一笔钱,gas 我们付" data-en="First incoming? Gas is on us"></div>
+                <div class="ri-s" data-zh="给你试试手,不花你一分钱" data-en="Try it out, nothing from your pocket"></div>
+              </div>
+            </div>
+            <div class="ready-item">
+              <span class="ri-num">2</span>
+              <div class="ri-body">
+                <div class="ri-h" data-zh="试着对它说话" data-en="Try talking to it"></div>
+                <div class="ri-s" data-zh="&ldquo;我的钱都放哪了&rdquo; &ldquo;最近有什么花销&rdquo;" data-en="&ldquo;Show me my money&rdquo; &ldquo;How much did I spend this month?&rdquo;"></div>
+              </div>
+            </div>
+            <div class="ready-item">
+              <span class="ri-num">3</span>
+              <div class="ri-body">
+                <div class="ri-h" data-zh="7 天内设置找回凭证" data-en="Set up your recovery within 7 days"></div>
+                <div class="ri-s" data-zh="防止换手机或丢手机" data-en="In case you lose your phone"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="onb-footer">
+          <button class="btn btn-accent btn-lg btn-full" data-onb="ready-continue">
+            <span data-zh="好,开始用" data-en="OK, let's go"></span>
+            <span>→</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ========= STAGE 8: PERSONA ========= -->
+      <div class="stage" data-stage="persona" style="display:none">
+        <div class="onb-body">
+          <h1 class="onb-h1" data-zh="你主要想用它做什么?" data-en="What will you mostly use it for?"></h1>
+          <p class="onb-sub" data-zh="我们给你布置一个最顺手的首页。以后可以改。" data-en="We'll set up a home that fits you. You can switch later."></p>
+
+          <button class="persona-card" data-onb="persona" data-persona="daily">
+            <div class="persona-icon" style="background:var(--info)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 11l9-8 9 8v10a2 2 0 0 1-2 2h-4v-7h-6v7H5a2 2 0 0 1-2-2V11z"/></svg>
+            </div>
+            <div class="persona-body">
+              <div class="persona-head">
+                <span class="persona-name" data-zh="日常过日子" data-en="Everyday life"></span>
+                <span class="persona-tag" data-zh="最受欢迎" data-en="Most popular"></span>
+              </div>
+              <div class="persona-desc" data-zh="收钱、转账、买点东西、存点利息。" data-en="Send money, receive, shop, earn some interest."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+
+          <button class="persona-card" data-onb="persona" data-persona="trader">
+            <div class="persona-icon" style="background:var(--accent)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <div class="persona-body">
+              <div class="persona-head">
+                <span class="persona-name" data-zh="炒币 / 理财" data-en="Trading / Yield"></span>
+              </div>
+              <div class="persona-desc" data-zh="我会交易、追收益、让 AI 帮我盯盘。" data-en="I trade, chase yield, let AI watch the market."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+
+          <button class="persona-card" data-onb="persona" data-persona="family">
+            <div class="persona-icon" style="background:var(--gold)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.2"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5M14 20c0-2 2-3.5 4-3.5s3.5 1.5 3.5 3.5"/></svg>
+            </div>
+            <div class="persona-body">
+              <div class="persona-head">
+                <span class="persona-name" data-zh="家庭共管" data-en="Family account"></span>
+                <span class="persona-tag" data-zh="新" data-en="New"></span>
+              </div>
+              <div class="persona-desc" data-zh="家人帮我确认大额,但钱由我主控。" data-en="Family helps confirm big moves, but the money&rsquo;s mine."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+
+          <button class="persona-card" data-onb="persona" data-persona="builder">
+            <div class="persona-icon" style="background:var(--success)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+            </div>
+            <div class="persona-body">
+              <div class="persona-head">
+                <span class="persona-name" data-zh="我做 AI / 开发" data-en="I build AI / apps"></span>
+              </div>
+              <div class="persona-desc" data-zh="给我 API、skills 接口、测试环境。" data-en="Give me APIs, skills, a test sandbox."></div>
+            </div>
+            <span class="opt-chev">›</span>
+          </button>
+
+          <button class="onb-skip-bottom" data-onb="persona-skip">
+            <span data-zh="先跳过,我再看看" data-en="Skip for now"></span>
+          </button>
+        </div>
+      </div>
+
+    </div><!-- /onboarding -->
+
+
+    <!-- ========== MAIN APP (hidden until onboarding completes) ========== -->
+    <div class="screen" id="app" style="display:none">
+
+      <div class="status-bar">
+        <span>9:41</span>
+        <div class="right">
+          <svg viewBox="0 0 18 18" fill="currentColor"><path d="M9 4a5 5 0 0 0-4.95 4.3.8.8 0 0 0 .58.91l.1.02a.8.8 0 0 0 .91-.6 3.4 3.4 0 0 1 6.72 0 .8.8 0 0 0 1.59-.33A5 5 0 0 0 9 4z"/><circle cx="9" cy="11" r="2"/></svg>
+          <svg viewBox="0 0 18 18" fill="currentColor"><path d="M3 7v4h2V7zM7 5v8h2V5zM11 3v12h2V3zM15 1v16h2V1z"/></svg>
+          <svg viewBox="0 0 26 14" style="width:22px" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="22" height="8" rx="2"/><rect x="3" y="5" width="17" height="4" fill="currentColor"/></svg>
+        </div>
+      </div>
+
+      <div class="app-header" id="app-header"></div>
+
+      <div class="body" id="body">
+        <div class="body-inner">
+
+          <!-- ============== HOME ============== -->
+          <div class="view active" id="view-home">
+            <!-- Status bar showing all systems go -->
+            <div class="home-status">
+              <span class="d"></span>
+              <span data-zh="一切正常 · 三份钥匙都在 · 今天还没可疑动作" data-en="All good · all three key pieces safe · no odd activity today"></span>
+            </div>
+
+            <!-- Greeting -->
+            <h1 class="home-greet">
+              <span data-zh="早上好," data-en="Good morning,"></span>
+              <em id="greet-name">Alice</em><span data-zh="。" data-en="."></span>
+            </h1>
+
+            <!-- Slogan — what this wallet is, in one sentence -->
+            <p class="home-slogan" data-zh="会听懂人话的钱包 —— 你说一句,它就能帮你办。" data-en="A wallet that speaks your language — say what you need, it&rsquo;ll do it."></p>
+
+            <!-- Total balance, modestly shown -->
+            <div class="home-balance">
+              <div class="home-balance-label" data-zh="你的总资产" data-en="Your total"></div>
+              <div class="home-balance-amt">
+                <span class="u">$</span><span class="tabular">48,280</span><span class="sub">.22</span>
+              </div>
+              <div class="home-balance-change">
+                <span style="color:var(--success)">+$392 (0.82%)</span>
+                <span class="muted" data-zh="今天" data-en="today"></span>
+              </div>
+            </div>
+
+            <!-- Quick actions: send / receive / scan -->
+            <div class="home-actions">
+              <button class="home-action primary" data-nav="send">
+                <div class="ha-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                </div>
+                <span class="ha-label" data-zh="发送" data-en="Send"></span>
+              </button>
+              <button class="home-action" data-nav="receive">
+                <div class="ha-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+                </div>
+                <span class="ha-label" data-zh="收款" data-en="Receive"></span>
+              </button>
+              <button class="home-action" data-nav="scan">
+                <div class="ha-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14h1v1M17 17v4M14 20h3v1"/></svg>
+                </div>
+                <span class="ha-label" data-zh="扫码" data-en="Scan"></span>
+              </button>
+              <button class="home-action" data-nav="pay-anyone">
+                <div class="ha-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v2"/></svg>
+                </div>
+                <span class="ha-label" data-zh="联系人" data-en="People"></span>
+              </button>
+            </div>
+
+            <!-- Try me: ways to talk to the wallet -->
+            <div class="section-label">
+              <span data-zh="试试跟它说话" data-en="Try talking to it"></span>
+            </div>
+            <div class="try-stack">
+              <button class="try-card" data-try-prompt-zh="我这个月花了多少钱?" data-try-prompt-en="How much did I spend this month?">
+                <div class="try-icon">💬</div>
+                <div class="try-text">
+                  <div class="th" data-zh="我这个月花了多少钱?" data-en="How much did I spend this month?"></div>
+                  <div class="ts" data-zh="分类统计、省钱建议" data-en="Categorized, with tips to save"></div>
+                </div>
+                <span class="try-arr">→</span>
+              </button>
+              <button class="try-card" data-try-prompt-zh="我那 5 万块闲着呢,能赚利息吗?" data-try-prompt-en="I have $50k sitting around — can it earn interest?">
+                <div class="try-icon">💡</div>
+                <div class="try-text">
+                  <div class="th" data-zh="我那 5 万块闲着呢" data-en="I have $50k just sitting"></div>
+                  <div class="ts" data-zh="看看放哪能赚利息" data-en="See where it could earn interest"></div>
+                </div>
+                <span class="try-arr">→</span>
+              </button>
+              <button class="try-card" data-try-prompt-zh="老婆生日,给她转 1000 块" data-try-prompt-en="Wife's birthday, send her $1000">
+                <div class="try-icon">🎁</div>
+                <div class="try-text">
+                  <div class="th" data-zh="老婆生日,给她转 1000 块" data-en="Wife's birthday, send her $1000"></div>
+                  <div class="ts" data-zh="联系人式转账" data-en="Transfer by contact name"></div>
+                </div>
+                <span class="try-arr">→</span>
+              </button>
+            </div>
+
+            <!-- Recent activity narrated in human terms -->
+            <div class="section-label">
+              <span data-zh="最近发生的事" data-en="Recent activity"></span>
+              <button class="sec-link" data-zh="全部" data-en="See all"></button>
+            </div>
+            <div class="activity-card">
+              <div class="act-row">
+                <div class="act-icon" style="background:var(--success-soft);color:var(--success)">↓</div>
+                <div class="act-body">
+                  <div class="act-h" data-zh="收到 0.5 ETH" data-en="Received 0.5 ETH"></div>
+                  <div class="act-s" data-zh="来自 朋友小明 · 2 小时前" data-en="From Xiao Ming · 2h ago"></div>
+                </div>
+                <div class="act-amt">+$1,276</div>
+              </div>
+              <div class="act-row">
+                <div class="act-icon" style="background:var(--accent-soft);color:var(--accent-hover)">◆</div>
+                <div class="act-body">
+                  <div class="act-h" data-zh="Claude 查了你的余额" data-en="Claude checked your balance"></div>
+                  <div class="act-s" data-zh="按你定的规矩,只读不动 · 4 小时前" data-en="Read-only, per your rules · 4h ago"></div>
+                </div>
+                <div class="act-amt muted">—</div>
+              </div>
+              <div class="act-row">
+                <div class="act-icon" style="background:var(--bg-subtle);color:var(--ink-2)">→</div>
+                <div class="act-body">
+                  <div class="act-h" data-zh="自动付了 $42 给 Figma" data-en="Auto-paid $42 to Figma"></div>
+                  <div class="act-s" data-zh="订阅续费 · 昨天" data-en="Subscription renewal · yesterday"></div>
+                </div>
+                <div class="act-amt">-$42</div>
+              </div>
+              <div class="act-row">
+                <div class="act-icon" style="background:var(--danger-soft);color:var(--danger)">!</div>
+                <div class="act-body">
+                  <div class="act-h" data-zh="拦下一个可疑授权" data-en="Blocked a suspicious approval"></div>
+                  <div class="act-s" data-zh="对方想无限额度提款 · 2 天前" data-en="Wanted unlimited withdraw · 2d ago"></div>
+                </div>
+                <div class="act-amt muted">—</div>
+              </div>
+            </div>
+
+            <!-- AI-native capabilities showcase -->
+            <div class="section-label">
+              <span data-zh="只有 cowallet 有的" data-en="Only cowallet does this"></span>
+            </div>
+            <div class="showcase-grid">
+              <button class="showcase-card" data-nav="ai-reads">
+                <div class="sc-icon" style="background:linear-gradient(135deg,#D97757,#c96744)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/></svg>
+                </div>
+                <div class="sc-title" data-zh="AI 看懂交易" data-en="AI reads the contract"></div>
+                <div class="sc-desc" data-zh="签字前用人话告诉你" data-en="Explains in plain words"></div>
+              </button>
+              <button class="showcase-card" data-nav="agent-pay">
+                <div class="sc-icon" style="background:linear-gradient(135deg,#5a7a4e,#4a6640)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                </div>
+                <div class="sc-title" data-zh="让 AI 替你付款" data-en="Let AI pay for you"></div>
+                <div class="sc-desc" data-zh="订阅、账单自动跑" data-en="Subs and bills, hands-free"></div>
+              </button>
+              <button class="showcase-card" data-nav="family">
+                <div class="sc-icon" style="background:linear-gradient(135deg,#a88a4a,#8a6f3a)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.2"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5M14 20c0-2 2-3.5 4-3.5s3.5 1.5 3.5 3.5"/></svg>
+                </div>
+                <div class="sc-title" data-zh="家人共管" data-en="Family guard"></div>
+                <div class="sc-desc" data-zh="大额让家人再点一下" data-en="Big moves, family confirms"></div>
+              </button>
+              <button class="showcase-card" data-nav="skills">
+                <div class="sc-icon" style="background:linear-gradient(135deg,#4a3f32,#2b2418)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 2l2 6h6l-5 4 2 6-5-4-5 4 2-6-5-4h6z"/></svg>
+                </div>
+                <div class="sc-title" data-zh="接入 AI 助手" data-en="Connect AI agents"></div>
+                <div class="sc-desc" data-zh="Claude、ChatGPT 一键插" data-en="Claude, ChatGPT — one tap"></div>
+              </button>
+            </div>
+          </div>
+
+          <!-- ============== WALLET ============== -->
+          <div class="view" id="view-wallet">
+            <div class="wallet-summary">
+              <div class="ws-label" data-zh="总资产" data-en="Total balance"></div>
+              <div class="ws-amt tabular">$48,280.22</div>
+              <div class="ws-change"><span style="color:var(--success)">+$392 (0.82%)</span> <span class="muted" data-zh="· 今天" data-en="· today"></span></div>
+            </div>
+
+            <div class="ws-actions">
+              <button class="btn btn-primary" data-zh="发送" data-en="Send"></button>
+              <button class="btn btn-outline" data-zh="收款" data-en="Receive"></button>
+              <button class="btn btn-outline" data-zh="兑换" data-en="Swap"></button>
+            </div>
+
+            <div class="section-label">
+              <span data-zh="你的资产" data-en="Your money"></span>
+            </div>
+            <div class="asset-list">
+              <div class="asset-row">
+                <div class="asset-sym" style="background:#2775ca">U</div>
+                <div class="asset-body">
+                  <div class="asset-name"><span data-zh="美元稳定币" data-en="US Dollar stable"></span> <span class="muted text-xs">(USDC)</span></div>
+                  <div class="asset-sub tabular">28,450.20</div>
+                </div>
+                <div class="asset-value tabular">$28,450</div>
+              </div>
+              <div class="asset-row">
+                <div class="asset-sym" style="background:#627eea">Ξ</div>
+                <div class="asset-body">
+                  <div class="asset-name"><span data-zh="以太币" data-en="Ether"></span> <span class="muted text-xs">(ETH)</span></div>
+                  <div class="asset-sub tabular">5.24</div>
+                </div>
+                <div class="asset-value tabular">$16,830<div class="asset-chg" style="color:var(--success)">+2.1%</div></div>
+              </div>
+              <div class="asset-row">
+                <div class="asset-sym" style="background:#00a79d">s</div>
+                <div class="asset-body">
+                  <div class="asset-name"><span data-zh="质押的以太币" data-en="Staked Ether"></span> <span class="muted text-xs">(stETH)</span></div>
+                  <div class="asset-sub"><span data-zh="每年 3.15% 利息" data-en="3.15% APY"></span></div>
+                </div>
+                <div class="asset-value tabular">$3,000</div>
+              </div>
+            </div>
+
+            <!-- Securities tokens — as an add-on module, not a hero -->
+            <div class="section-label">
+              <span data-zh="证券代币 · 可选" data-en="Securities · optional"></span>
+              <span class="chip gold" style="font-size:10px;padding:2px 8px">
+                <span data-zh="新" data-en="New"></span>
+              </span>
+            </div>
+            <p class="sec-intro" data-zh="美债、美股、黄金的链上版本。打开就能买。" data-en="Tokenized T-bills, stocks, and gold. One-tap to buy."></p>
+            <button class="sec-card" data-nav="securities">
+              <div class="sec-grid">
+                <div class="sec-item">
+                  <div class="sec-name"><span data-zh="美国国债" data-en="US T-Bills"></span></div>
+                  <div class="sec-val" style="color:var(--gold)">5.20%</div>
+                  <div class="sec-sub" data-zh="年化" data-en="APY"></div>
+                </div>
+                <div class="sec-item">
+                  <div class="sec-name">AAPL</div>
+                  <div class="sec-val">$224</div>
+                  <div class="sec-sub" style="color:var(--success)">+1.4%</div>
+                </div>
+                <div class="sec-item">
+                  <div class="sec-name"><span data-zh="黄金" data-en="Gold"></span></div>
+                  <div class="sec-val">$92.4</div>
+                  <div class="sec-sub"><span data-zh="/克" data-en="/g"></span></div>
+                </div>
+              </div>
+              <div class="sec-cta">
+                <span data-zh="看全部证券代币" data-en="Browse all"></span>
+                <span>→</span>
+              </div>
+            </button>
+
+            <div class="section-label">
+              <span data-zh="在赚利息的钱" data-en="Earning money"></span>
+            </div>
+            <div class="yield-card">
+              <div class="row between">
+                <div>
+                  <div class="text-serif text-lg" style="font-weight:500"><span data-zh="Aave 上的 USDC" data-en="USDC on Aave"></span></div>
+                  <div class="text-xs muted" data-zh="Base 链 · 审计过 · 184 天零事故" data-en="Base · audited · 184 days no incidents"></div>
+                </div>
+                <div style="text-align:right">
+                  <div class="text-mono" style="color:var(--success);font-weight:600">4.82%</div>
+                  <div class="text-xs muted" data-zh="年化" data-en="APY"></div>
+                </div>
+              </div>
+              <div class="mt-3 text-sm tabular" style="color:var(--ink-2)">
+                <span data-zh="放了 " data-en="Holding "></span><b>$10,000</b><span data-zh=" · 今天赚了 " data-en=" · earned today "></span><b style="color:var(--success)">$1.32</b>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ============== AGENTS (skills hub + pacts) ============== -->
+          <div class="view" id="view-agents">
+
+            <!-- Hero card explaining what this is -->
+            <div class="agents-hero">
+              <div class="ah-label" data-zh="助手中心" data-en="Agents"></div>
+              <h2 class="ah-title" data-zh="让 AI 在你定的规矩里帮你办事。" data-en="Let AI handle things — within rules you set."></h2>
+              <p class="ah-sub" data-zh="你写规矩(花多少、给谁、干啥),AI 照办。越界就停。" data-en="You write the rules (how much, to whom, for what). AI obeys. Crosses a line, it stops."></p>
+            </div>
+
+            <!-- Connected agents -->
+            <div class="section-label">
+              <span data-zh="已接入 · 2 个助手" data-en="Connected · 2 agents"></span>
+              <button class="sec-link" data-zh="紧急全冻" data-en="Freeze all" style="color:var(--danger)"></button>
+            </div>
+
+            <div class="agent-card">
+              <div class="row between mb-2">
+                <div class="row gap-12">
+                  <div class="agent-avatar" style="background:#141008">C</div>
+                  <div>
+                    <div class="text-serif" style="font-size:15px;font-weight:500">Claude Desktop</div>
+                    <div class="text-xs muted" data-zh="规矩:研究+支付订阅" data-en="Rules: Research + pay subs"></div>
+                  </div>
+                </div>
+                <span class="chip green"><span class="d"></span><span data-zh="活跃" data-en="active"></span></span>
+              </div>
+              <div class="agent-usage">
+                <div class="au-row">
+                  <span class="au-label" data-zh="今日" data-en="Today"></span>
+                  <span class="au-val tabular">$42 / $500</span>
+                </div>
+                <div class="au-bar"><div class="au-fill" style="width:8.4%;background:var(--accent)"></div></div>
+              </div>
+              <div class="agent-meta">
+                <span data-zh="已签 3 / 10 笔 · 剩余时效 6 天" data-en="Signed 3/10 · 6 days left"></span>
+              </div>
+            </div>
+
+            <div class="agent-card">
+              <div class="row between mb-2">
+                <div class="row gap-12">
+                  <div class="agent-avatar" style="background:#D97757">o</div>
+                  <div>
+                    <div class="text-serif" style="font-size:15px;font-weight:500">Cowork</div>
+                    <div class="text-xs muted" data-zh="规矩:收益再平衡" data-en="Rules: yield rebalance"></div>
+                  </div>
+                </div>
+                <span class="chip green"><span class="d"></span><span data-zh="活跃" data-en="active"></span></span>
+              </div>
+              <div class="agent-usage">
+                <div class="au-row">
+                  <span class="au-label" data-zh="今日" data-en="Today"></span>
+                  <span class="au-val tabular">$0 / $1,000</span>
+                </div>
+                <div class="au-bar"><div class="au-fill" style="width:0%;background:var(--accent)"></div></div>
+              </div>
+              <div class="agent-meta">
+                <span data-zh="已签 0 / 5 笔 · 剩余时效 6 天" data-en="Signed 0/5 · 6 days left"></span>
+              </div>
+            </div>
+
+            <button class="btn btn-outline btn-full mt-3" data-nav="connect-agent" style="justify-content:flex-start;padding:14px 18px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              <span data-zh="接入新助手" data-en="Connect a new agent"></span>
+            </button>
+
+            <!-- Skills — extensions the wallet can gain -->
+            <div class="section-label">
+              <span data-zh="Skills · 给钱包扩展能力" data-en="Skills · extensions for your wallet"></span>
+            </div>
+            <p class="sec-intro" data-zh="别人写好的能力,安装就能用。像给浏览器装插件。" data-en="Prebuilt capabilities. Install and use. Like browser extensions."></p>
+
+            <div class="skill-grid">
+              <button class="skill-card installed">
+                <div class="skill-icon" style="background:var(--info-soft);color:var(--info)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2v20M17 5H9a3 3 0 0 0 0 6h6a3 3 0 0 1 0 6H6"/></svg>
+                </div>
+                <div class="skill-name" data-zh="账单自动付" data-en="Auto-pay bills"></div>
+                <div class="skill-meta"><span class="chip green text-xs" data-zh="已用" data-en="Installed"></span></div>
+              </button>
+              <button class="skill-card installed">
+                <div class="skill-icon" style="background:var(--gold-soft);color:var(--gold)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 3v18h18M7 14l4-4 4 4 5-5"/></svg>
+                </div>
+                <div class="skill-name" data-zh="价格提醒" data-en="Price alerts"></div>
+                <div class="skill-meta"><span class="chip green text-xs" data-zh="已用" data-en="Installed"></span></div>
+              </button>
+              <button class="skill-card">
+                <div class="skill-icon" style="background:var(--accent-soft);color:var(--accent)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+                </div>
+                <div class="skill-name" data-zh="房租自动付" data-en="Rent auto-pay"></div>
+                <div class="skill-meta"><span class="chip text-xs" data-zh="+ 装" data-en="+ add"></span></div>
+              </button>
+              <button class="skill-card">
+                <div class="skill-icon" style="background:var(--success-soft);color:var(--success)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                </div>
+                <div class="skill-name" data-zh="定投计划" data-en="DCA investing"></div>
+                <div class="skill-meta"><span class="chip text-xs" data-zh="+ 装" data-en="+ add"></span></div>
+              </button>
+              <button class="skill-card">
+                <div class="skill-icon" style="background:var(--info-soft);color:var(--info)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </div>
+                <div class="skill-name" data-zh="子账户(给孩子)" data-en="Subaccount (kids)"></div>
+                <div class="skill-meta"><span class="chip text-xs" data-zh="+ 装" data-en="+ add"></span></div>
+              </button>
+              <button class="skill-card">
+                <div class="skill-icon" style="background:var(--bg-subtle);color:var(--ink-3)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+                </div>
+                <div class="skill-name" data-zh="更多 skills" data-en="Browse more"></div>
+                <div class="skill-meta" style="font-size:10px;color:var(--ink-3)">300+</div>
+              </button>
+            </div>
+
+            <!-- Developer protocols — quietly visible, for pros -->
+            <div class="section-label">
+              <span data-zh="开发者接口" data-en="Developer protocols"></span>
+              <span class="chip info text-xs">for devs</span>
+            </div>
+            <div class="proto-list">
+              <div class="proto-row">
+                <div class="proto-name"><span class="chip accent text-xs">MCP</span><span data-zh="模型上下文协议" data-en="Model Context Protocol"></span></div>
+                <div class="proto-desc" data-zh="Claude、Cursor 等 MCP host 直连" data-en="Claude, Cursor, any MCP host"></div>
+                <span class="chip green text-xs"><span class="d"></span>LIVE</span>
+              </div>
+              <div class="proto-row">
+                <div class="proto-name"><span class="chip info text-xs">x402</span><span data-zh="按次付费协议" data-en="Per-request payments"></span></div>
+                <div class="proto-desc" data-zh="AI 按 API 调用次数付钱" data-en="AI pays APIs per call"></div>
+                <span class="chip green text-xs"><span class="d"></span>LIVE</span>
+              </div>
+              <div class="proto-row">
+                <div class="proto-name"><span class="chip text-xs">REST</span><span data-zh="HTTP API + HMAC" data-en="HTTP API + HMAC"></span></div>
+                <div class="proto-desc" data-zh="你自己的 agent" data-en="Your own agent"></div>
+                <span class="chip green text-xs"><span class="d"></span>LIVE</span>
+              </div>
+              <div class="proto-row">
+                <div class="proto-name"><span class="chip text-xs">Webhook</span><span data-zh="事件推送" data-en="Event push"></span></div>
+                <div class="proto-desc" data-zh="每笔交易实时通知你的服务器" data-en="Push every tx to your server"></div>
+                <span class="chip green text-xs"><span class="d"></span>LIVE</span>
+              </div>
+              <div class="proto-row">
+                <div class="proto-name"><span class="chip text-xs">EIP-6963</span><span data-zh="浏览器注入" data-en="Browser inject"></span></div>
+                <div class="proto-desc" data-zh="Web3 网站自动认得" data-en="Web3 sites recognize automatically"></div>
+                <span class="chip green text-xs"><span class="d"></span>LIVE</span>
+              </div>
+              <div class="proto-row dim">
+                <div class="proto-name"><span class="chip text-xs">A2A</span><span data-zh="助手对助手" data-en="Agent-to-agent"></span></div>
+                <div class="proto-desc" data-zh="两个 AI 互相调用 (Google 提案)" data-en="Two AIs talking (Google draft)"></div>
+                <span class="chip amber text-xs" data-zh="即将支持" data-en="soon"></span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ============== SETTINGS ============== -->
+          <div class="view" id="view-settings">
+
+            <div class="section-label">
+              <span data-zh="安全" data-en="Security"></span>
+            </div>
+
+            <button class="big-card" data-nav="keys">
+              <div class="bc-top">
+                <div>
+                  <div class="bc-title"><span data-zh="三份钥匙体检" data-en="Three-piece key checkup"></span></div>
+                  <div class="bc-sub" data-zh="动你的钱,要三份钥匙都点头" data-en="All three must agree to move your money"></div>
+                </div>
+                <span class="chip green"><span class="d"></span><span data-zh="都在" data-en="safe"></span></span>
+              </div>
+              <div class="bc-keys">
+                <div class="kk healthy">
+                  <div class="kk-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="3" width="12" height="18" rx="2"/><circle cx="12" cy="17" r="1"/></svg></div>
+                  <div class="kk-name" data-zh="手机里" data-en="On phone"></div>
+                </div>
+                <div class="kk healthy">
+                  <div class="kk-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 10a4 4 0 0 0 0-8H6a4 4 0 0 0 0 8M2 14a4 4 0 0 1 4-4h12a4 4 0 0 1 0 8H6a4 4 0 0 1-4-4z"/></svg></div>
+                  <div class="kk-name" data-zh="云端" data-en="In cloud"></div>
+                </div>
+                <div class="kk warn">
+                  <div class="kk-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="16" r="1"/><path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z"/></svg></div>
+                  <div class="kk-name" data-zh="找回码" data-en="Recovery"></div>
+                </div>
+              </div>
+            </button>
+
+            <div class="setting-list">
+              <div class="sl-row">
+                <div class="sl-ico" style="background:var(--danger-soft);color:var(--danger)">!</div>
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="紧急冻结" data-en="Emergency freeze"></div>
+                  <div class="sl-s" data-zh="一键停止所有助手、暂停所有交易" data-en="Stops all agents, pauses all transactions"></div>
+                </div>
+                <span class="sl-arr">›</span>
+              </div>
+              <div class="sl-row">
+                <div class="sl-ico" style="background:var(--warn-soft);color:var(--warn)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5"/></svg>
+                </div>
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="紧急联系人" data-en="Emergency contact"></div>
+                  <div class="sl-s" data-zh="丢手机时帮你冻结和恢复" data-en="Helps freeze and recover if you lose your phone"></div>
+                </div>
+                <span class="sl-arr">›</span>
+              </div>
+              <div class="sl-row">
+                <div class="sl-ico" style="background:var(--info-soft);color:var(--info)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/><path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z"/></svg>
+                </div>
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="风险拦截" data-en="Risk guard"></div>
+                  <div class="sl-s" data-zh="AI 实时盯防钓鱼、授权滥用" data-en="AI watches for phishing, dodgy approvals"></div>
+                </div>
+                <span class="sl-arr">›</span>
+              </div>
+            </div>
+
+            <div class="section-label">
+              <span data-zh="对话" data-en="Conversation"></span>
+            </div>
+
+            <div class="setting-list">
+              <div class="sl-row">
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="意图提示出现时机" data-en="When intent card appears"></div>
+                  <div class="sl-s" data-zh="回车后弹卡(推荐) 或 打字时浮现" data-en="Pop-after-enter (default) or float-while-typing"></div>
+                </div>
+                <span class="sl-arr" data-zh="回车后弹" data-en="On enter"></span>
+              </div>
+              <div class="sl-row">
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="语音输入" data-en="Voice input"></div>
+                  <div class="sl-s" data-zh="按住说话,松手发送" data-en="Hold to talk, release to send"></div>
+                </div>
+                <span class="chip green text-xs" data-zh="开" data-en="on"></span>
+              </div>
+              <div class="sl-row">
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="AI 模型" data-en="AI model"></div>
+                  <div class="sl-s" data-zh="Claude Opus 4 · 本地小模型做意图识别" data-en="Claude Opus 4 · local for intent"></div>
+                </div>
+                <span class="sl-arr">›</span>
+              </div>
+            </div>
+
+            <div class="section-label">
+              <span data-zh="一般" data-en="General"></span>
+            </div>
+            <div class="setting-list">
+              <div class="sl-row">
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="语言" data-en="Language"></div>
+                </div>
+                <span class="sl-arr" data-zh="中文" data-en="English"></span>
+              </div>
+              <div class="sl-row">
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="每周透明度报告" data-en="Weekly transparency report"></div>
+                  <div class="sl-s" data-zh="cowallet 自我体检 · 公开" data-en="cowallet self-audits · public"></div>
+                </div>
+                <span class="sl-arr">›</span>
+              </div>
+              <div class="sl-row">
+                <div class="sl-body">
+                  <div class="sl-h" data-zh="重置引导流程" data-en="Redo onboarding"></div>
+                  <div class="sl-s" data-zh="从头看一遍" data-en="See it from the start"></div>
+                </div>
+                <span class="sl-arr" id="redo-onb">↻</span>
+              </div>
+            </div>
+
+            <div class="signoff">
+              <span data-zh="cowallet · 2026" data-en="cowallet · 2026"></span>
+              <span data-zh="会听懂人话的钱包" data-en="A wallet that listens"></span>
+            </div>
+
+          </div>
+
+          <!-- ============== KEYS DETAIL ============== -->
+          <div class="view" id="view-keys">
+            <div class="keys-hero">
+              <h1 class="keys-h1">
+                <span data-zh="三份钥匙" data-en="Three pieces,"></span><br/>
+                <span data-zh="都点头才能" data-en="all must agree to"></span> <em data-zh="动钱" data-en="move"></em>
+              </h1>
+              <p class="keys-sub" data-zh="没人能单独动你的钱 —— 连 cowallet 公司都进不来。" data-en="Nobody can move your money alone — not even cowallet."></p>
+            </div>
+
+            <div class="keys-three">
+              <div class="keys-card healthy">
+                <div class="keys-top">
+                  <div class="keys-big-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="3" width="12" height="18" rx="2"/><circle cx="12" cy="17" r="1"/></svg></div>
+                  <div>
+                    <div class="keys-title" data-zh="手机里那份" data-en="On this phone"></div>
+                    <div class="keys-where" data-zh="在你手机的安全区里" data-en="In your phone's secure enclave"></div>
+                  </div>
+                  <span class="chip green"><span class="d"></span>OK</span>
+                </div>
+                <div class="keys-meta" data-zh="✓ 完整 · 12 分钟前刚用过" data-en="✓ Intact · used 12 min ago"></div>
+              </div>
+
+              <div class="keys-card healthy">
+                <div class="keys-top">
+                  <div class="keys-big-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 10a4 4 0 0 0 0-8H6a4 4 0 0 0 0 8"/></svg></div>
+                  <div>
+                    <div class="keys-title" data-zh="云端那份" data-en="In the cloud"></div>
+                    <div class="keys-where" data-zh="Anchorage 托管 · 美国合规机构" data-en="Anchorage · US-regulated custodian"></div>
+                  </div>
+                  <span class="chip green"><span class="d"></span>OK</span>
+                </div>
+                <div class="keys-meta" data-zh="✓ 心跳 2 分钟前 · 加密完整" data-en="✓ Heartbeat 2 min ago · encrypted"></div>
+              </div>
+
+              <div class="keys-card warn">
+                <div class="keys-top">
+                  <div class="keys-big-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="16" r="1"/><path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z"/></svg></div>
+                  <div>
+                    <div class="keys-title" data-zh="找回码那份" data-en="Recovery piece"></div>
+                    <div class="keys-where" data-zh="在你那儿(或没设)" data-en="In your hands (or unset)"></div>
+                  </div>
+                  <span class="chip amber"><span class="d"></span><span data-zh="该测了" data-en="test it"></span></span>
+                </div>
+                <div class="keys-meta" data-zh="⚠ 90 天没确认过它还在" data-en="⚠ Not verified in 90 days"></div>
+                <button class="btn btn-accent btn-pill mt-3" style="width:100%;padding:10px">
+                  <span data-zh="现在花 30 秒测一下" data-en="Test it now (30 seconds)"></span>
+                </button>
+              </div>
+            </div>
+
+            <div class="card subtle mt-4" style="padding:14px 16px">
+              <div class="card-label" data-zh="这是怎么回事?" data-en="How does this work?"></div>
+              <p class="text-sm" style="color:var(--ink-2);line-height:1.65">
+                <span data-zh="想象家门有三把锁 —— 你身上一把,信任的帮手(云端)一把,保险柜里一把(找回码)。开门必须凑齐两把以上。就算 cowallet 公司被黑,他们也只拿到一把,开不了你的门。" data-en="Imagine three locks on your door. You hold one. A trusted helper (cloud) holds one. A safe holds one (recovery). Opening needs at least two. Even if cowallet gets hacked, attackers have only one — your door stays shut."></span>
+              </p>
+            </div>
+
+            <!-- Tech detail for pros -->
+            <div class="card mt-3" style="padding:12px 14px">
+              <div class="card-label row between">
+                <span data-zh="技术细节 · 给懂行的" data-en="Tech detail · for pros"></span>
+                <span class="chip text-xs">MPC 2-of-3</span>
+              </div>
+              <p class="text-xs muted mt-2" style="line-height:1.6">
+                <span data-zh="门限签名 (TSS) · 设备端用 Secure Enclave,云端由 Anchorage Digital 托管(SOC2/ISO27001)。任一分片不产生完整私钥。" data-en="Threshold signatures (TSS). Device share in Secure Enclave; cloud share at Anchorage Digital (SOC2/ISO27001). No share reconstructs the full private key."></span>
+              </p>
+            </div>
+          </div>
+
+          <!-- ============== CHAT (full screen when ask is opened) ============== -->
+          <div class="view" id="view-chat">
+            <div class="chat-scroll" id="chat-scroll">
+              <!-- Empty state -->
+              <div class="chat-empty" id="chat-empty">
+                <div class="orb" style="width:70px;height:70px;margin-bottom:20px">
+                  <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                    <defs><radialGradient id="orbGC" cx="38%" cy="30%" r="68%"><stop offset="0%" stop-color="#ffd4bc"/><stop offset="45%" stop-color="#D97757"/><stop offset="100%" stop-color="#8a3f2a"/></radialGradient></defs>
+                    <circle cx="100" cy="100" r="82" fill="url(#orbGC)"/>
+                    <ellipse cx="78" cy="66" rx="28" ry="18" fill="#fff8ef" opacity="0.5"/>
+                  </svg>
+                </div>
+                <div class="chat-empty-h" data-zh="说点什么?" data-en="What's on your mind?"></div>
+                <div class="chat-empty-s" data-zh="说话、打字、拍张照都行。" data-en="Talk, type, or send a photo."></div>
+
+                <div class="chat-suggestions">
+                  <button class="chat-sug" data-try-prompt-zh="我的钱都放哪了?" data-try-prompt-en="Where's my money?">
+                    <span data-zh="我的钱都放哪了?" data-en="Where's my money?"></span>
+                  </button>
+                  <button class="chat-sug" data-try-prompt-zh="帮我把稳定币存起来赚利息" data-try-prompt-en="Park my stablecoins and earn yield">
+                    <span data-zh="帮我把稳定币存起来赚利息" data-en="Park my stablecoins and earn"></span>
+                  </button>
+                  <button class="chat-sug" data-try-prompt-zh="看看我这个月花销" data-try-prompt-en="Show me this month's spending">
+                    <span data-zh="看看我这个月花销" data-en="Show me this month's spending"></span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Message thread lives here, filled by JS -->
+              <div class="msg-thread" id="msg-thread"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Composer — only shows on home + chat -->
+      <div class="composer" id="composer" style="display:none">
+        <!-- Attachment preview row (hidden until a file is attached) -->
+        <div class="attach-row" id="attach-row" style="display:none"></div>
+        <div class="composer-row">
+          <button class="ctool" id="ctool-upload" title="upload image">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M3 16l5-4 4 3 3-2 6 5"/></svg>
+          </button>
+          <input type="text" id="composer-input" autocomplete="off"
+            data-zh-placeholder="跟 cowallet 说点什么…"
+            data-en-placeholder="Tell cowallet what you need…"/>
+          <div class="composer-tools">
+            <button class="ctool" id="ctool-voice" title="voice">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+            </button>
+            <button class="send-btn" id="send-btn" title="send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab bar -->
+      <div class="tabbar">
+        <div class="item active" data-tab="home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linejoin="round"><path d="M3 11l9-8 9 8v10a2 2 0 0 1-2 2h-4v-7h-6v7H5a2 2 0 0 1-2-2V11z"/></svg>
+          <span class="item-label" data-zh="首页" data-en="Home"></span>
+        </div>
+        <div class="item" data-tab="wallet">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M3 10h18"/></svg>
+          <span class="item-label" data-zh="钱包" data-en="Wallet"></span>
+        </div>
+
+        <div class="ask-pill" data-tab="chat">
+          <div class="ask-orb"></div>
+          <div class="ask-label" data-zh="问" data-en="ASK"></div>
+        </div>
+
+        <div class="item" data-tab="agents">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+          <span class="item-label" data-zh="助手" data-en="Agents"></span>
+        </div>
+        <div class="item" data-tab="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.5-2.4 1a7 7 0 0 0-2.1-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2.1 1.2l-2.4-1-2 3.5 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.5 2.4-1c.6.5 1.3.9 2.1 1.2L10 21h4l.4-2.6a7 7 0 0 0 2.1-1.2l2.4 1 2-3.5-2-1.5c0-.4.1-.8.1-1.2z"/></svg>
+          <span class="item-label" data-zh="设置" data-en="Settings"></span>
+        </div>
+      </div>
+
+    </div><!-- /screen -->
+  </div><!-- /phone -->
+
+  <!-- Hint below phone -->
+  <div class="hint">
+    <b data-zh="试试" data-en="Try"></b>
+    <span data-zh="走一遍引导(8 屏) · 进主页后点建议提示看意图卡 · 点对话里的 📷 试试上传图片 · 右上角切英文 · 进设置 → 重置引导 从头再走一遍" data-en="Walk the 8-step onboarding · tap suggestions on home to see intent cards · tap 📷 in chat to test upload · toggle EN/中 · go to Settings → Redo onboarding to start over"></span>
+  </div>
+
+<!-- voice recording bar (hidden by default, shows when user holds voice button) -->
+<div class="voice-bar" id="voice-bar">
+  <div class="v-wave"><span></span><span></span><span></span><span></span><span></span></div>
+  <span class="v-time" id="v-time">0:00</span>
+  <button class="voice-cancel" id="voice-cancel">
+    <span data-zh="取消" data-en="Cancel"></span>
+  </button>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+   cowallet v1.0 — full application logic
+   ===================================================================== */
+
+const body = document.body;
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+let state = {
+  lang:'zh',
+  userName:'',
+  persona:'daily',
+  tab:'home',
+  view:'home',
+  intentMode:'enter',  // 'enter' or 'live'
+  attachedImg:null,
+};
+
+/* ---------------------------------------------------------------------
+   LANGUAGE
+   --------------------------------------------------------------------- */
+function setLang(lang){
+  state.lang = lang;
+  body.classList.remove('lang-zh','lang-en');
+  body.classList.add('lang-'+lang);
+  $('#btn-en').classList.toggle('on', lang==='en');
+  $('#btn-zh').classList.toggle('on', lang==='zh');
+  $$('[data-onb-lang]').forEach(b => b.classList.toggle('on', b.dataset.onbLang === lang));
+  // update input placeholders
+  $$('[data-zh-placeholder]').forEach(el => {
+    el.placeholder = el.dataset[lang+'Placeholder'] || '';
+  });
+  // Update header for current view
+  renderAppHeader();
+  // Update greeting name in italic
+  const g = $('#greet-name');
+  if(g) g.textContent = state.userName || (lang === 'zh' ? 'Alice' : 'Alice');
+}
+$('#btn-en').onclick = () => setLang('en');
+$('#btn-zh').onclick = () => setLang('zh');
+
+/* ---------------------------------------------------------------------
+   ONBOARDING
+   --------------------------------------------------------------------- */
+const onb = $('#onb');
+const app = $('#app');
+
+function showStage(stage){
+  $$('#onb .stage').forEach(s => {
+    const is = s.dataset.stage === stage;
+    s.classList.toggle('active', is);
+    s.style.display = is ? 'flex' : 'none';
+  });
+  if(navigator.vibrate) navigator.vibrate(4);
+  if(stage === 'name') setTimeout(() => $('#name-input')?.focus(), 360);
+  if(stage === 'importing') setTimeout(() => $('#imp-ta')?.focus(), 360);
+  if(stage === 'creating') runCreatingAnim();
+}
+
+function dismissOnboarding(){
+  onb.classList.add('hiding');
+  setTimeout(() => {
+    onb.style.display = 'none';
+    app.style.display = 'flex';
+    setView('home');
+    // Personalize greeting
+    const g = $('#greet-name');
+    if(g && state.userName) g.textContent = state.userName;
+  }, 400);
+}
+
+function resetOnboarding(){
+  onb.style.display = 'flex';
+  onb.classList.remove('hiding');
+  app.style.display = 'none';
+  $$('#onb .stage').forEach((s,i) => {
+    s.classList.toggle('active', i===0);
+    s.style.display = i===0 ? 'flex' : 'none';
+  });
+}
+
+// Onboarding event delegation
+onb.addEventListener('click', (e) => {
+  const langBtn = e.target.closest('[data-onb-lang]');
+  if(langBtn){ setLang(langBtn.dataset.onbLang); return; }
+
+  const btn = e.target.closest('[data-onb]');
+  if(!btn) return;
+  const a = btn.dataset.onb;
+
+  switch(a){
+    case 'go-start':    return showStage('start');
+    case 'have-wallet': return showStage('importing');
+    case 'back-hero':   return showStage('hero');
+    case 'back-start':  return showStage('start');
+    case 'pick-create': return showStage('creating');
+    case 'pick-import': return showStage('importing');
+    case 'pick-hw':     return showStage('bio');
+    case 'imp-paste':
+      navigator.clipboard?.readText()
+        .then(t => { const ta = $('#imp-ta'); ta.value = t; ta.dispatchEvent(new Event('input')); })
+        .catch(()=>{});
+      return;
+    case 'imp-submit': {
+      const w = $('#imp-ta').value.trim().split(/\s+/).filter(Boolean).length;
+      if(w === 12 || w === 24) showStage('bio');
+      return;
+    }
+    case 'bio-activate': return runBioAnim();
+    case 'bio-skip':     return showStage('name');
+    case 'name-skip':    return showStage('ready');
+    case 'name-continue': {
+      state.userName = $('#name-input').value.trim();
+      // Personalize the ready title
+      if(state.userName){
+        const span = $('#ready-title span');
+        if(span){
+          span.setAttribute('data-zh', '都搞定了,' + state.userName + '。');
+          span.setAttribute('data-en', "You're in, " + state.userName + '.');
+        }
+      }
+      return showStage('ready');
+    }
+    case 'ready-continue': return showStage('persona');
+    case 'persona': {
+      state.persona = btn.dataset.persona || 'daily';
+      return dismissOnboarding();
+    }
+    case 'persona-skip': return dismissOnboarding();
+  }
+});
+
+// Recovery textarea word counter + enable submit
+$('#imp-ta').addEventListener('input', (e) => {
+  const w = e.target.value.trim().split(/\s+/).filter(Boolean).length;
+  $('#imp-count b').textContent = w;
+  const ok = (w === 12 || w === 24);
+  const sub = $('#imp-submit');
+  sub.disabled = !ok;
+  sub.style.opacity = ok ? '1' : '0.4';
+});
+
+// Creating animation — splits key into 3 pieces
+function runCreatingAnim(){
+  const fill = $('#create-fill');
+  const pct = $('#create-pct');
+  const l1 = $('#cl-1'), l2 = $('#cl-2');
+  let p = 0;
+  fill.style.width = '0%';
+  pct.textContent = '0%';
+  l1.className = 'cl waiting';
+  l2.className = 'cl waiting';
+  const tick = setInterval(() => {
+    p += 6 + Math.random()*12;
+    if(p >= 100){ p = 100; clearInterval(tick); setTimeout(() => showStage('bio'), 700); }
+    fill.style.width = p + '%';
+    pct.textContent = Math.round(p) + '%';
+    if(p > 32 && l1.classList.contains('waiting')){ l1.classList.remove('waiting'); l1.classList.add('done'); }
+    if(p > 72 && l2.classList.contains('waiting')){ l2.classList.remove('waiting'); l2.classList.add('done'); }
+  }, 240);
+}
+
+// Bio animation — Face ID
+function runBioAnim(){
+  const ring = $('#bio-ring'); const btn = $('#bio-activate');
+  const title = $('#bio-title'); const sub = $('#bio-sub');
+  if(ring.classList.contains('scanning') || ring.classList.contains('done')) return;
+  ring.classList.add('scanning');
+  btn.disabled = true; btn.style.opacity = '0.6';
+  setTimeout(() => {
+    ring.classList.remove('scanning');
+    ring.classList.add('done');
+    const icon = $('#bio-icon');
+    if(icon){
+      icon.outerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    }
+    const span = title.querySelector('span');
+    if(span){
+      span.setAttribute('data-zh','Face ID 已开启');
+      span.setAttribute('data-en','Face ID ready');
+    }
+    if(sub) sub.style.display = 'none';
+  }, 1600);
+  setTimeout(() => showStage('name'), 2600);
+}
+
+/* ---------------------------------------------------------------------
+   VIEW / TAB NAVIGATION (main app)
+   --------------------------------------------------------------------- */
+const VIEW_META = {
+  home:     { type:'brand', tab:'home' },
+  wallet:   { type:'title', titleZh:'钱包',  titleEn:'Wallet',    tab:'wallet' },
+  agents:   { type:'title', titleZh:'助手',  titleEn:'Agents',    tab:'agents' },
+  settings: { type:'title', titleZh:'设置',  titleEn:'Settings',  tab:'settings' },
+  keys:     { type:'back',  titleZh:'三份钥匙',  titleEn:'Your three keys', back:'settings', tab:'settings' },
+  chat:     { type:'chat',  tab:'chat' },
+};
+
+function setView(view){
+  $$('#app .view').forEach(v => v.classList.toggle('active', v.id === 'view-' + view));
+  state.view = view;
+  const meta = VIEW_META[view];
+  state.tab = meta.tab;
+  // tab highlight
+  $$('.tabbar .item, .tabbar .ask-pill').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === meta.tab);
+  });
+  renderAppHeader();
+  // composer only on home + chat
+  const showComposer = (view === 'home' || view === 'chat');
+  $('#composer').style.display = showComposer ? 'block' : 'none';
+  // scroll to top
+  $('#body').scrollTop = 0;
+}
+
+function renderAppHeader(){
+  const view = state.view;
+  const meta = VIEW_META[view];
+  const lang = state.lang;
+  const h = $('#app-header');
+  if(!h) return;
+  if(view === 'home'){
+    h.innerHTML = `
+      <div class="title"><span class="orb-mini"></span><span>cowallet</span></div>
+      <div class="actions">
+        <div class="iconbtn" title="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg></div>
+        <div class="iconbtn" title="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div>
+      </div>`;
+  } else if(meta.type === 'title'){
+    const t = lang === 'en' ? meta.titleEn : meta.titleZh;
+    h.innerHTML = `
+      <div class="title"><span class="orb-mini"></span><span>${t}</span></div>
+      <div class="actions">
+        <div class="iconbtn" title="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div>
+      </div>`;
+  } else if(meta.type === 'back'){
+    const t = lang === 'en' ? meta.titleEn : meta.titleZh;
+    h.innerHTML = `
+      <div class="title" id="back-btn" style="cursor:pointer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>${t}</span>
+      </div>
+      <div class="actions"></div>`;
+    $('#back-btn').onclick = () => setView(meta.back);
+  } else if(meta.type === 'chat'){
+    h.innerHTML = `
+      <div class="title" id="back-btn" style="cursor:pointer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        <span>${lang === 'en' ? 'Ask cowallet' : '问 cowallet'}</span>
+      </div>
+      <div class="actions">
+        <div class="iconbtn" title="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></div>
+        <div class="iconbtn" id="chat-new" title="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg></div>
+      </div>`;
+    $('#back-btn').onclick = () => setView('home');
+    $('#chat-new').onclick = () => resetChat();
+  }
+}
+
+// tab bar navigation
+$$('.tabbar [data-tab]').forEach(el => {
+  el.onclick = () => setView(el.dataset.tab);
+});
+
+// Global navigation: [data-nav="..."] triggers setView
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-nav]');
+  if(!el) return;
+  const t = el.dataset.nav;
+  if(t === 'keys') setView('keys');
+  else if(t === 'skills' || t === 'agent-pay' || t === 'connect-agent') setView('agents');
+  else if(t === 'securities') {
+    // show a toast-like acknowledgement (keep v0.4 design)
+    setView('wallet');
+    setTimeout(() => $('#body').scrollTo({ top: 400, behavior: 'smooth' }), 200);
+  }
+  else if(t === 'ai-reads' || t === 'family') {
+    // triggers an info intent card in chat
+    setView('chat');
+    sendMessage(t === 'ai-reads'
+      ? (state.lang === 'zh' ? '介绍一下 AI 看懂交易' : 'Explain AI reads contracts')
+      : (state.lang === 'zh' ? '介绍一下家人共管' : 'Explain family guard')
+    );
+  }
+  else if(t === 'send' || t === 'receive' || t === 'scan' || t === 'pay-anyone') {
+    setView('chat');
+    const promptMap = {
+      send:    { zh:'我要给 Sarah 转 100 美元',     en:'Send $100 to Sarah' },
+      receive: { zh:'我要收款',                    en:'Receive money' },
+      scan:    { zh:'帮我扫个码',                  en:'Scan a code' },
+      'pay-anyone': { zh:'给我看看联系人',         en:'Show my contacts' },
+    };
+    sendMessage(promptMap[t][state.lang]);
+  }
+});
+
+/* ---------------------------------------------------------------------
+   CHAT + INTENT RECOGNITION
+   --------------------------------------------------------------------- */
+
+// Intent rules — same structure as v0.4
+const INTENT_RULES = [
+  { re_zh:/(闲着|闲放|放哪|存起来|赚利息|生息|理财|没用)/, re_en:/(idle|sitting|park|save|earn interest|yield)/i,
+    kind:'savings',
+    title:{zh:'给你闲着的钱找个赚利息的地方', en:'Park your idle money so it earns'},
+    sub:{zh:'推荐 <b style="color:var(--gold)">Aave V3 (4.82%)</b> 或 <b style="color:var(--gold)">美国国债代币 (5.20%)</b>。',
+         en:'Suggest <b style="color:var(--gold)">Aave V3 (4.82%)</b> or <b style="color:var(--gold)">US T-Bill token (5.20%)</b>.'},
+    yes:{zh:'对,看看', en:'Yes, show me'}, no:{zh:'不是这意思', en:'Not that'},
+  },
+  { re_zh:/(老婆|妻子|生日|Sarah|sarah)/, re_en:/(wife|sarah|birthday)/i,
+    kind:'transfer',
+    title:{zh:'给 Sarah (你老婆) 转 $1000 USDC', en:'Send $1000 USDC to Sarah (your wife)'},
+    sub:{zh:'3 周前你给她转过。本次约 ¥7,200 人民币。',
+         en:'You sent her money 3 weeks ago. ≈¥7,200 RMB.'},
+    yes:{zh:'对,转', en:'Yes, send'}, no:{zh:'换个人', en:'Different person'},
+  },
+  { re_zh:/(买点?苹果|买苹果|苹果股)/, re_en:/(buy apple|apple stock|appl|aapl)/i,
+    kind:'apple',
+    title:{zh:'买入苹果公司股票代币 (AAPL)', en:'Buy Apple Inc stock token (AAPL)'},
+    sub:{zh:'"苹果"默认指 <b>苹果公司股票</b>。如果是水果,我可以帮你用 USDC 付给商家。',
+         en:'"Apple" defaults to <b>Apple Inc stock</b>. If you mean the fruit, I can pay merchants in USDC.'},
+    yes:{zh:'对,买股票', en:'Yes, stock'}, no:{zh:'我想买水果', en:'I meant the fruit'},
+  },
+  { re_zh:/(花了多少|这个月.*花|支出|开销|花销)/, re_en:/(how much.*spen|this month.*spen|expense|spending)/i,
+    kind:'spending',
+    title:{zh:'你这个月花了 $2,847', en:"You've spent $2,847 this month"},
+    sub:{zh:'订阅 $140 · 餐饮 $623 · 转账给朋友 $1,200 · 其他 $884。比上月少 12%。',
+         en:'Subs $140 · Food $623 · Friends $1,200 · Other $884. 12% less than last month.'},
+    yes:{zh:'看详情', en:'See details'}, no:{zh:'不对', en:'Not that'},
+  },
+  { re_zh:/(余额|总共.*多少|放哪|钱都|资产)/, re_en:/(balance|total|where.*money|how much.*have)/i,
+    kind:'balance',
+    title:{zh:'总共 $48,280', en:'Total: $48,280'},
+    sub:{zh:'USDC 28,450 · ETH 16,830 · stETH 3,000。今天 +$392 (+0.82%)。',
+         en:'USDC 28,450 · ETH 16,830 · stETH 3,000. Today +$392 (+0.82%).'},
+    yes:{zh:'看钱包', en:'Open wallet'}, no:{zh:'不要', en:'Nope'},
+  },
+];
+
+function detectIntent(text){
+  const t = text.trim();
+  if(!t) return null;
+  const lang = state.lang;
+  for(const r of INTENT_RULES){
+    const re = lang === 'en' ? r.re_en : r.re_zh;
+    if(re.test(t)) return r;
+  }
+  return null;
+}
+
+function resetChat(){
+  $('#msg-thread').innerHTML = '';
+  $('#chat-empty').style.display = 'flex';
+}
+
+function sendMessage(text){
+  if(!text || !text.trim()) return;
+  const lang = state.lang;
+  if(state.view !== 'chat') setView('chat');
+  $('#chat-empty').style.display = 'none';
+  const thread = $('#msg-thread');
+  // user bubble
+  const u = document.createElement('div');
+  u.className = 'msg-user';
+  if(state.attachedImg){
+    u.innerHTML = `<img class="img-thumb" src="${state.attachedImg}"/><div>${text}</div>`;
+    state.attachedImg = null;
+    updateAttachRow();
+  } else {
+    u.textContent = text;
+  }
+  thread.appendChild(u);
+  // thinking bubble
+  const t = document.createElement('div');
+  t.className = 'msg-ai';
+  t.innerHTML = `<div class="who">cowallet</div><div class="body"><div class="thinking-dots"><span></span><span></span><span></span></div></div>`;
+  thread.appendChild(t);
+  scrollChat();
+  $('#composer-input').value = '';
+
+  setTimeout(() => {
+    const intent = detectIntent(text);
+    t.innerHTML = `<div class="who">cowallet</div>` + renderAiResponse(text, intent);
+    bindIntentButtons(t);
+    scrollChat();
+  }, 700 + Math.random()*400);
+}
+
+function renderAiResponse(userText, intent){
+  const lang = state.lang;
+  if(intent){
+    return `
+      <div class="body">${lang === 'zh' ? '让我确认一下…' : "Let me make sure I got this…"}</div>
+      <div class="intent-card">
+        <div class="hd">${lang === 'zh' ? '我听到的是' : "What I'm hearing"}</div>
+        <h4>${intent.title[lang]}</h4>
+        <div class="sub">${intent.sub[lang]}</div>
+        <div class="actions">
+          <button class="btn btn-accent" data-intent-yes="${intent.kind}">${intent.yes[lang]}</button>
+          <button class="btn btn-outline" data-intent-no="1">${intent.no[lang]}</button>
+        </div>
+      </div>
+      <div class="tools">
+        <button class="msg-tool" data-msg-tool="copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>${lang==='zh'?'复制':'Copy'}</button>
+        <button class="msg-tool" data-msg-tool="regen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 0 1 15-6.7M21 12a9 9 0 0 1-15 6.7"/><polyline points="18 2 18 8 12 8"/><polyline points="6 22 6 16 12 16"/></svg>${lang==='zh'?'再试一次':'Regenerate'}</button>
+        <button class="msg-tool" data-msg-tool="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>${lang==='zh'?'分享':'Share'}</button>
+      </div>`;
+  }
+  // fallback — treat as open conversation
+  const replies = {
+    zh:`我没太听懂"${userText}"。你可以试试这些说法:\n· "我的钱都在哪?"\n· "帮我转 100 给小明"\n· "有什么能赚利息的地方?"`,
+    en:`I didn't quite catch "${userText}". Try saying:\n· "Where's my money?"\n· "Send $100 to Mike"\n· "How can I earn some interest?"`,
+  };
+  return `
+    <div class="body" style="white-space:pre-wrap">${replies[lang]}</div>
+    <div class="tools">
+      <button class="msg-tool" data-msg-tool="copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>${lang==='zh'?'复制':'Copy'}</button>
+      <button class="msg-tool" data-msg-tool="regen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 0 1 15-6.7M21 12a9 9 0 0 1-15 6.7"/><polyline points="18 2 18 8 12 8"/><polyline points="6 22 6 16 12 16"/></svg>${lang==='zh'?'再试一次':'Regenerate'}</button>
+    </div>`;
+}
+
+function bindIntentButtons(msgEl){
+  msgEl.querySelectorAll('[data-intent-yes]').forEach(b => {
+    b.onclick = () => {
+      const kind = b.dataset.intentYes;
+      const lang = state.lang;
+      const cont = document.createElement('div');
+      cont.className = 'msg-ai';
+      cont.innerHTML = `<div class="who">cowallet</div><div class="body">${lang==='zh'?'好,这就办。':'On it.'}</div>`;
+      $('#msg-thread').appendChild(cont);
+      if(kind === 'savings') { setTimeout(() => setView('wallet'), 600); }
+      else if(kind === 'balance') { setTimeout(() => setView('wallet'), 600); }
+      scrollChat();
+    };
+  });
+  msgEl.querySelectorAll('[data-intent-no]').forEach(b => {
+    b.onclick = () => {
+      const lang = state.lang;
+      const c = document.createElement('div');
+      c.className = 'msg-ai';
+      c.innerHTML = `<div class="who">cowallet</div><div class="body">${lang==='zh'?'好,我刚理解错了。能再说一次吗?':"Got it, I misread. Say it again?"}</div>`;
+      $('#msg-thread').appendChild(c);
+      scrollChat();
+    };
+  });
+  // tool buttons (copy, regen, share)
+  msgEl.querySelectorAll('[data-msg-tool]').forEach(b => {
+    b.onclick = () => {
+      const t = b.dataset.msgTool;
+      if(t === 'copy'){
+        // copy the body text
+        const txt = msgEl.querySelector('.body')?.textContent || '';
+        navigator.clipboard?.writeText(txt).catch(()=>{});
+        b.classList.add('copied');
+        const orig = b.innerHTML;
+        b.innerHTML = (state.lang==='zh'?'✓ 已复制':'✓ Copied');
+        setTimeout(() => { b.classList.remove('copied'); b.innerHTML = orig; }, 1500);
+      }
+    };
+  });
+}
+
+function scrollChat(){
+  setTimeout(() => {
+    const bod = $('#body');
+    bod.scrollTo({ top: bod.scrollHeight, behavior: 'smooth' });
+  }, 40);
+}
+
+/* ---------------------------------------------------------------------
+   COMPOSER
+   --------------------------------------------------------------------- */
+$('#send-btn').onclick = () => sendMessage($('#composer-input').value);
+$('#composer-input').onkeydown = (e) => {
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendMessage($('#composer-input').value); }
+};
+
+// image upload (simulated — creates a file picker)
+$('#ctool-upload').onclick = () => {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = (ev) => {
+    const f = ev.target.files[0]; if(!f) return;
+    const r = new FileReader();
+    r.onload = () => { state.attachedImg = r.result; updateAttachRow(); };
+    r.readAsDataURL(f);
+  };
+  inp.click();
+};
+
+function updateAttachRow(){
+  const row = $('#attach-row');
+  if(!state.attachedImg){ row.style.display = 'none'; row.innerHTML = ''; return; }
+  row.style.display = 'flex';
+  row.innerHTML = `
+    <div class="attach-chip">
+      <img src="${state.attachedImg}" class="thumb" style="object-fit:cover" alt=""/>
+      <span>${state.lang === 'zh' ? '图片已添加' : 'Image attached'}</span>
+      <span class="x" id="attach-x">×</span>
+    </div>`;
+  $('#attach-x').onclick = () => { state.attachedImg = null; updateAttachRow(); };
+}
+
+// Try-card & chat-sug prompts
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-try-prompt-zh]');
+  if(!el) return;
+  const prompt = state.lang === 'zh' ? el.dataset.tryPromptZh : el.dataset.tryPromptEn;
+  sendMessage(prompt);
+});
+
+// Voice: press and hold on ctool-voice
+let voiceTimer = null;
+let voiceStart = null;
+function startVoice(){
+  voiceStart = Date.now();
+  $('#voice-bar').classList.add('show');
+  voiceTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - voiceStart) / 1000);
+    const m = Math.floor(s / 60);
+    $('#v-time').textContent = m + ':' + String(s % 60).padStart(2,'0');
+  }, 200);
+}
+function endVoice(cancelled){
+  clearInterval(voiceTimer);
+  $('#voice-bar').classList.remove('show');
+  if(!cancelled){
+    // Simulate: push a sample message based on language
+    const msgs = state.lang === 'zh'
+      ? ['我那五万块还闲着', '我这个月花了多少?', '给老婆转 1000']
+      : ['My 50k is just sitting there', "How much did I spend this month?", 'Send $1000 to my wife'];
+    const m = msgs[Math.floor(Math.random() * msgs.length)];
+    $('#composer-input').value = m;
+    setTimeout(() => sendMessage(m), 100);
+  }
+}
+$('#ctool-voice').onmousedown = startVoice;
+$('#ctool-voice').ontouchstart = (e) => { e.preventDefault(); startVoice(); };
+$('#ctool-voice').onmouseup = () => endVoice(false);
+$('#ctool-voice').onmouseleave = () => { if(voiceTimer) endVoice(true); };
+$('#ctool-voice').ontouchend = () => endVoice(false);
+$('#voice-cancel').onclick = () => endVoice(true);
+
+/* ---------------------------------------------------------------------
+   Settings: redo onboarding
+   --------------------------------------------------------------------- */
+$('#redo-onb').onclick = () => resetOnboarding();
+
+/* ---------------------------------------------------------------------
+   INIT
+   --------------------------------------------------------------------- */
+setLang('zh');
+
+/* ---------------------------------------------------------------------
+   AUTO DEMO — full tour of the app, no subtitles, just drive it.
+   --------------------------------------------------------------------- */
+
+// Inject caption overlay + cursor indicator (once)
+(function setupDemoUI(){
+  const style = document.createElement('style');
+  style.textContent = `
+    /* caption bar — thin, unobtrusive, bottom of phone */
+    .demo-caption{
+      position:absolute; left:50%; bottom:18px; transform:translate(-50%, 100%);
+      background:rgba(20,16,8,0.92); color:#fff; padding:7px 16px;
+      border-radius:999px; font-family:var(--mono); font-size:10.5px;
+      letter-spacing:0.08em; text-transform:uppercase; white-space:nowrap;
+      opacity:0; transition:opacity .3s, transform .3s;
+      pointer-events:none; z-index:200; max-width:92%; text-align:center;
+      box-shadow:0 6px 20px -4px rgba(0,0,0,.3);
+    }
+    .demo-caption.on{opacity:1; transform:translate(-50%, 0)}
+
+    /* fake cursor pointer */
+    .demo-cursor{
+      position:absolute; width:28px; height:28px;
+      pointer-events:none; z-index:250;
+      opacity:0; transition:opacity .2s;
+      top:0; left:0;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+    }
+    .demo-cursor.on{opacity:1}
+    .demo-cursor.click{animation:cursor-click .35s ease-out}
+    @keyframes cursor-click{
+      0%{transform:scale(1)}
+      40%{transform:scale(0.78)}
+      100%{transform:scale(1)}
+    }
+    .demo-ripple{
+      position:absolute; border-radius:50%; border:2px solid var(--accent);
+      pointer-events:none; z-index:240; opacity:0;
+    }
+    .demo-ripple.on{animation:ripple-out .45s ease-out}
+    @keyframes ripple-out{
+      0%{width:0; height:0; opacity:.9; transform:translate(-50%, -50%)}
+      100%{width:48px; height:48px; opacity:0; transform:translate(-50%, -50%)}
+    }
+
+    /* exit button */
+    .demo-exit{
+      position:fixed; top:18px; right:18px; z-index:300;
+      background:var(--ink-1); color:#fff; border:0;
+      padding:8px 16px; border-radius:999px;
+      font-family:var(--mono); font-size:11px; letter-spacing:0.08em;
+      cursor:pointer; display:none; box-shadow:0 4px 14px -2px rgba(0,0,0,0.3);
+      font-weight:500;
+    }
+    .demo-exit.on{display:block}
+
+    /* demo mode: dim the auto-demo trigger when running */
+    body.demo-running #btn-demo{opacity:0.55; pointer-events:none}
+  `;
+  document.head.appendChild(style);
+
+  // caption lives inside the phone
+  const phone = document.querySelector('.phone');
+  const cap = document.createElement('div');
+  cap.className = 'demo-caption';
+  cap.id = 'demo-caption';
+  phone.appendChild(cap);
+
+  // cursor also lives inside phone
+  const cur = document.createElement('div');
+  cur.className = 'demo-cursor';
+  cur.id = 'demo-cursor';
+  cur.innerHTML = `<svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+    <path d="M4 3 L4 21 L10 16 L13 23 L16 22 L13 15 L21 14 Z"
+          fill="#ffffff" stroke="#141008" stroke-width="1.5" stroke-linejoin="round"/>
+  </svg>`;
+  phone.appendChild(cur);
+
+  const ripple = document.createElement('div');
+  ripple.className = 'demo-ripple';
+  ripple.id = 'demo-ripple';
+  phone.appendChild(ripple);
+
+  // exit button lives on the page
+  const exit = document.createElement('button');
+  exit.className = 'demo-exit';
+  exit.id = 'demo-exit';
+  exit.innerHTML = `<span data-zh="退出演示" data-en="Exit demo"></span>`;
+  document.body.appendChild(exit);
+})();
+
+const demo = {
+  running: false,
+  aborted: false,
+
+  sleep(ms){
+    return new Promise((resolve, reject) => {
+      const id = setTimeout(() => resolve(), ms);
+      this._currentTimeout = { id, reject };
+    });
+  },
+
+  caption(zh, en){
+    const el = $('#demo-caption');
+    const txt = (state.lang === 'zh') ? zh : en;
+    el.textContent = txt;
+    el.classList.add('on');
+  },
+
+  hideCaption(){
+    $('#demo-caption').classList.remove('on');
+  },
+
+  // Move the virtual cursor to an element with a small animated travel.
+  async moveTo(el, offsetX = 0, offsetY = 0){
+    if(!el) return;
+    const cursor = $('#demo-cursor');
+    const phoneRect = document.querySelector('.phone').getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const x = r.left - phoneRect.left + r.width/2 + offsetX;
+    const y = r.top  - phoneRect.top  + r.height/2 + offsetY;
+    cursor.style.transition = 'transform 0.45s cubic-bezier(0.4, 0.05, 0.3, 1), opacity 0.2s';
+    cursor.style.transform = `translate(${x - 4}px, ${y - 4}px)`;
+    cursor.classList.add('on');
+    await this.sleep(500);
+  },
+
+  async clickPulse(){
+    const cursor = $('#demo-cursor');
+    const ripple = $('#demo-ripple');
+    // position ripple at cursor tip
+    const t = cursor.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/);
+    if(t){
+      ripple.style.left = (parseFloat(t[1]) + 4) + 'px';
+      ripple.style.top  = (parseFloat(t[2]) + 4) + 'px';
+    }
+    cursor.classList.remove('click'); void cursor.offsetWidth;
+    cursor.classList.add('click');
+    ripple.classList.remove('on'); void ripple.offsetWidth;
+    ripple.classList.add('on');
+    await this.sleep(300);
+  },
+
+  async tap(el, offsetX = 0, offsetY = 0){
+    if(this.aborted) return;
+    if(!el){
+      console.warn('demo: tap() called with null element — skipping');
+      await this.sleep(300);
+      return;
+    }
+    await this.moveTo(el, offsetX, offsetY);
+    await this.clickPulse();
+    if(el && !this.aborted) el.click();
+    await this.sleep(400);
+  },
+
+  hideCursor(){
+    $('#demo-cursor').classList.remove('on');
+  },
+
+  async type(el, text, speed = 55){
+    if(!el) return;
+    el.focus();
+    el.value = '';
+    for(const ch of text){
+      if(this.aborted) return;
+      el.value += ch;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      await this.sleep(speed);
+    }
+  },
+
+  // Scroll a container smoothly to y
+  async scrollTo(container, y, duration = 700){
+    if(!container) return;
+    const start = container.scrollTop;
+    const diff = y - start;
+    const startT = performance.now();
+    return new Promise(resolve => {
+      const step = (now) => {
+        if(this.aborted){ resolve(); return; }
+        const t = Math.min(1, (now - startT) / duration);
+        const eased = 0.5 * (1 - Math.cos(Math.PI * t)); // sine ease
+        container.scrollTop = start + diff * eased;
+        if(t < 1) requestAnimationFrame(step); else resolve();
+      };
+      requestAnimationFrame(step);
+    });
+  },
+
+  stop(){
+    this.aborted = true;
+    if(this._currentTimeout){
+      clearTimeout(this._currentTimeout.id);
+      this._currentTimeout.reject(new Error('demo-aborted'));
+      this._currentTimeout = null;
+    }
+  },
+
+  async run(){
+    if(this.running) return;
+    this.running = true;
+    this.aborted = false;
+    document.body.classList.add('demo-running');
+    $('#demo-exit').classList.add('on');
+
+    try {
+      await this.script();
+      console.log('demo: script completed normally');
+    } catch(e){
+      if(e.message !== 'demo-aborted'){
+        console.error('demo: script crashed:', e.message, e.stack);
+      }
+    }
+
+    this.running = false;
+    document.body.classList.remove('demo-running');
+    $('#demo-exit').classList.remove('on');
+    this.hideCaption();
+    this.hideCursor();
+  },
+
+  async script(){
+    // =============================================================
+    // ACT 1 — RESET TO ONBOARDING
+    // =============================================================
+    // Make sure we start fresh
+    setLang('zh');
+    try { resetOnboarding(); } catch(e) {}
+    await this.sleep(600);
+
+    this.caption('欢迎屏 · 一眼看懂这是什么', 'Welcome · one glance');
+    await this.sleep(900);
+
+    // Scroll the hero to top if it was scrolled
+    const heroStage = document.querySelector('[data-stage="hero"]');
+    await this.scrollTo(heroStage, 0, 400);
+    await this.sleep(900);
+
+    // Move cursor to the "创建钱包" button
+    this.caption('点「创建钱包」开始', 'Tap "Create wallet" to start');
+    const heroCTA = document.querySelector('[data-stage="hero"] [data-onb="go-start"]');
+    await this.tap(heroCTA);
+
+    // =============================================================
+    // ACT 2 — START (three options)
+    // =============================================================
+    await this.sleep(500);
+    this.caption('三选一 · 大白话,没有英文术语', 'Three plain options');
+    await this.sleep(935);
+    this.hideCaption();
+    await this.sleep(400);
+
+    // Tap "新建钱包"
+    const pickCreate = document.querySelector('[data-stage="start"] [data-onb="pick-create"]');
+    await this.tap(pickCreate);
+
+    // =============================================================
+    // ACT 3 — CREATING (three keys animation, ~3s)
+    // =============================================================
+    this.caption('生成三份钥匙 · MPC 用「保险」比喻解释', '3 key pieces · MPC as "insurance"');
+    // wait for the creating animation to run (fills progress and auto-advances to bio)
+    await this.sleep(1980);
+
+    // =============================================================
+    // ACT 4 — BIO (Face ID)
+    // =============================================================
+    this.hideCaption();
+    await this.sleep(400);
+    this.caption('人脸识别 · 像手机解锁一样', 'Face ID · like unlocking your phone');
+    await this.sleep(900);
+
+    const bioActivate = document.querySelector('[data-stage="bio"] [data-onb="bio-activate"]');
+    await this.tap(bioActivate);
+    // bio scan animation ~2s, then auto-advances to name
+    await this.sleep(1540);
+
+    // =============================================================
+    // ACT 5 — NAME
+    // =============================================================
+    this.hideCaption();
+    await this.sleep(300);
+    this.caption('起个名字 · 可选,仅存本机', 'Pick a name · optional');
+    await this.sleep(900);
+
+    const nameInput = document.querySelector('[data-stage="name"] #name-input');
+    if(nameInput){
+      await this.moveTo(nameInput);
+      await this.clickPulse();
+      await this.type(nameInput, 'Alice', 90);
+      await this.sleep(500);
+    }
+    const nameContinue = document.querySelector('[data-stage="name"] [data-onb="name-continue"]');
+    await this.tap(nameContinue);
+
+    // =============================================================
+    // ACT 6 — READY
+    // =============================================================
+    await this.sleep(500);
+    this.caption('完成 · 三件下一步', 'Ready · three next steps');
+    await this.sleep(1100);
+    this.hideCaption();
+    await this.sleep(300);
+
+    const readyContinue = document.querySelector('[data-stage="ready"] [data-onb="ready-continue"]');
+    await this.tap(readyContinue);
+
+    // =============================================================
+    // ACT 7 — PERSONA
+    // =============================================================
+    await this.sleep(400);
+    this.caption('选个方向 · 首页会为你定制', 'Pick a direction · tailored home');
+    await this.sleep(900);
+
+    // Tap "日常过日子" persona (most common choice, labeled 最受欢迎)
+    const personaPick = document.querySelector('[data-stage="persona"] [data-onb="persona"][data-persona="daily"]')
+      || document.querySelector('[data-stage="persona"] [data-onb="persona"]'); // first one as fallback
+    await this.tap(personaPick);
+
+    // onboarding dismisses, home loads
+    await this.sleep(900);
+
+    // =============================================================
+    // ACT 8 — HOME TOUR
+    // =============================================================
+    this.caption('首页 · slogan 常驻在顶部', 'Home · slogan always on top');
+    await this.sleep(1210);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // Scroll home to show showcase cards
+    const body = $('#body');
+    await this.scrollTo(body, 280, 630);
+    this.caption('四张能力卡 · AI 原生 / 家人共管 / 付款 / 协议', 'Capability cards');
+    await this.sleep(1210);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // Scroll further to activity feed
+    await this.scrollTo(body, 560, 630);
+    this.caption('最近 · AI 替你做了什么', 'Recent · what AI did for you');
+    await this.sleep(1210);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // Scroll back to top
+    await this.scrollTo(body, 0, 489);
+    await this.sleep(400);
+
+    // =============================================================
+    // ACT 9 — TAP A QUICK PROMPT → INTENT CARD
+    // =============================================================
+    this.caption('点一个建议 · 看意图识别卡', 'Tap a prompt · see intent card');
+    await this.sleep(1000);
+
+    const firstPrompt = document.querySelector('#view-home .try-card');
+    await this.tap(firstPrompt);
+    await this.sleep(900);  // let the intent card render
+    this.caption('「我听到的是」 · 先复述再执行', '"What I hear" · confirm before act');
+    await this.sleep(1320);
+
+    // Tap "对,看方案" — the yes button
+    const intentYes = document.querySelector('#view-chat [data-intent-yes]');
+    if(intentYes){
+      await this.tap(intentYes);
+    }
+    await this.sleep(900);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // =============================================================
+    // ACT 10 — IMAGE UPLOAD IN CHAT
+    // =============================================================
+    this.caption('对话里可以上传图片', 'Chat supports image upload');
+    await this.sleep(1000);
+
+    // Simulate image upload (inline SVG, encoded so btoa handles non-Latin chars)
+    const svgBody = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="#fae3d6"/><rect x="40" y="60" width="120" height="80" rx="8" fill="#fff" stroke="#D97757" stroke-width="2"/><text x="100" y="90" text-anchor="middle" font-family="serif" font-size="16" fill="#141008">Contract</text><line x1="55" y1="108" x2="145" y2="108" stroke="#b8a584"/><line x1="55" y1="120" x2="130" y2="120" stroke="#b8a584"/><line x1="55" y1="132" x2="140" y2="132" stroke="#b8a584"/></svg>`;
+    const smallTestImg = 'data:image/svg+xml;utf8,' + encodeURIComponent(svgBody);
+
+    // Move cursor to the image-upload button
+    const imgBtn = document.querySelector('#ctool-upload');
+    if(imgBtn){
+      await this.moveTo(imgBtn);
+      await this.clickPulse();
+      // directly set attached image (avoids file-picker)
+      state.attachedImg = smallTestImg;
+      if(typeof updateAttachRow === 'function') updateAttachRow();
+      await this.sleep(700);
+    }
+
+    // Type a caption and send
+    const composerInput = $('#composer-input');
+    if(composerInput){
+      await this.moveTo(composerInput);
+      await this.clickPulse();
+      await this.type(composerInput, '帮我看看这个合同', 80);
+      await this.sleep(400);
+    }
+
+    const sendBtn = $('#send-btn');
+    if(sendBtn){
+      await this.tap(sendBtn);
+    }
+    await this.sleep(1210);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // =============================================================
+    // ACT 11 — VOICE INPUT (simulated)
+    // =============================================================
+    this.caption('长按麦克风 · 语音输入', 'Hold mic · voice input');
+    await this.sleep(1000);
+
+    const micBtn = $('#ctool-voice');
+    if(micBtn){
+      await this.moveTo(micBtn);
+      await this.clickPulse();
+      // Fire mousedown to start voice
+      if(typeof startVoice === 'function') startVoice();
+      await this.sleep(1100);
+      if(typeof endVoice === 'function') endVoice(true); // cancel
+      await this.sleep(700);
+    }
+    this.hideCaption();
+    await this.sleep(300);
+
+    // =============================================================
+    // ACT 12 — WALLET TAB
+    // =============================================================
+    this.caption('切到 · 钱包', 'Switch to · Wallet');
+    const walletTab = document.querySelector('.tabbar .item[data-tab="wallet"]');
+    await this.tap(walletTab);
+    await this.sleep(900);
+    this.caption('总资产 · 100+ 金融网络', 'Total · 100+ networks');
+    await this.sleep(1100);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // Scroll wallet to see securities module
+    await this.scrollTo($('#body'), 450, 630);
+    this.caption('证券代币 · 可选模块 · 不抢主入口', 'Securities · opt-in module');
+    await this.sleep(1320);
+    this.hideCaption();
+    await this.sleep(300);
+    await this.scrollTo($('#body'), 0, 489);
+    await this.sleep(400);
+
+    // =============================================================
+    // ACT 13 — AGENTS TAB (Skills + Protocols)
+    // =============================================================
+    this.caption('切到 · 助手', 'Switch to · Agents');
+    const agentsTab = document.querySelector('.tabbar .item[data-tab="agents"]');
+    await this.tap(agentsTab);
+    await this.sleep(900);
+    this.caption('你定规矩 · AI 在边界内办事', 'You set rules · AI acts within');
+    await this.sleep(1265);
+    this.hideCaption();
+    await this.sleep(300);
+
+    await this.scrollTo($('#body'), 420, 630);
+    this.caption('SKILLS · 给钱包装插件', 'SKILLS · plug-in capabilities');
+    await this.sleep(1320);
+    this.hideCaption();
+    await this.sleep(300);
+
+    await this.scrollTo($('#body'), 820, 630);
+    this.caption('开发者协议 · MCP · x402 · REST · 全 LIVE', 'Dev protocols · all LIVE');
+    await this.sleep(1540);
+    this.hideCaption();
+    await this.sleep(300);
+    await this.scrollTo($('#body'), 0, 489);
+    await this.sleep(400);
+
+    // =============================================================
+    // ACT 14 — SETTINGS + KEYS
+    // =============================================================
+    this.caption('切到 · 设置', 'Switch to · Settings');
+    const settingsTab = document.querySelector('.tabbar .item[data-tab="settings"]');
+    await this.tap(settingsTab);
+    await this.sleep(900);
+    this.hideCaption();
+    await this.sleep(300);
+
+    // Tap the Keys row to open keys subview
+    this.caption('三份钥匙 · 体检', 'Three keys · health check');
+    await this.sleep(900);
+    const keysRow = document.querySelector('[data-nav="keys"]');
+    if(keysRow){
+      await this.tap(keysRow);
+      await this.sleep(900);
+      this.caption('「没人能单独动你的钱」', '"Nobody can move it alone"');
+      await this.sleep(1320);
+      this.hideCaption();
+      await this.sleep(300);
+
+      // scroll the keys panel to show status
+      await this.scrollTo($('#body'), 280, 630);
+      this.caption('三份钥匙实时状态', 'Live status of three keys');
+      await this.sleep(1320);
+      this.hideCaption();
+      await this.sleep(300);
+
+      await this.scrollTo($('#body'), 0, 489);
+      await this.sleep(400);
+
+      // Back to settings
+      const backBtn = document.querySelector('#back-btn');
+      if(backBtn) await this.tap(backBtn);
+      await this.sleep(700);
+    }
+
+    // =============================================================
+    // ACT 15 — LANGUAGE TOGGLE TO SHOW EN
+    // =============================================================
+    this.caption('一键切换 · 中英文', 'One toggle · Chinese / English');
+    await this.sleep(900);
+
+    // Move cursor to the EN button (OUTSIDE the phone — on the topbar)
+    const enBtn = $('#btn-en');
+    if(enBtn){
+      // the cursor is scoped inside the phone. For an outside-phone click,
+      // we fake it: briefly show caption, click directly.
+      enBtn.click();
+      await this.sleep(900);
+      this.caption('The same screens · in English', '中英双语 · 同步渲染');
+      await this.sleep(1320);
+      // Switch back
+      $('#btn-zh').click();
+      await this.sleep(800);
+    }
+
+    // =============================================================
+    // ACT 16 — RETURN TO HOME, WRAP UP
+    // =============================================================
+    const homeTab = document.querySelector('.tabbar .item[data-tab="home"]');
+    if(homeTab){
+      await this.tap(homeTab);
+    }
+    await this.sleep(700);
+
+    this.caption('演示结束 · 可自己操作', 'Demo complete · try it yourself');
+    await this.sleep(1320);
+    this.hideCaption();
+    this.hideCursor();
+  },
+};
+
+// Wire up the demo button
+$('#btn-demo').onclick = () => demo.run();
+$('#demo-exit').onclick = () => {
+  demo.stop();
+  // reset UI
+  setTimeout(() => {
+    $('#demo-caption').classList.remove('on');
+    $('#demo-cursor').classList.remove('on');
+  }, 100);
+};
+</script>
+</body>
+</html>

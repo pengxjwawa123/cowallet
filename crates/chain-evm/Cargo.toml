@@ -1,0 +1,27 @@
+[package]
+name = "chain-evm"
+description = "EVM chain adapter — MpcSigner, EIP-1559, ERC-4337, multi-chain"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mpc-core = { path = "../mpc-core" }
+alloy-primitives = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-contract = { workspace = true }
+alloy-network = { workspace = true }
+alloy-rpc-types = { workspace = true }
+alloy-sol-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"
+uuid = { workspace = true }
+sha3 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

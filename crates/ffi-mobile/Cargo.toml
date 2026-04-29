@@ -1,0 +1,23 @@
+[package]
+name = "ffi-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+mpc-core = { path = "../mpc-core" }
+chain-evm = { path = "../chain-evm" }
+storage-crypto = { path = "../storage-crypto" }
+policy-engine = { path = "../policy-engine" }
+
+flutter_rust_bridge = "=2.9.0"
+
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

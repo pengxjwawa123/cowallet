@@ -1,0 +1,5 @@
+# ninja log v5
+0	28	1777386346590780041	CMakeFiles/jni.dir/include/dart_api_dl.c.o	10f1e32523d9b5e0
+0	38	1777386346600978639	CMakeFiles/jni.dir/dartjni.c.o	6b04e53bedc06113
+0	64	1777386346626600031	CMakeFiles/jni.dir/third_party/global_jni_env.c.o	17d52f232cc9b269
+64	98	1777386346659784612	/Users/jingle/cat/cowallet/mobile/build/jni/intermediates/cxx/Debug/2w5j4n26/obj/x86/libdartjni.so	cfef365e0597d517

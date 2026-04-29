@@ -1,0 +1,1 @@
+/Users/jingle/cat/cowallet/mobile/build/jni/intermediates/cxx/Debug/2w5j4n26/obj/x86_64
