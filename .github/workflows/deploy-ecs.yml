@@ -1,0 +1,157 @@
+# Deploy to Alibaba Cloud ECS via SSH + Docker Compose
+#
+# Required GitHub Secrets (Settings → Secrets → Actions → Environments → production):
+#   ECS_HOST         — ECS 公网 IP 或域名
+#   ECS_USER         — SSH 用户名（如 root 或 ubuntu）
+#   ECS_SSH_KEY      — ECS SSH 私钥（本地 ~/.ssh/id_rsa 内容）
+#   ECS_SSH_PORT     — SSH 端口（默认 22）
+#   REGISTRY         — 镜像仓库地址（如 registry.cn-hangzhou.aliyuncs.com/cowallet）
+#   REGISTRY_USER    — 镜像仓库用户名（阿里云账号）
+#   REGISTRY_PASS    — 镜像仓库密码
+#   ANTHROPIC_API_KEY — Claude API Key
+#   DATABASE_URL     — PostgreSQL 连接串
+#   REDIS_URL        — Redis 连接串
+#   NATS_URL         — NATS 连接串
+
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  IMAGE_NAME: cowallet-api
+  REGISTRY: ${{ secrets.REGISTRY }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    name: Build, Push, and Deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 构建镜像 ──────────────────────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build -t ${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA} .
+          docker tag ${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA} ${REGISTRY}/${IMAGE_NAME}:latest
+
+      - name: Login to Container Registry
+        run: |
+          echo '${{ secrets.REGISTRY_PASS }}' | docker login -u ${{ secrets.REGISTRY_USER }} --password-stdin ${REGISTRY}
+
+      - name: Push image
+        run: |
+          docker push ${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}
+          docker push ${REGISTRY}/${IMAGE_NAME}:latest
+
+      # ── SSH 部署到 ECS ────────────────────────────────────
+      - name: Deploy to ECS via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          port: ${{ secrets.ECS_SSH_PORT || 22 }}
+          script: |
+            set -e
+
+            # 登录镜像仓库
+            echo '${{ secrets.REGISTRY_PASS }}' | docker login -u ${{ secrets.REGISTRY_USER }} --password-stdin ${{ secrets.REGISTRY }}
+
+            # 拉取最新镜像
+            docker pull ${{ secrets.REGISTRY }}/cowallet-api:latest
+
+            # 进入项目目录（如不存在则克隆）
+            if [ ! -d /opt/cowallet ]; then
+              mkdir -p /opt/cowallet
+            fi
+            cd /opt/cowallet
+
+            # 写入最新 docker-compose.yml（从仓库同步）
+            cat > docker-compose.prod.yml << 'COMPOSE_EOF'
+            version: "3.9"
+            services:
+              postgres:
+                image: postgres:16-alpine
+                restart: always
+                environment:
+                  POSTGRES_DB: cowallet
+                  POSTGRES_USER: cowallet
+                  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+                volumes:
+                  - postgres_data:/var/lib/postgresql/data
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U cowallet"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 5
+
+              redis:
+                image: redis:7-alpine
+                restart: always
+                volumes:
+                  - redis_data:/data
+                healthcheck:
+                  test: ["CMD", "redis-cli", "ping"]
+                  interval: 10s
+                  timeout: 3s
+                  retries: 5
+
+              nats:
+                image: nats:2-alpine
+                restart: always
+                command: ["-js"]
+
+              api-server:
+                image: ${{ secrets.REGISTRY }}/cowallet-api:latest
+                restart: always
+                ports:
+                  - "3000:3000"
+                environment:
+                  DATABASE_URL: ${DATABASE_URL}
+                  REDIS_URL: ${REDIS_URL}
+                  NATS_URL: ${NATS_URL}
+                  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                  redis:
+                    condition: service_healthy
+
+            volumes:
+              postgres_data:
+              redis_data:
+            COMPOSE_EOF
+
+            # 写入环境变量文件（仅首次或有变化时更新）
+            cat > .env << 'ENV_EOF'
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD || 'changeme' }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            REDIS_URL=${{ secrets.REDIS_URL }}
+            NATS_URL=nats://nats:4222
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            ENV_EOF
+
+            # 运行数据库迁移（如容器存在则执行）
+            docker run --rm \
+              --network cowallet_default \
+              -e DATABASE_URL=${{ secrets.DATABASE_URL }} \
+              ${{ secrets.REGISTRY }}/cowallet-api:latest \
+              /bin/sh -c "sqlx migrate run" || true
+
+            # 滚动更新（零停机）
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # 清理旧镜像
+            docker image prune -f
+
+            echo "✅ Deployment complete!"
+            docker compose -f docker-compose.prod.yml ps
