@@ -66,6 +66,15 @@ jobs:
           tke_region: ${{ env.TKE_REGION }}
           cluster_id: ${{ env.TKE_CLUSTER_ID }}
 
+      - name: Verify kubeconfig
+        run: |
+          echo "=== Checking kubeconfig ==="
+          cat ~/.kube/config | grep -A 2 "server:"
+          echo ""
+          echo "=== Testing kubectl connectivity ==="
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
       - name: Switch to TKE context
         run: |
           kubectl config use-context ${TKE_CLUSTER_ID}-context-default
