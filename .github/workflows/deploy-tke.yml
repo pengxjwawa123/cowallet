@@ -27,14 +27,29 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure Tencent Cloud credentials
+        env:
+          TENCENT_CLOUD_ACCOUNT_ID: ${{ secrets.TENCENT_CLOUD_ACCOUNT_ID }}
+          TENCENT_CLOUD_SECRET_ID: ${{ secrets.TENCENT_CLOUD_SECRET_ID }}
+          TENCENT_CLOUD_SECRET_KEY: ${{ secrets.TENCENT_CLOUD_SECRET_KEY }}
         run: |
+          if [ -z "$TENCENT_CLOUD_ACCOUNT_ID" ] || [ -z "$TENCENT_CLOUD_SECRET_ID" ] || [ -z "$TENCENT_CLOUD_SECRET_KEY" ]; then
+            echo "❌ ERROR: Tencent Cloud credentials are not set!"
+            echo "Please configure the following GitHub Secrets:"
+            echo "  - TENCENT_CLOUD_ACCOUNT_ID"
+            echo "  - TENCENT_CLOUD_SECRET_ID"
+            echo "  - TENCENT_CLOUD_SECRET_KEY"
+            exit 1
+          fi
+          
           mkdir -p ~/.tencent
           cat > ~/.tencent/config << EOF
-          TENCENTCLOUD_SECRET_ID=${{ secrets.TENCENTCLOUD_SECRET_ID }}
-          TENCENTCLOUD_SECRET_KEY=${{ secrets.TENCENTCLOUD_SECRET_KEY }}
-          TENCENTCLOUD_REGION=ap-singapore
+          TENCENT_CLOUD_ACCOUNT_ID=${TENCENT_CLOUD_ACCOUNT_ID}
+          TENCENT_CLOUD_SECRET_ID=${TENCENT_CLOUD_SECRET_ID}
+          TENCENT_CLOUD_SECRET_KEY=${TENCENT_CLOUD_SECRET_KEY}
+          TENCENT_CLOUD_REGION=ap-singapore
           EOF
           chmod 600 ~/.tencent/config
+          echo "✅ Tencent Cloud credentials configured"
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3
@@ -43,16 +58,28 @@ jobs:
 
       - name: Get TKE kubeconfig
         run: |
-          # 使用腾讯云 SDK 获取 kubeconfig
-          # 实际命令取决于你的腾讯云 SDK 安装
-          echo "Retrieving kubeconfig for cluster: ${{ env.TKE_CLUSTER_ID }}"
+          echo "🔑 Retrieving kubeconfig for cluster: ${{ env.TKE_CLUSTER_ID }}"
           
-          # 示例（需要根据实际情况修改）
-          # tke-cli get-kubeconfig --cluster-id=${{ env.TKE_CLUSTER_ID }} > ~/.kube/config
+          # 创建 .kube 目录
+          mkdir -p ~/.kube
           
-          # 临时使用环境变量方式（如果 TKE 提供）
+          # 从 GitHub Secret 解码并写入 kubeconfig
+          if [ -z "${{ secrets.KUBECONFIG }}" ]; then
+            echo "❌ ERROR: KUBECONFIG secret is not set!"
+            echo "Please configure GitHub Secret 'KUBECONFIG' with base64-encoded kubeconfig content"
+            echo ""
+            echo "步骤："
+            echo "1. 从 TKE 控制台获取 kubeconfig 文件"
+            echo "2. 本地转为 Base64: cat kubeconfig | base64 > kubeconfig.b64"
+            echo "3. 复制内容到 GitHub Secret: Settings → Secrets → KUBECONFIG"
+            exit 1
+          fi
+          
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
+          
+          echo "✅ kubeconfig 已设置"
+          kubectl config view --minify
 
       - name: Verify cluster connection
         run: kubectl cluster-info

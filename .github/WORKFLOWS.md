@@ -24,9 +24,28 @@ cowallet 项目包含完整的 GitHub Actions CI/CD 流程：
 
 | Secret 名称 | 描述 | 获取方式 |
 |------------|------|--------|
-| `TENCENTCLOUD_SECRET_ID` | 腾讯云 API 密钥 ID | [CAM 控制台](https://console.cloud.tencent.com/cam/capi) |
-| `TENCENTCLOUD_SECRET_KEY` | 腾讯云 API 密钥 | CAM 控制台 → 访问密钥 → API 密钥 |
-| `KUBECONFIG` | Kubernetes 配置文件（Base64编码） | TKE 控制台 → 连接信息 |
+| `TENCENT_CLOUD_ACCOUNT_ID` | 腾讯云账户 ID | [账户中心](https://console.cloud.tencent.com/developer) → 账户信息 |
+| `TENCENT_CLOUD_SECRET_ID` | 腾讯云 API 密钥 ID | [CAM 控制台](https://console.cloud.tencent.com/cam/capi) → 访问密钥 |
+| `TENCENT_CLOUD_SECRET_KEY` | 腾讯云 API 密钥 Secret | CAM 控制台 → 访问密钥 → API 密钥 |
+| `KUBECONFIG` | Kubernetes 配置文件（Base64 编码）| 见下方设置步骤 |
+
+**⚠️  KUBECONFIG 设置步骤：**
+
+```bash
+# 1. 获取 kubeconfig 文件
+# 访问: https://console.cloud.tencent.com/tke2/cluster
+# 点击集群 cls-c63h33ne → 连接信息 → 复制并保存为 kubeconfig 文件
+
+# 2. 本地 Base64 编码
+base64 kubeconfig > kubeconfig.b64
+cat kubeconfig.b64  # 复制输出内容
+
+# 3. 添加到 GitHub
+# 访问: https://github.com/pengxjwawa123/cowallet/settings/secrets/actions
+# 点击 "New repository secret"
+# Name: KUBECONFIG
+# Value: 粘贴 kubeconfig.b64 的全部内容
+```
 
 ## 工作流详细说明
 
@@ -140,12 +159,14 @@ Checkout → Setup Credentials → Get Kubeconfig → Update Deployment → Roll
 # 访问: https://console.cloud.tencent.com/cam/capi
 # 创建: 新建密钥
 
-# 3. Kubeconfig
-# 访问: TKE 控制台 → 集群 cls-c63h33ne → 连接信息
-# 复制: kubeconfig 内容
+# 3. Kubeconfig（关键步骤⚠️）
+# 访问: https://console.cloud.tencent.com/tke2/cluster?rid=1
+# 点击集群 cls-c63h33ne
+# 连接信息 → 复制 kubeconfig 文件内容 → 保存为 kubeconfig
 
 # 4. Base64 编码 kubeconfig
 base64 kubeconfig > kubeconfig.b64
+# 重要！完整复制 kubeconfig.b64 的所有内容（包括换行符）
 cat kubeconfig.b64
 ```
 
@@ -158,8 +179,9 @@ cat kubeconfig.b64
 # 添加以下 Secrets:
 TCR_USERNAME=xxx
 TCR_PASSWORD=xxx
-TENCENTCLOUD_SECRET_ID=xxx
-TENCENTCLOUD_SECRET_KEY=xxx
+TENCENT_CLOUD_ACCOUNT_ID=xxx
+TENCENT_CLOUD_SECRET_ID=xxx
+TENCENT_CLOUD_SECRET_KEY=xxx
 KUBECONFIG=xxx (base64编码的内容)
 ```
 
