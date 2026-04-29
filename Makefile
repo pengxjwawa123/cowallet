@@ -112,7 +112,12 @@ local-init:
 	@echo "✅ PostgreSQL 已启动"
 	@echo "✅ Redis 已启动"
 	@echo ""
-	@echo "📦 初始化数据库..."
+	@echo "� 配置 PostgreSQL 认证..."
+	@sudo sed -i 's/^local.*all.*all.*peer/local   all             all                                     trust/' /var/lib/pgsql/16/data/pg_hba.conf
+	@sudo systemctl restart postgresql-16 > /dev/null 2>&1
+	@echo "✅ PostgreSQL 认证已配置"
+	@echo ""
+	@echo "�📦 初始化数据库..."
 	@sudo -u postgres /usr/pgsql-16/bin/createdb cowallet 2>/dev/null || echo "⚠️  数据库已存在"
 	@echo ""
 	@echo "📝 运行数据库迁移..."

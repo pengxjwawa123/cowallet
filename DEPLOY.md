@@ -124,6 +124,10 @@ sudo systemctl start nats
 ### 第 2 步：初始化数据库
 
 ```bash
+# 配置 PostgreSQL 本地认证（允许无密码本地连接）
+sudo sed -i 's/^local.*all.*all.*peer/local   all             all                                     trust/' /var/lib/pgsql/16/data/pg_hba.conf
+sudo systemctl restart postgresql-16
+
 # 切换到 postgres 用户创建数据库
 sudo -u postgres /usr/pgsql-16/bin/createdb cowallet
 
