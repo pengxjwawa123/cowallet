@@ -94,31 +94,33 @@ export RPC_WS_URL = wss://sepolia.base.org
 export RUST_LOG = info,api_server=debug
 
 local-init:
-	@echo "🔧 初始化本地部署环境..."
+	@echo "🔧 初始化 CentOS 部署环境..."
 	@echo "📋 检查前置条件..."
-	@command -v postgres >/dev/null 2>&1 || (echo "❌ 需要安装 PostgreSQL: brew install postgresql@16" && exit 1)
-	@command -v redis-server >/dev/null 2>&1 || (echo "❌ 需要安装 Redis: brew install redis" && exit 1)
-	@command -v nats-server >/dev/null 2>&1 || (echo "❌ 需要安装 NATS: brew install nats-server" && exit 1)
+	@command -v /usr/pgsql-16/bin/psql >/dev/null 2>&1 || (echo "❌ 需要安装 PostgreSQL: sudo yum install -y postgresql16-server" && exit 1)
+	@command -v redis-server >/dev/null 2>&1 || (echo "❌ 需要安装 Redis: sudo yum install -y redis" && exit 1)
+	@command -v nats-server >/dev/null 2>&1 || (echo "❌ 需要安装 NATS: 见 DEPLOY.md" && exit 1)
 	@command -v cargo >/dev/null 2>&1 || (echo "❌ 需要安装 Rust: https://rustup.rs" && exit 1)
 	@command -v sqlx >/dev/null 2>&1 || (echo "⏳ 安装 sqlx-cli..." && cargo install sqlx-cli --no-default-features --features postgres)
 	@echo "✅ 所有前置条件已满足"
 	@echo ""
 	@echo "🚀 启动基础服务..."
-	@brew services start postgresql@16 > /dev/null 2>&1 || true
-	@brew services start redis > /dev/null 2>&1 || true
+	@sudo systemctl enable postgresql-16 > /dev/null 2>&1 || true
+	@sudo systemctl start postgresql-16 > /dev/null 2>&1 || true
+	@sudo systemctl enable redis > /dev/null 2>&1 || true
+	@sudo systemctl start redis > /dev/null 2>&1 || true
 	@sleep 2
 	@echo "✅ PostgreSQL 已启动"
 	@echo "✅ Redis 已启动"
 	@echo ""
 	@echo "📦 初始化数据库..."
-	@createdb -U postgres cowallet 2>/dev/null || echo "⚠️  数据库已存在"
+	@sudo -u postgres /usr/pgsql-16/bin/createdb cowallet 2>/dev/null || echo "⚠️  数据库已存在"
 	@echo ""
 	@echo "📝 运行数据库迁移..."
 	@sqlx migrate run --source backend/migrations
 	@echo "✅ 数据库迁移完成"
 	@echo ""
 	@echo "📌 下一步:"
-	@echo "   终端 1: nats-server -js"
+	@echo "   终端 1: sudo systemctl start nats"
 	@echo "   终端 2: make local-start"
 
 local-start:
@@ -149,22 +151,22 @@ local-stop:
 	@pkill -f "worker" || true
 	@echo "✅ 应用已停止"
 	@echo ""
-	@echo "💡 系统服务仍在运行，可使用以下命令停止:"
-	@echo "   brew services stop postgresql@16"
-	@echo "   brew services stop redis"
-	@echo "   pkill -f nats-server"
+	@echo "💡 系统服务可使用以下命令停止:"
+	@echo "   sudo systemctl stop postgresql-16"
+	@echo "   sudo systemctl stop redis"
+	@echo "   sudo systemctl stop nats"
 
 local-status:
 	@echo "📊 服务状态检查..."
 	@echo ""
 	@echo "🔍 PostgreSQL:"
-	@psql -U postgres -c "SELECT version();" 2>/dev/null || echo "❌ 未连接"
+	@sudo systemctl status postgresql-16 2>/dev/null | grep Active || echo "❌ 检查失败"
 	@echo ""
 	@echo "🔍 Redis:"
 	@redis-cli ping 2>/dev/null || echo "❌ 未连接"
 	@echo ""
 	@echo "🔍 NATS:"
-	@(pgrep -f "nats-server" >/dev/null && echo "✅ 运行中" || echo "❌ 未运行")
+	@sudo systemctl status nats 2>/dev/null | grep Active || echo "❌ 检查失败"
 	@echo ""
 	@echo "🔍 API 服务:"
 	@(curl -s http://localhost:3000/health | head -c 50 2>/dev/null && echo "" || echo "❌ 未连接")
