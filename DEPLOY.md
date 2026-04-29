@@ -11,6 +11,20 @@ sudo yum update -y
 # 安装开发工具（Rust 编译需要）
 sudo yum install -y gcc g++ make pkg-config openssl-devel
 
+# ⚠️ 重要：升级 GCC 到 11.0+（避免 memcmp bug）
+# CentOS 7: 使用 devtoolset
+sudo yum install -y centos-release-scl
+sudo yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
+echo "source scl_enable devtoolset-11" >> ~/.bashrc
+source ~/.bashrc
+
+# CentOS 8/9: 直接安装最新 GCC
+# sudo yum install -y gcc-11 gcc-c++-11
+# sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+
+# 验证 GCC 版本（应该 >= 11.0）
+gcc --version
+
 # 安装 PostgreSQL 16
 sudo yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
 sudo yum update -y
@@ -334,6 +348,44 @@ sudo -u postgres /usr/pgsql-16/bin/psql -d cowallet -f backend/migrations/001_in
 ### Rust 编译失败（找不到 openssl）
 ```bash
 sudo yum install -y openssl-devel pkg-config
+```
+
+### Rust 编译失败（GCC 编译器 bug - memcmp）
+```
+COMPILER BUG DETECTED: Your compiler (cc) is not supported due to a memcmp related bug
+```
+
+**原因**：GCC 版本过旧（< 11）有已知 bug
+
+**解决方案**：
+
+**CentOS 7 用户**：
+```bash
+# 方式 1: 使用 devtoolset
+sudo yum install -y centos-release-scl
+sudo yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
+echo "source scl_enable devtoolset-11" >> ~/.bashrc
+source ~/.bashrc
+
+# 验证
+gcc --version  # 应该显示 11.x
+```
+
+**CentOS 8/9 用户**：
+```bash
+# 直接安装 GCC 11
+sudo yum install -y gcc-11 gcc-c++-11
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+
+# 验证
+gcc --version  # 应该显示 11.x
+```
+
+升级后重新运行：
+```bash
+cargo clean
+make local-build  # 或 cargo build --release
 ```
 
 ---

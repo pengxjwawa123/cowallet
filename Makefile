@@ -112,12 +112,23 @@ local-init:
 	@echo "✅ PostgreSQL 已启动"
 	@echo "✅ Redis 已启动"
 	@echo ""
-	@echo "� 配置 PostgreSQL 认证..."
+	@echo "🔍 检查 GCC 版本..."
+	@GCC_VERSION=$$(gcc --version | head -1 | grep -oE '[0-9]+' | head -1); \
+	if [ "$$GCC_VERSION" -lt 11 ]; then \
+		echo "⚠️  GCC 版本过旧 ($$GCC_VERSION < 11)"; \
+		echo "💡 CentOS 7: sudo yum install -y centos-release-scl devtoolset-11-gcc && source scl_enable devtoolset-11"; \
+		echo "💡 CentOS 8/9: sudo yum install -y gcc-11 && sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100"; \
+		exit 1; \
+	else \
+		echo "✅ GCC 版本: $$GCC_VERSION (✓)"; \
+	fi
+	@echo ""
+	@echo "🔐 配置 PostgreSQL 认证..."
 	@sudo sed -i 's/^local.*all.*all.*peer/local   all             all                                     trust/' /var/lib/pgsql/16/data/pg_hba.conf
 	@sudo systemctl restart postgresql-16 > /dev/null 2>&1
 	@echo "✅ PostgreSQL 认证已配置"
 	@echo ""
-	@echo "�📦 初始化数据库..."
+	@echo "📦 初始化数据库..."
 	@sudo -u postgres /usr/pgsql-16/bin/createdb cowallet 2>/dev/null || echo "⚠️  数据库已存在"
 	@echo ""
 	@echo "📝 运行数据库迁移..."
