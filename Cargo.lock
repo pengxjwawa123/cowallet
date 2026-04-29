@@ -2207,7 +2207,6 @@ dependencies = [
 name = "ffi-mobile"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives",
  "anyhow",
  "chain-evm",
  "flutter_rust_bridge",
@@ -2972,9 +2971,9 @@ dependencies = [
 name = "indexer"
 version = "0.1.0"
 dependencies = [
- "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-types",
  "chain-evm",
  "serde",
  "serde_json",
@@ -3413,7 +3412,6 @@ name = "mpc-relay"
 version = "0.1.0"
 dependencies = [
  "async-nats",
- "futures",
  "mpc-core",
  "serde",
  "serde_json",

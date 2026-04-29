@@ -1,6 +1,5 @@
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use alloy_contract::Contract;
 use alloy_network::Ethereum;
 use serde::{Deserialize, Serialize};
 
@@ -66,14 +65,36 @@ pub async fn query_balance(
         .await
         .map_err(|e| TokenError::Rpc(e.to_string()))?;
 
-    // Standard ERC20 ABI - balanceOf(address owner)
-    let contract = Contract::new(token_address, ERC20_ABI.clone(), &provider);
+    // ERC20 balanceOf selector: keccak256("balanceOf(address)") = 0x70a08231
+    // Encode the owner address as the parameter
+    let data: Vec<u8> = {
+        let mut buf = vec![0x70u8, 0xa0u8, 0x82u8, 0x31u8]; // balanceOf selector
+        buf.extend_from_slice(&[0u8; 12]);
+        buf.extend_from_slice(owner.as_slice());
+        buf
+    };
 
-    // Call balanceOf on the contract
-    contract
-        .call_raw::<(Address,), U256>("balanceOf", (owner,))
+    // Make the raw call
+    use alloy_rpc_types::TransactionRequest;
+    let tx = TransactionRequest {
+        to: Some(token_address.into()),
+        input: alloy_primitives::Bytes::from(data).into(),
+        ..Default::default()
+    };
+
+    let result = provider
+        .call(tx)
         .await
-        .map_err(|e| TokenError::Rpc(e.to_string()))
+        .map_err(|e| TokenError::Rpc(e.to_string()))?;
+
+    // Decode result as U256
+    if result.len() < 32 {
+        return Err(TokenError::ContractCallFailed(
+            "Invalid response length".to_string(),
+        ));
+    }
+
+    Ok(U256::from_be_slice(&result[..32]))
 }
 
 /// Query native token (ETH/BNB) balance.
@@ -84,24 +105,9 @@ pub async fn query_native_balance(owner: Address, rpc_url: &str) -> Result<U256,
 
     // Call eth_getBalance
     provider
-        .get_balance(owner, Default::default())
+        .get_balance(owner)
         .await
         .map_err(|e| TokenError::Rpc(e.to_string()))
-}
-
-// Minimal ERC20 ABI for balanceOf
-lazy_static::lazy_static! {
-    static ref ERC20_ABI: alloy_json_abi::JsonAbi = serde_json::from_str(
-        r#"[
-            {
-                "type": "function",
-                "name": "balanceOf",
-                "inputs": [{"name": "account", "type": "address"}],
-                "outputs": [{"name": "", "type": "uint256"}],
-                "stateMutability": "view"
-            }
-        ]"#
-    ).unwrap();
 }
 
 #[derive(Debug, thiserror::Error)]
