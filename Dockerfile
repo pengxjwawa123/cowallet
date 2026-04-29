@@ -16,7 +16,6 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 # 复制源代码
 COPY crates ./crates
 COPY backend ./backend
-COPY migrations ./migrations
 
 # 构建所有二进制文件（release 优化）
 RUN cargo build --release --bin api-server --bin mpc-relay --bin indexer --bin worker
@@ -39,7 +38,7 @@ COPY --from=builder /app/target/release/api-server /usr/local/bin/
 COPY --from=builder /app/target/release/mpc-relay /usr/local/bin/
 COPY --from=builder /app/target/release/indexer /usr/local/bin/
 COPY --from=builder /app/target/release/worker /usr/local/bin/
-COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/backend/migrations ./migrations
 
 # 健康检查（仅 api-server 容器需要）
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
