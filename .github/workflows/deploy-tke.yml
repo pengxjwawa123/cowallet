@@ -73,7 +73,8 @@ jobs:
       # Deploy the Docker image to the TKE cluster
       - name: Deploy
         run: |
-          ./kustomize edit set image ${TKE_IMAGE_URL}:${GITHUB_SHA} -k k8s
-          ./kustomize build k8s | kubectl apply -f -
+          cd k8s
+          ../kustomize edit set image ${TKE_IMAGE_URL}:${GITHUB_SHA}
+          ../kustomize build . | kubectl apply -f -
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n cowallet
           kubectl get services -o wide -n cowallet
