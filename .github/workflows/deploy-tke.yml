@@ -1,123 +1,73 @@
-name: Deploy to TKE
+# This workflow builds a docker container, publishes and deploys it to
+# Tencent Kubernetes Engine (TKE) when there is a push to the "main" branch.
+#
+# Secrets required (Settings → Secrets and variables → Actions → Environments → production):
+#   - TENCENT_CLOUD_SECRET_ID    — 腾讯云 API 密钥 ID
+#   - TENCENT_CLOUD_SECRET_KEY   — 腾讯云 API 密钥 Secret
+#   - TENCENT_CLOUD_ACCOUNT_ID   — 腾讯云账户 ID
+#   - TKE_REGISTRY_PASSWORD      — TKE 镜像仓库密码
+
+name: Tencent Kubernetes Engine
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+    branches: [ "main" ]
 
 env:
-  TKE_CLUSTER_ID: cls-c63h33ne
+  TKE_IMAGE_URL: sgccr.ccs.tencentyun.com/cowallet/cowallet
   TKE_REGION: ap-singapore
+  TKE_CLUSTER_ID: cls-c63h33ne
   DEPLOYMENT_NAME: cowallet
-  REGISTRY: sgccr.ccs.tencentyun.com
-  IMAGE_NAME: cowallet
+
+permissions:
+  contents: read
 
 jobs:
-  deploy:
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     environment: production
-    
-    permissions:
-      contents: read
-    
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Tencent Cloud credentials
-        env:
-          TENCENT_CLOUD_ACCOUNT_ID: ${{ secrets.TENCENT_CLOUD_ACCOUNT_ID }}
-          TENCENT_CLOUD_SECRET_ID: ${{ secrets.TENCENT_CLOUD_SECRET_ID }}
-          TENCENT_CLOUD_SECRET_KEY: ${{ secrets.TENCENT_CLOUD_SECRET_KEY }}
+      # Build
+      - name: Build Docker image
         run: |
-          if [ -z "$TENCENT_CLOUD_ACCOUNT_ID" ] || [ -z "$TENCENT_CLOUD_SECRET_ID" ] || [ -z "$TENCENT_CLOUD_SECRET_KEY" ]; then
-            echo "❌ ERROR: Tencent Cloud credentials are not set!"
-            echo "Please configure the following GitHub Secrets:"
-            echo "  - TENCENT_CLOUD_ACCOUNT_ID"
-            echo "  - TENCENT_CLOUD_SECRET_ID"
-            echo "  - TENCENT_CLOUD_SECRET_KEY"
-            exit 1
-          fi
-          
-          mkdir -p ~/.tencent
-          cat > ~/.tencent/config << EOF
-          TENCENT_CLOUD_ACCOUNT_ID=${TENCENT_CLOUD_ACCOUNT_ID}
-          TENCENT_CLOUD_SECRET_ID=${TENCENT_CLOUD_SECRET_ID}
-          TENCENT_CLOUD_SECRET_KEY=${TENCENT_CLOUD_SECRET_KEY}
-          TENCENT_CLOUD_REGION=ap-singapore
-          EOF
-          chmod 600 ~/.tencent/config
-          echo "✅ Tencent Cloud credentials configured"
+          docker build -t ${TKE_IMAGE_URL}:${GITHUB_SHA} .
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
+      - name: Login TKE Registry
+        run: |
+          docker login -u ${{ secrets.TENCENT_CLOUD_ACCOUNT_ID }} -p '${{ secrets.TKE_REGISTRY_PASSWORD }}' ${TKE_IMAGE_URL}
+
+      # Push the Docker image to TKE Registry
+      - name: Publish
+        run: |
+          docker push ${TKE_IMAGE_URL}:${GITHUB_SHA}
+
+      - name: Set up Kustomize
+        run: |
+          curl -o kustomize --location https://github.com/kubernetes-sigs/kustomize/releases/download/v3.1.0/kustomize_3.1.0_linux_amd64
+          chmod u+x ./kustomize
+
+      - name: Set up ~/.kube/config for connecting TKE cluster
+        uses: TencentCloud/tke-cluster-credential-action@v1
         with:
-          version: 'latest'
+          secret_id: ${{ secrets.TENCENT_CLOUD_SECRET_ID }}
+          secret_key: ${{ secrets.TENCENT_CLOUD_SECRET_KEY }}
+          tke_region: ${{ env.TKE_REGION }}
+          cluster_id: ${{ env.TKE_CLUSTER_ID }}
 
-      - name: Get TKE kubeconfig
+      - name: Switch to TKE context
         run: |
-          echo "🔑 Retrieving kubeconfig for cluster: ${{ env.TKE_CLUSTER_ID }}"
-          
-          # 创建 .kube 目录
-          mkdir -p ~/.kube
-          
-          # 从 GitHub Secret 解码并写入 kubeconfig
-          if [ -z "${{ secrets.KUBECONFIG }}" ]; then
-            echo "❌ ERROR: KUBECONFIG secret is not set!"
-            echo "Please configure GitHub Secret 'KUBECONFIG' with base64-encoded kubeconfig content"
-            echo ""
-            echo "步骤："
-            echo "1. 从 TKE 控制台获取 kubeconfig 文件"
-            echo "2. 本地转为 Base64: cat kubeconfig | base64 > kubeconfig.b64"
-            echo "3. 复制内容到 GitHub Secret: Settings → Secrets → KUBECONFIG"
-            exit 1
-          fi
-          
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
-          
-          echo "✅ kubeconfig 已设置"
-          kubectl config view --minify
+          kubectl config use-context ${TKE_CLUSTER_ID}-context-default
 
-      - name: Verify cluster connection
-        run: kubectl cluster-info
-
-      - name: Generate image tag
-        id: image
+      # Deploy the Docker image to the TKE cluster
+      - name: Deploy
         run: |
-          COMMIT_SHA=${{ github.sha }}
-          SHORT_SHA=${COMMIT_SHA:0:7}
-          
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG=${GITHUB_REF#refs/tags/}
-          else
-            TAG=${SHORT_SHA}
-          fi
-          
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" >> $GITHUB_OUTPUT
-
-      - name: Update deployment
-        run: |
-          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} \
-            api-server=${{ steps.image.outputs.image }} \
-            mpc-relay=${{ steps.image.outputs.image }} \
-            indexer=${{ steps.image.outputs.image }} \
-            worker=${{ steps.image.outputs.image }} \
-            -n cowallet \
-            --record
-
-      - name: Wait for rollout
-        run: |
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} \
-            -n cowallet \
-            --timeout=5m
-
-      - name: Verify deployment
-        run: |
-          echo "✅ Deployment successful!"
-          kubectl get pods -n cowallet
-          kubectl describe deployment ${{ env.DEPLOYMENT_NAME }} -n cowallet
+          cd k8s
+          ../kustomize edit set image ${TKE_IMAGE_URL}:${GITHUB_SHA}
+          ../kustomize build . | kubectl apply -f -
+          kubectl rollout status deployment/${DEPLOYMENT_NAME} -n cowallet
+          kubectl get services -o wide -n cowallet
