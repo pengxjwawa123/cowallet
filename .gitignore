@@ -55,13 +55,5 @@ D:/
 .pub-cache/
 .dart_tool/
 
-# Docker
-.dockerignore
-Dockerfile
-docker-compose.yml
-docker-start.sh
-DOCKER.md
-
 # Generated files
-Makefile
 *.generated.*

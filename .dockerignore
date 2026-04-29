@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+.github
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs
+target
+dist
+build
+
+# 文档
+README.md
+PLAN.md
+CLAUDE.md
+*.md
+
+# Flutter / Mobile
+mobile/
+prototype/
+
+# 临时文件
+.env.local
+.omc
+D:/
+
+# CI/CD
+.github/workflows
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
