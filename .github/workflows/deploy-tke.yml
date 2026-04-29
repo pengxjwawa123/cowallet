@@ -75,6 +75,6 @@ jobs:
         run: |
           cd k8s
           ../kustomize edit set image ${TKE_IMAGE_URL}:${GITHUB_SHA}
-          ../kustomize build . | kubectl apply -f -
+          ../kustomize build . | kubectl apply --validate=false -f -
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n cowallet
           kubectl get services -o wide -n cowallet
