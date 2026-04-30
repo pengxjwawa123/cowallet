@@ -24,10 +24,25 @@ pub struct EncryptedShard {
 }
 
 /// A decrypted shard — exists only transiently in Rust memory during signing.
-#[derive(Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop, Clone)]
 pub struct DecryptedShard {
     pub party_index: u16,
     pub secret_share: Vec<u8>,
+}
+
+impl DecryptedShard {
+    /// Create a new decrypted shard from bytes.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            party_index: 0,
+            secret_share: bytes,
+        }
+    }
+
+    /// Get the raw bytes of the shard.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.secret_share
+    }
 }
 
 /// Health status of a shard.

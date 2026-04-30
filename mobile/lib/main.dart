@@ -4,6 +4,7 @@ import 'theme/theme.dart';
 import 'router/app_router.dart';
 import 'state/app_state.dart';
 import 'services/locator.dart';
+import 'api/auth_api.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,11 +38,20 @@ class _CowalletAppState extends State<CowalletApp> {
 
   Future<void> _checkWalletState() async {
     try {
-      if (await Services.wallet.hasWallet()) {
+      // Check for both local wallet existence and valid backend session
+      final hasLocalWallet = await Services.wallet.hasWallet();
+      final hasValidSession = await AuthApi.isLoggedIn();
+
+      if (hasLocalWallet && hasValidSession) {
         final addr = await Services.wallet.getAddress();
         appState.setWalletAddress(addr);
         appState.completeOnboarding();
         _initialRoute = AppRouter.home;
+
+        // Try to refresh session info from backend
+        try {
+          await AuthApi.getSessionInfo();
+        } catch (_) {}
       }
     } catch (_) {
       // Fall through to onboarding

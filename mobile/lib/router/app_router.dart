@@ -104,54 +104,43 @@ class _AppShellState extends State<AppShell> {
   }
 
   Widget _askPill() {
-    final active = _currentIndex == 2;
     return Expanded(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _currentIndex = 2),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+        child: Center(
+          child: Transform.translate(
+            offset: const Offset(0, -12),
+            child: Container(
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                color: active ? CwColors.accent : CwColors.ink1,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: active
-                    ? [BoxShadow(color: CwColors.accent.withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 2))]
-                    : null,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const RadialGradient(
-                        center: Alignment(-0.3, -0.3),
-                        colors: [Color(0xFFFFBFA6), Color(0xFFD97757), Color(0xFF9A4A31)],
-                        stops: [0.0, 0.55, 1.0],
-                      ),
-                      boxShadow: [
-                        BoxShadow(color: CwColors.accentSoft, blurRadius: 4, spreadRadius: 1),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    S.tabAsk,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
+                shape: BoxShape.circle,
+                color: CwColors.ink1,
+                boxShadow: [
+                  BoxShadow(
+                    color: CwColors.ink1.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
+              child: Center(
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      center: Alignment(-0.2, -0.2),
+                      colors: [Color(0xFFFFBFA6), Color(0xFFD97757), Color(0xFFB86A4A)],
+                      stops: [0.0, 0.5, 1.0],
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );

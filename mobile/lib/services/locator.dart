@@ -9,11 +9,13 @@ import 'tx_service.dart';
 import 'intent_executor.dart';
 import 'gas_service.dart';
 import 'tx_history_service.dart';
+import 'mpc_wallet_service.dart';
 
 class Services {
   static late final BiometricService biometrics;
   static late final SecureStorageService storage;
   static late final WalletService wallet;
+  static late final MpcWalletService mpcWallet;
   static late final ChainService chain;
   static late final BalanceService balance;
   static late final TxService tx;
@@ -25,6 +27,7 @@ class Services {
     storage = FlutterSecureStorageService();
     biometrics = LocalAuthBiometricService();
     wallet = DartWalletService(storage);
+    mpcWallet = MpcWalletService();
     chain = JsonRpcChainService();
     balance = BalanceService(chain);
     gas = GasService(chain);

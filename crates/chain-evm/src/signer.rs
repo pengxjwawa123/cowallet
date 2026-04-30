@@ -51,16 +51,25 @@ impl MpcSigner {
             .sign_local()
             .map_err(|e| MpcSignerError::ProtocolError(e.to_string()))?;
 
-        // v=27 → parity false, v=28 → parity true
-        let parity = ecdsa_sig.v >= 28;
+        let r = B256::from(ecdsa_sig.r);
+        let s = B256::from(ecdsa_sig.s);
 
-        let sig = Signature::from_scalars_and_parity(
-            B256::from(ecdsa_sig.r),
-            B256::from(ecdsa_sig.s),
-            parity,
-        );
+        // Try all 4 possible recovery IDs to find the one that recovers to our address
+        for recovery_id in 0..4u8 {
+            let y_parity = (recovery_id & 1) == 1;
+            let sig = Signature::from_scalars_and_parity(r, s, y_parity);
+            
+            if let Ok(recovered_addr) = sig.recover_address_from_prehash(hash) {
+                if recovered_addr == self.address {
+                    return Ok(sig);
+                }
+            }
+        }
 
-        Ok(sig)
+        // If none of the recovery IDs worked, return an error
+        Err(MpcSignerError::ProtocolError(
+            "failed to find valid recovery ID for signature".to_string(),
+        ))
     }
 }
 
@@ -132,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mpc_signer_sign_hash() {
-        let (signer, shares) = setup_signer();
+        let (signer, _shares) = setup_signer();
 
         let digest: [u8; 32] = sha3::Keccak256::digest(b"test tx").into();
         let hash = B256::from(digest);

@@ -1,0 +1,8 @@
+# flutter_rust_bridge configuration
+# This file configures the code generator for FFI bindings
+
+[package.metadata.flutter_rust_bridge]
+crate-name = "ffi_mobile"
+rust-root = "crates/ffi-mobile"
+rust-lib-name = "ffi_mobile"
+output = "mobile/lib/bridge"
