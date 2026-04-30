@@ -50,7 +50,7 @@ services:
     volumes:
       - nats_data:/data
     healthcheck:
-      test: ["CMD", "nats", "server", "list"]
+      test: ["CMD", "nc", "-z", "localhost", "4222"]
       interval: 10s
       timeout: 5s
       retries: 5
