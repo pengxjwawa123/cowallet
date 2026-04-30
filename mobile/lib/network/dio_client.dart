@@ -32,13 +32,20 @@ class DioClient {
       // Token自动添加拦截器
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // 从安全存储拿token，自动加到请求头
-          String? token = await SecureStorage.getToken();
-          if (token != null && token.isNotEmpty) {
-            options.headers["Authorization"] = "Bearer $token";
-            print("✅ Token added to Authorization header");
-          } else {
-            print("⚠️  Token is null or empty");
+          try {
+            // 从安全存储拿token，自动加到请求头
+            String? token = await SecureStorage.getToken();
+            
+            if (token != null && token.isNotEmpty) {
+              options.headers["Authorization"] = "Bearer $token";
+              print("✅ [DioClient] Token added: ${token.substring(0, 30)}...");
+            } else {
+              print("⚠️  [DioClient] No token found in SecureStorage");
+              // 尝试直接检查文件
+              print("   Path: ${options.path}");
+            }
+          } catch (e) {
+            print("❌ [DioClient] Error reading token: $e");
           }
           return handler.next(options);
         },
