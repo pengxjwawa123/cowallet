@@ -2,29 +2,6 @@
 
 ## 前置要求
 
-### 1. 系统依赖（CentOS 7/8/9）
-
-```bash
-# 更新包列表
-sudo yum update -y
-
-# 安装开发工具（Rust 编译需要）
-sudo yum install -y gcc g++ make pkg-config openssl-devel
-
-# ⚠️ 重要：升级 GCC 到 11.0+（避免 memcmp bug）
-# CentOS 7: 使用 devtoolset
-sudo yum install -y centos-release-scl
-sudo yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
-echo "source scl_enable devtoolset-11" >> ~/.bashrc
-source ~/.bashrc
-
-# CentOS 8/9: 直接安装最新 GCC
-# sudo yum install -y gcc-11 gcc-c++-11
-# sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
-
-# 验证 GCC 版本（应该 >= 11.0）
-gcc --version
-
 # 安装 PostgreSQL 16
 sudo yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
 sudo yum update -y
