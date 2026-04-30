@@ -3,9 +3,11 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     routing::{delete, get, post},
+    Extension,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::middleware::auth::Claims;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -32,6 +34,7 @@ struct SessionResponse {
 
 async fn create_session(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Json(body): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let db = state
@@ -42,15 +45,22 @@ async fn create_session(
     let threshold = body.threshold.unwrap_or(2);
     let total_parties = body.parties.len() as i16;
 
-    // Use a placeholder initiator for now (will come from JWT claims in production)
-    let initiator_id = uuid::Uuid::nil();
+    // 从 JWT claims 取真实 user_id
+    let initiator_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // 统一 session_type：客户端发 'keygen' 映射到数据库的 'dkg'
+    let db_session_type = match body.session_type.as_str() {
+        "keygen" => "dkg",
+        other => other,
+    };
 
     sqlx::query(
         "INSERT INTO mpc_sessions (id, session_type, initiator_id, parties, threshold, total_parties)
          VALUES ($1, $2, $3, $4, $5, $6)"
     )
     .bind(session_id)
-    .bind(&body.session_type)
+    .bind(db_session_type)
     .bind(initiator_id)
     .bind(&body.parties)
     .bind(threshold)
