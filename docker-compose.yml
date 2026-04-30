@@ -12,7 +12,7 @@ services:
       POSTGRES_DB: cowallet
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
@@ -45,8 +45,8 @@ services:
     container_name: cowallet-nats
     command: -js -m 8222 --http_port 8222
     ports:
-      - "4222:4222"    # NATS 客户端
-      - "8222:8222"    # HTTP 管理
+      - "4223:4222"    # NATS 客户端
+      - "8223:8222"    # HTTP 管理
     volumes:
       - nats_data:/data
     healthcheck:
