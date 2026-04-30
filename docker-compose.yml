@@ -76,7 +76,7 @@ services:
       NATS_URL: nats://nats:4222
       REDIS_URL: redis://redis:6379
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-sk-ant-placeholder}
-      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:8080,http://localhost:5173
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:8080,http://localhost:5173,http://43.163.101.37:3000
       RUST_LOG: info,api_server=debug
     depends_on:
       postgres:
