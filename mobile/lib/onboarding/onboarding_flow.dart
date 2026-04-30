@@ -121,6 +121,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     DeviceIdGenerator.getOrGenerate().then((deviceId) async {
       final authResult = await AuthApi.register(deviceId: deviceId);
       if (authResult.isSuccess && mounted) {
+        // ✅ 确保 token 已保存到存储
+        await Future.delayed(const Duration(milliseconds: 200));
+        
         setState(() => _createChecksDone = 1); // ✅ 设备验证通过
         authDone = true;
         maybeAdvance();
@@ -132,7 +135,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     });
 
     // Step 2: 创建 MPC 会话
-    Future.delayed(const Duration(milliseconds: 400), () async {
+    Future.delayed(const Duration(milliseconds: 600), () async {
       try {
         await mpcService.startKeygen();
         if (mounted) {

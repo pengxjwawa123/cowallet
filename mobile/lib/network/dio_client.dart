@@ -36,6 +36,9 @@ class DioClient {
           String? token = await SecureStorage.getToken();
           if (token != null && token.isNotEmpty) {
             options.headers["Authorization"] = "Bearer $token";
+            print("✅ Token added to Authorization header");
+          } else {
+            print("⚠️  Token is null or empty");
           }
           return handler.next(options);
         },
@@ -45,6 +48,7 @@ class DioClient {
         onError: (DioException e, handler) async {
           // 401未授权，token过期，自动清除登录信息
           if (e.response?.statusCode == 401) {
+            print("⚠️  401 Unauthorized - clearing token");
             await SecureStorage.clearAll();
             // TODO: 这里接入全局路由后，自动跳转到登录页
             // navigatorKey.currentState?.pushReplacementNamed('/login');

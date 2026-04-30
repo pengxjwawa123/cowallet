@@ -24,12 +24,22 @@ class AuthApi {
     if (result.isSuccess) {
       String? token = result.data?["token"];
       String? userId = result.data?["user_id"];
+      
+      print("📝 AuthApi.register response: token=${token?.substring(0, 30)}..., userId=$userId");
+      
       if (token != null) {
         await SecureStorage.saveToken(token);
+        print("✅ Token saved to SecureStorage");
+      } else {
+        print("❌ Token is null in response");
       }
+      
       if (userId != null) {
         await SecureStorage.saveUserId(userId);
+        print("✅ UserId saved to SecureStorage");
       }
+    } else {
+      print("❌ Registration failed: ${result.errorMessage}");
     }
     return result;
   }
