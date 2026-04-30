@@ -117,25 +117,25 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       }
     }
 
-    // Step 1: 设备注册/认证
-    DeviceIdGenerator.getOrGenerate().then((deviceId) async {
-      final authResult = await AuthApi.register(deviceId: deviceId);
-      if (authResult.isSuccess && mounted) {
-        // ✅ 确保 token 已保存到存储
-        await Future.delayed(const Duration(milliseconds: 200));
-        
+    // Step 1 → 2 → 3 顺序执行，确保 token 在 MPC 请求之前已保存
+    () async {
+      // Step 1: 设备注册/认证
+      try {
+        final deviceId = await DeviceIdGenerator.getOrGenerate();
+        final authResult = await AuthApi.register(deviceId: deviceId);
+        if (!authResult.isSuccess) throw Exception(authResult.errorMessage);
+        if (!mounted) return;
         setState(() => _createChecksDone = 1); // ✅ 设备验证通过
         authDone = true;
         maybeAdvance();
+      } catch (e) {
+        if (!mounted) return;
+        _createTimer?.cancel();
+        setState(() => _createError = true);
+        return; // 注册失败，终止后续步骤
       }
-    }).catchError((Object e) {
-      if (!mounted) return;
-      _createTimer?.cancel();
-      setState(() => _createError = true);
-    });
 
-    // Step 2: 创建 MPC 会话
-    Future.delayed(const Duration(milliseconds: 600), () async {
+      // Step 2: 创建 MPC 会话（token 已保存，顺序执行）
       try {
         await mpcService.startKeygen();
         if (mounted) {
@@ -151,10 +151,8 @@ class _OnboardingFlowState extends State<OnboardingFlow>
           maybeAdvance();
         }
       }
-    });
 
-    // Step 3: 执行 MPC 密钥生成协议 (3轮消息交换)
-    Future.delayed(const Duration(milliseconds: 800), () async {
+      // Step 3: 执行 MPC 密钥生成协议 (3轮消息交换)
       try {
         final sessionId = mpcService.currentSessionId;
         if (sessionId != null) {
@@ -172,7 +170,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
           maybeAdvance();
         }
       }
-    });
+    }();
 
     // Step 4: 本地钱包初始化 (BIP-32/BIP-44)
     Services.wallet.generateWallet().then((keys) {
