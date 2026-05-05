@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY backend ./backend
-COPY migrations ./migrations
+COPY backend/migrations ./migrations
 
 # 构建二进制文件
 RUN cargo build --release --bin api-server --bin mpc-relay --bin indexer --bin worker
