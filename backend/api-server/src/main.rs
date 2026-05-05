@@ -86,10 +86,6 @@ async fn main() {
         }
     };
 
-    // MPC routes with strict rate limiting (10 req/min)
-    let mpc_routes = routes::mpc::router()
-        .layer(axum_mw::from_fn(strict_rate_limit_middleware));
-
     // Initialize encryption service (in production, key from KMS/HSM)
     let encryption_key = std::env::var("ENCRYPTION_KEY")
         .ok()
@@ -110,8 +106,13 @@ async fn main() {
     );
 
     // Protected routes with standard rate limiting (100 req/min)
+    // MPC routes defined directly to avoid nest path parameter issues
     let protected = Router::new()
-        .nest("/mpc", mpc_routes)
+        .route("/mpc/session", axum::routing::post(routes::mpc::create_session))
+        .route("/mpc/session/{id}", axum::routing::get(routes::mpc::get_session))
+        .route("/mpc/session/{id}", axum::routing::delete(routes::mpc::abort_session))
+        .route("/mpc/session/{id}/msg", axum::routing::post(routes::mpc::send_message))
+        .route("/mpc/session/{id}/msg", axum::routing::get(routes::mpc::recv_messages))
         .nest("/tx", routes::tx::router())
         .nest("/policy", routes::policy::router())
         .nest("/ai", routes::ai::router())

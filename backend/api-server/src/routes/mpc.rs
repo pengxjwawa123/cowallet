@@ -135,7 +135,7 @@ fn calculate_message_hmac(
     hex::encode(result)
 }
 
-async fn create_session(
+pub async fn create_session(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Json(body): Json<CreateSessionRequest>,
@@ -194,7 +194,7 @@ async fn create_session(
     }))
 }
 
-async fn get_session(
+pub async fn get_session(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
@@ -218,7 +218,7 @@ async fn get_session(
     }))
 }
 
-async fn abort_session(
+pub async fn abort_session(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<StatusCode, StatusCode> {
@@ -259,7 +259,7 @@ struct SendMessageResponse {
     verified: bool,
 }
 
-async fn send_message(
+pub async fn send_message(
     State(state): State<AppState>,
     Path(session_id): Path<uuid::Uuid>,
     Json(body): Json<SendMessageRequest>,
@@ -375,7 +375,7 @@ struct MessageResponse {
     created_at: String,
 }
 
-async fn recv_messages(
+pub async fn recv_messages(
     State(state): State<AppState>,
     Path(session_id): Path<uuid::Uuid>,
 ) -> Result<Json<Vec<MessageResponse>>, StatusCode> {
