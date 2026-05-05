@@ -29,7 +29,7 @@ CREATE TABLE jwt_blacklist (
     reason TEXT
 );
 
-CREATE INDEX idx_jwt_blacklist_expires ON jwt_blacklist(expires_at) WHERE expires_at > NOW();
+CREATE INDEX idx_jwt_blacklist_expires ON jwt_blacklist(expires_at);
 CREATE INDEX idx_jwt_blacklist_user ON jwt_blacklist(user_id);
 
 -- Auto-cleanup function for expired tokens
