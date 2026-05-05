@@ -178,6 +178,8 @@ async fn main() {
         )
     }
 
+    let app_state_for_middleware = app_state.clone();
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -189,6 +191,10 @@ async fn main() {
         .nest("/api/v1", protected)
         .with_state(app_state.clone())
         // Order: Outermost first (applied first to request, last to response)
+        .layer(axum_mw::from_fn_with_state(app_state_for_middleware, |state: State<AppState>, mut request: Request<Body>, next: Next| async move {
+            request.extensions_mut().insert(state.0);
+            next.run(request).await
+        }))
         .layer(SecurityHeadersLayer::new())
         .layer(CompressionLayer::new()) // gzip/brotli compression
         .layer(TimeoutLayer::new(Duration::from_secs(30))) // 30s request timeout
