@@ -23,6 +23,7 @@ CREATE TABLE mpc_sessions (
     parties SMALLINT[] NOT NULL,
     threshold SMALLINT NOT NULL DEFAULT 2,
     total_parties SMALLINT NOT NULL DEFAULT 3,
+    current_round INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '5 minutes')
