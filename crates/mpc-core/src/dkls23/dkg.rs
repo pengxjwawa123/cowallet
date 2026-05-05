@@ -318,7 +318,7 @@ impl DkgSession {
             party: self.config.party_index,
             threshold: self.config.threshold,
             total_parties: self.config.total_parties,
-            secret_share: my_share.to_bytes().to_vec(),
+            secret_share: my_share.to_bytes().to_vec().into(),
             public_key,
         };
 

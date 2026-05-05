@@ -1,3 +1,5 @@
+use crate::services::claude::{ClaudeClient, Message, ContentBlock, ToolDefinition, extract_text, extract_tool_calls};
+use crate::services::ai_executor::{ToolContext, ToolExecutionResult};
 use crate::state::AppState;
 use axum::{
     Json, Router,
@@ -16,6 +18,118 @@ pub fn router() -> Router<AppState> {
         .route("/chat", post(chat))
         .route("/chat/stream", get(chat_stream))
         .route("/classify", post(classify_intent))
+}
+
+/// Convert internal tool definitions to Claude format
+fn wallet_tools_for_claude() -> Vec<ToolDefinition> {
+    vec![
+        ToolDefinition {
+            name: "get_balance".into(),
+            description: "Get the user's current wallet balance for a specific token or ETH".into(),
+            input_schema: crate::services::claude::ToolSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "token": {
+                        "type": "string",
+                        "description": "Token symbol (e.g., ETH, USDC). Omit for native ETH balance."
+                    },
+                    "chain_id": {
+                        "type": "integer",
+                        "description": "Chain ID (1 for Ethereum, 8453 for Base, etc.). Default: 8453."
+                    }
+                }),
+                required: vec![],
+            },
+        },
+        ToolDefinition {
+            name: "send_transaction".into(),
+            description: "Prepare a transaction for sending. Requires user biometric confirmation before execution.".into(),
+            input_schema: crate::services::claude::ToolSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "to_address": {
+                        "type": "string",
+                        "description": "Recipient wallet address (0x-prefixed hex)"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Amount to send in wei (for ETH) or token decimals (for ERC-20)"
+                    },
+                    "token_address": {
+                        "type": "string",
+                        "description": "Optional: ERC-20 token contract address. Omit for native ETH."
+                    }
+                }),
+                required: vec!["to_address".into(), "value".into()],
+            },
+        },
+        ToolDefinition {
+            name: "get_transaction_history".into(),
+            description: "Get recent transaction history for the user's wallet".into(),
+            input_schema: crate::services::claude::ToolSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of transactions to return. Default: 20."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Pagination offset. Default: 0."
+                    }
+                }),
+                required: vec![],
+            },
+        },
+        ToolDefinition {
+            name: "search_yield_opportunities".into(),
+            description: "Search for DeFi yield opportunities including lending, DEX liquidity pools, liquid staking, and vault strategies. Returns APY data, TVL, risk levels, and smart contract addresses.".into(),
+            input_schema: crate::services::claude::ToolSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "chain_id": {
+                        "type": "integer",
+                        "description": "Chain ID (8453 for Base, 1 for Ethereum). Default: 8453."
+                    },
+                    "protocol_type": {
+                        "type": "string",
+                        "description": "Filter by type: 'dex', 'lending', 'liquid_staking', 'vault', 'farm'"
+                    },
+                    "min_apy": {
+                        "type": "number",
+                        "description": "Minimum APY percentage to filter results. Default: 0.0"
+                    },
+                    "token": {
+                        "type": "string",
+                        "description": "Filter by token symbol or address (e.g., 'ETH', 'USDC')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of opportunities to return. Default: 20."
+                    }
+                }),
+                required: vec![],
+            },
+        },
+        ToolDefinition {
+            name: "list_yield_protocols".into(),
+            description: "Get a list of supported DeFi yield protocols with their TVL, risk levels, and audit information.".into(),
+            input_schema: crate::services::claude::ToolSchema {
+                schema_type: "object".into(),
+                properties: serde_json::json!({
+                    "chain_id": {
+                        "type": "integer",
+                        "description": "Filter by chain ID. Omit to return all chains."
+                    },
+                    "protocol_type": {
+                        "type": "string",
+                        "description": "Filter by protocol type."
+                    }
+                }),
+                required: vec![],
+            },
+        },
+    ]
 }
 
 /// A chat message in the conversation
@@ -40,6 +154,25 @@ pub struct ChatRequest {
 pub struct ChatResponse {
     pub message: String,
     pub tool_calls: Vec<ToolCall>,
+}
+
+/// Extended response with tool execution results
+#[derive(Debug, Serialize)]
+pub struct ChatWithToolsResponse {
+    pub message: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub tool_results: Vec<ToolExecutionResult>,
+    pub needs_confirmation: Vec<String>,
+}
+
+/// Convert ChatWithToolsResponse to legacy ChatResponse for backward compatibility
+impl From<ChatWithToolsResponse> for ChatResponse {
+    fn from(ct: ChatWithToolsResponse) -> Self {
+        ChatResponse {
+            message: ct.message,
+            tool_calls: ct.tool_calls,
+        }
+    }
 }
 
 /// A tool call requested by the AI
@@ -275,43 +408,170 @@ fn classify_intent_locally(message: &str) -> IntentClassification {
     }
 }
 
-/// Non-streaming chat endpoint
+/// Non-streaming chat endpoint with Claude API integration and tool execution
 async fn chat(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
-) -> Json<ChatResponse> {
-    // For now, use local intent classification + rule-based responses
-    // In production, this would proxy to Claude API with tool calling
+) -> Result<Json<ChatWithToolsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let user_message = req.message.clone();
+    let tools = wallet_tools_for_claude();
 
-    let classification = classify_intent_locally(&req.message);
-
-    let response_message = match classification.intent_type.as_str() {
-        "get_balance" => {
-            "I can help you check your wallet balance. Let me fetch that for you. This would call the get_balance tool in production."
-        }
-        "send_transaction" => {
-            "I see you want to send a transaction! To help you prepare this, I'll need:\n\n1. The recipient address\n2. The amount to send\n3. Which token (ETH or ERC-20)\n\nPlease note: All transactions require your biometric confirmation before being signed and broadcast."
-        }
-        "get_transaction_history" => {
-            "Let me retrieve your recent transaction history. This would call the get_transaction_history tool in production."
-        }
-        "estimate_gas" => {
-            "I can help estimate gas costs. Gas prices fluctuate based on network demand. Let me check the current conditions for you."
-        }
-        "get_wallet_address" => {
-            "Here's your wallet address. Remember to always double-check before sending funds to it. This would retrieve your actual address in production."
-        }
-        _ => {
-            "I'm CoWallet, your AI-powered MPC crypto wallet assistant! I can help you:\n\n• Check your balance\n• Send transactions (with your confirmation)\n• Review transaction history\n• Estimate gas costs\n• Answer questions about crypto\n\nWhat would you like to do today?"
+    // Use Claude API if available, otherwise fall back to rule-based responses
+    let claude = match &state.claude {
+        Some(c) => c,
+        None => {
+            tracing::warn!("Claude API not configured, falling back to local classifier");
+            return Ok(Json(fallback_response(&user_message)));
         }
     };
 
-    // For now, return empty tool calls (demonstration mode)
-    // In production: parse Claude response, extract tool calls, execute them, return result
-    Json(ChatResponse {
+    // Convert history and build messages array
+    let mut messages: Vec<Message> = req
+        .history
+        .into_iter()
+        .map(|msg| Message {
+            role: msg.role,
+            content: vec![ContentBlock::Text { text: msg.content }],
+        })
+        .collect();
+
+    messages.push(Message {
+        role: "user".into(),
+        content: vec![ContentBlock::Text { text: user_message.clone() }],
+    });
+
+    // First call to Claude - get tool calls or direct response
+    let response = match claude
+        .create_message(&messages, &tools, Some(SYSTEM_PROMPT))
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("Claude API failed: {}, falling back to local classifier", e);
+            return Ok(Json(fallback_response(&user_message)));
+        }
+    };
+
+    let initial_text = extract_text(&response);
+    let tool_calls = extract_tool_calls(&response);
+
+    // No tools called - return direct response
+    if tool_calls.is_empty() {
+        return Ok(Json(ChatWithToolsResponse {
+            message: initial_text,
+            tool_calls: vec![],
+            tool_results: vec![],
+            needs_confirmation: vec![],
+        }));
+    }
+
+    // Extract tool calls for response
+    let response_tool_calls: Vec<ToolCall> = tool_calls
+        .clone()
+        .into_iter()
+        .map(|(id, name, params)| ToolCall {
+            id,
+            name,
+            parameters: params,
+        })
+        .collect();
+
+    // Execute tools
+    let tool_ctx = ToolContext {
+        app_state: state.clone(),
+        user_id: req.user_id.clone(),
+    };
+
+    let mut tool_results = Vec::new();
+    let mut needs_confirmation = Vec::new();
+
+    for (tool_id, name, params) in &tool_calls {
+        tracing::info!("Executing tool: {} id={}", name, tool_id);
+        let result = tool_ctx.execute_tool(name, tool_id, params.clone()).await;
+
+        // Mark send_transaction as needing confirmation
+        if name == "send_transaction" && result.success {
+            needs_confirmation.push(tool_id.clone());
+        }
+
+        tool_results.push(result);
+    }
+
+    // Build tool result content blocks to send back to Claude
+    let mut result_blocks = Vec::new();
+    for result in &tool_results {
+        let content = if result.success {
+            serde_json::to_string(&result.result).unwrap_or_else(|_| "{}".into())
+        } else {
+            format!(
+                "Error: {}",
+                result.error.as_deref().unwrap_or("unknown error")
+            )
+        };
+
+        result_blocks.push(ContentBlock::ToolResult {
+            tool_use_id: result.tool_id.clone(),
+            content,
+            is_error: if result.success { None } else { Some(true) },
+        });
+    }
+
+    // Add assistant response + tool results to conversation history
+    messages.push(Message {
+        role: "assistant".into(),
+        content: response.content.clone(),
+    });
+
+    messages.push(Message {
+        role: "user".into(),
+        content: result_blocks,
+    });
+
+    // Second call to Claude - get final response based on tool results
+    let final_response = match claude
+        .create_message(&messages, &tools, Some(SYSTEM_PROMPT))
+        .await
+    {
+        Ok(r) => extract_text(&r),
+        Err(e) => {
+            tracing::warn!("Claude API failed after tool execution: {}", e);
+            "I retrieved the information but encountered an issue formatting the final response. Please check the tool results below.".into()
+        }
+    };
+
+    Ok(Json(ChatWithToolsResponse {
+        message: final_response,
+        tool_calls: response_tool_calls,
+        tool_results,
+        needs_confirmation,
+    }))
+}
+
+/// Fallback response using local classifier when Claude is not available
+fn fallback_response(user_message: &str) -> ChatWithToolsResponse {
+    let classification = classify_intent_locally(user_message);
+
+    let response_message = match classification.intent_type.as_str() {
+        "get_balance" => {
+            "I can help you check your wallet balance. Enable the Claude API key to enable full functionality."
+        }
+        "send_transaction" => {
+            "Transaction preparation requires the full Claude integration. Please configure your API key to enable this feature."
+        }
+        "get_transaction_history" => {
+            "Transaction history requires database integration. Please configure your database and Claude API key."
+        }
+        _ => {
+            "I'm CoWallet AI assistant. Configure the Claude API key to enable full wallet functionality including balance queries, transaction preparation, and DeFi yield insights."
+        }
+    };
+
+    ChatWithToolsResponse {
         message: response_message.into(),
         tool_calls: vec![],
-    })
+        tool_results: vec![],
+        needs_confirmation: vec![],
+    }
 }
 
 /// Streaming chat endpoint using SSE

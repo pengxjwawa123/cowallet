@@ -1,6 +1,7 @@
 use alloy_consensus::SignableTransaction;
 use alloy_consensus::TxEip1559;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::signer::MpcSigner;
@@ -97,6 +98,100 @@ pub enum TransactionError {
 
     #[error("RPC error: {0}")]
     Rpc(String),
+}
+
+/// Query the next nonce for an address via eth_getTransactionCount.
+pub async fn get_nonce(
+    client: &Client,
+    rpc_url: &str,
+    address: Address,
+) -> Result<u64, TransactionError> {
+    let addr_hex = format!("0x{}", hex::encode(address.as_slice()));
+
+    let rpc_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_getTransactionCount",
+        "params": [addr_hex, "latest"],
+        "id": 1
+    });
+
+    let resp = client
+        .post(rpc_url)
+        .json(&rpc_body)
+        .send()
+        .await
+        .map_err(|e| TransactionError::Rpc(e.to_string()))?;
+
+    let rpc_resp: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| TransactionError::Rpc(e.to_string()))?;
+
+    if let Some(err) = rpc_resp.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown RPC error");
+        return Err(TransactionError::Rpc(msg.to_string()));
+    }
+
+    let nonce_hex = rpc_resp
+        .get("result")
+        .and_then(|r| r.as_str())
+        .ok_or_else(|| TransactionError::Rpc("no result in response".into()))?;
+
+    let nonce = u64::from_str_radix(nonce_hex.strip_prefix("0x").unwrap_or(nonce_hex), 16)
+        .map_err(|e| TransactionError::Rpc(format!("failed to parse nonce: {}", e)))?;
+
+    Ok(nonce)
+}
+
+/// Broadcast a signed transaction via eth_sendRawTransaction.
+pub async fn broadcast_tx(
+    client: &Client,
+    rpc_url: &str,
+    signed_tx: &[u8],
+) -> Result<B256, TransactionError> {
+    let tx_hex = format!("0x{}", hex::encode(signed_tx));
+
+    let rpc_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_sendRawTransaction",
+        "params": [tx_hex],
+        "id": 1
+    });
+
+    let resp = client
+        .post(rpc_url)
+        .json(&rpc_body)
+        .send()
+        .await
+        .map_err(|e| TransactionError::Rpc(e.to_string()))?;
+
+    let rpc_resp: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| TransactionError::Rpc(e.to_string()))?;
+
+    if let Some(err) = rpc_resp.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown RPC error");
+        return Err(TransactionError::Rpc(msg.to_string()));
+    }
+
+    let tx_hash_hex = rpc_resp
+        .get("result")
+        .and_then(|r| r.as_str())
+        .ok_or_else(|| TransactionError::Rpc("no result in response".into()))?;
+
+    let tx_hash_bytes = hex::decode(tx_hash_hex.strip_prefix("0x").unwrap_or(tx_hash_hex))
+        .map_err(|e| TransactionError::Rpc(format!("failed to parse tx hash: {}", e)))?;
+
+    let tx_hash = B256::from_slice(&tx_hash_bytes);
+
+    Ok(tx_hash)
 }
 
 #[cfg(test)]

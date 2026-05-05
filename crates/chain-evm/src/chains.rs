@@ -45,8 +45,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             gas_model: GasModel::Eip1559,
-            erc4337_entrypoint: None, // TODO: EntryPoint v0.7 address
-            bundler_url: None,
+            erc4337_entrypoint: Some(
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+                    .parse()
+                    .expect("valid EntryPoint address"),
+            ),
+            bundler_url: Some("https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY".into()),
             paymaster_url: None,
             is_testnet: false,
         }
@@ -65,8 +69,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             gas_model: GasModel::OpBedrock,
-            erc4337_entrypoint: None,
-            bundler_url: None,
+            erc4337_entrypoint: Some(
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+                    .parse()
+                    .expect("valid EntryPoint address"),
+            ),
+            bundler_url: Some("https://base-mainnet.g.alchemy.com/v2/YOUR_KEY".into()),
             paymaster_url: None,
             is_testnet: false,
         }
@@ -85,8 +93,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             gas_model: GasModel::ArbitrumNitro,
-            erc4337_entrypoint: None,
-            bundler_url: None,
+            erc4337_entrypoint: Some(
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+                    .parse()
+                    .expect("valid EntryPoint address"),
+            ),
+            bundler_url: Some("https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY".into()),
             paymaster_url: None,
             is_testnet: false,
         }
@@ -105,8 +117,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             gas_model: GasModel::OpBedrock,
-            erc4337_entrypoint: None,
-            bundler_url: None,
+            erc4337_entrypoint: Some(
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+                    .parse()
+                    .expect("valid EntryPoint address"),
+            ),
+            bundler_url: Some("https://opt-mainnet.g.alchemy.com/v2/YOUR_KEY".into()),
             paymaster_url: None,
             is_testnet: false,
         }
@@ -125,8 +141,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             gas_model: GasModel::Legacy,
-            erc4337_entrypoint: None,
-            bundler_url: None,
+            erc4337_entrypoint: Some(
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+                    .parse()
+                    .expect("valid EntryPoint address"),
+            ),
+            bundler_url: Some("https://bsc-dataseed.binance.org".into()),
             paymaster_url: None,
             is_testnet: false,
         }
@@ -145,8 +165,12 @@ impl ChainConfig {
                 decimals: 18,
             },
             gas_model: GasModel::OpBedrock,
-            erc4337_entrypoint: None,
-            bundler_url: None,
+            erc4337_entrypoint: Some(
+                "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+                    .parse()
+                    .expect("valid EntryPoint address"),
+            ),
+            bundler_url: Some("https://base-sepolia.g.alchemy.com/v2/YOUR_KEY".into()),
             paymaster_url: None,
             is_testnet: true,
         }

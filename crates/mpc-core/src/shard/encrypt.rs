@@ -86,7 +86,7 @@ pub fn decrypt_shard(
 
     Ok(DecryptedShard {
         party_index: encrypted.party_index,
-        secret_share: plaintext,
+        secret_share: plaintext.into(),
     })
 }
 
@@ -112,7 +112,7 @@ mod tests {
         let key = [42u8; 32];
         let shard = DecryptedShard {
             party_index: 0,
-            secret_share: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            secret_share: vec![1, 2, 3, 4, 5, 6, 7, 8].into(),
         };
 
         let encrypted = encrypt_shard(&shard, &key, ShardLocation::Device).unwrap();
@@ -128,7 +128,7 @@ mod tests {
         let wrong_key = [99u8; 32];
         let shard = DecryptedShard {
             party_index: 1,
-            secret_share: vec![10, 20, 30],
+            secret_share: vec![10, 20, 30].into(),
         };
 
         let encrypted = encrypt_shard(&shard, &key, ShardLocation::Server).unwrap();

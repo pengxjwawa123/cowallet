@@ -5,14 +5,18 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
+use crate::middleware::audit::AuditResult;
 use crate::middleware::auth::Claims;
+use crate::retry::{is_retryable_error, retry_with_backoff, RetryConfig};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/submit", post(submit))
         .route("/history", get(history))
+        .route("/summary", get(spending_summary))
         .route("/simulate", post(simulate))
 }
 
@@ -35,9 +39,15 @@ async fn submit(
     claims: axum::Extension<Claims>,
     Json(body): Json<SubmitRequest>,
 ) -> Result<Json<SubmitResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let rpc_url = &state.rpc_url;
+    let start = Instant::now();
+    let user_id: uuid::Uuid = claims
+        .0
+        .sub
+        .parse()
+        .map_err(|_| rpc_error("invalid user id in token"))?;
     let chain_id = body.chain_id.unwrap_or(84532);
 
+    let rpc_url = &state.rpc_url;
     let raw_bytes = body.raw_tx.strip_prefix("0x").unwrap_or(&body.raw_tx);
 
     let rpc_body = serde_json::json!({
@@ -47,13 +57,39 @@ async fn submit(
         "id": 1
     });
 
-    let resp = state
-        .http
-        .post(rpc_url)
-        .json(&rpc_body)
-        .send()
-        .await
-        .map_err(|e| rpc_error(&format!("RPC request failed: {e}")))?;
+    // Use circuit breaker and retry for RPC calls
+    let resp_result = state
+        .rpc_circuit_breaker
+        .call(|| async {
+            retry_with_backoff(
+                RetryConfig::default(),
+                || async {
+                    state
+                        .http
+                        .post(rpc_url)
+                        .json(&rpc_body)
+                        .send()
+                        .await
+                        .and_then(|r| r.error_for_status())
+                },
+                is_retryable_error,
+                "eth_sendRawTransaction",
+            )
+            .await
+        })
+        .await;
+
+    let resp = match resp_result {
+        Ok(r) => r,
+        Err(None) => {
+            return Err(rpc_error(
+                "RPC service unavailable - circuit breaker open",
+            ));
+        }
+        Err(Some(e)) => {
+            return Err(rpc_error(&format!("RPC request failed: {e}")));
+        }
+    };
 
     let rpc_resp: serde_json::Value = resp
         .json()
@@ -65,6 +101,22 @@ async fn submit(
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("unknown RPC error");
+
+        // Audit log - transaction submission failed
+        let _ = state
+            .audit_logger
+            .log_with_details(
+                user_id,
+                "tx.submit",
+                AuditResult::Failed,
+                None,
+                None,
+                None,
+                Some(start.elapsed().as_millis() as i64),
+                Some(serde_json::json!({ "error": msg, "chain_id": chain_id })),
+            )
+            .await;
+
         return Err(rpc_error(msg));
     }
 
@@ -75,8 +127,6 @@ async fn submit(
         .to_string();
 
     if let Some(db) = &state.db {
-        let user_id: uuid::Uuid = claims.0.sub.parse()
-            .map_err(|_| rpc_error("invalid user id in token"))?;
         let to_bytes = body
             .to_addr
             .as_deref()
@@ -103,6 +153,21 @@ async fn submit(
         }
     }
 
+    // Audit log - transaction submission success
+    let _ = state
+        .audit_logger
+        .log_with_details(
+            user_id,
+            "tx.submit",
+            AuditResult::Success,
+            None,
+            None,
+            None,
+            Some(start.elapsed().as_millis() as i64),
+            Some(serde_json::json!({ "tx_hash": tx_hash, "chain_id": chain_id })),
+        )
+        .await;
+
     Ok(Json(SubmitResponse { tx_hash }))
 }
 
@@ -110,6 +175,11 @@ async fn submit(
 struct HistoryQuery {
     limit: Option<i64>,
     offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SummaryQuery {
+    days: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -127,6 +197,21 @@ struct TxRecord {
 #[derive(Serialize)]
 struct HistoryResponse {
     transactions: Vec<TxRecord>,
+}
+
+#[derive(Serialize)]
+struct TokenSpend {
+    token: String,
+    total_value: String,
+    tx_count: i64,
+}
+
+#[derive(Serialize)]
+struct SpendingSummaryResponse {
+    period_days: i64,
+    total_transactions: i64,
+    total_spend: String,
+    by_token: Vec<TokenSpend>,
 }
 
 async fn history(
@@ -172,6 +257,57 @@ async fn history(
         .collect();
 
     Ok(Json(HistoryResponse { transactions }))
+}
+
+async fn spending_summary(
+    State(state): State<AppState>,
+    claims: axum::Extension<Claims>,
+    Query(q): Query<SummaryQuery>,
+) -> Result<Json<SpendingSummaryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state
+        .require_db()
+        .map_err(|_| db_unavailable())?;
+    let user_id: uuid::Uuid = claims.0.sub.parse()
+        .map_err(|_| db_error("invalid user id in token"))?;
+    let days = q.days.unwrap_or(30).max(1);
+
+    let rows: Vec<(Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT token, SUM(CAST(value AS NUMERIC)) as total_value, COUNT(*) as tx_count
+         FROM transactions
+         WHERE user_id = $1
+           AND created_at >= NOW() - ($2 || ' days')::INTERVAL
+           AND status = 'confirmed'
+         GROUP BY token
+         ORDER BY total_value DESC",
+    )
+    .bind(user_id)
+    .bind(days)
+    .fetch_all(db)
+    .await
+    .map_err(|e| db_error(&e.to_string()))?;
+
+    let mut total_transactions = 0i64;
+    let mut total_spend = 0u64;
+    let mut by_token = Vec::new();
+
+    for (token, value_str, count) in rows {
+        total_transactions += count;
+        if let Ok(val) = value_str.parse::<u64>() {
+            total_spend += val;
+        }
+        by_token.push(TokenSpend {
+            token: token.unwrap_or_else(|| "ETH".to_string()),
+            total_value: value_str,
+            tx_count: count,
+        });
+    }
+
+    Ok(Json(SpendingSummaryResponse {
+        period_days: days,
+        total_transactions,
+        total_spend: total_spend.to_string(),
+        by_token,
+    }))
 }
 
 #[derive(Deserialize)]

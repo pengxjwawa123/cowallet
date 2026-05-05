@@ -2,8 +2,12 @@ use crate::dkls23::ProtocolMessage;
 use crate::errors::{MpcError, Result};
 use bincode;
 use futures::StreamExt;
+
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use std::collections::{HashMap, VecDeque};
+#[cfg(test)]
 use std::sync::{Arc, Mutex};
 
 /// NATS-based message relay for MPC protocol communication.

@@ -11,10 +11,12 @@ ecdsa = { workspace = true }
 aes-gcm = { workspace = true }
 argon2 = { workspace = true }
 rand = { workspace = true }
+rand_core = { workspace = true }
 sha2 = { workspace = true }
 sha3 = { workspace = true }
 synedrion = { workspace = true }
 zeroize = { workspace = true }
+libc = { workspace = true }
 snow = { workspace = true }
 async-nats = { workspace = true }
 futures = "0.3"

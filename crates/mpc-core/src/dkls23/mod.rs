@@ -4,6 +4,7 @@ pub mod protocol;
 pub mod reshare;
 pub mod sign;
 
+use crate::security::SecureVec;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -13,27 +14,33 @@ pub type PartyIndex = u16;
 /// A key share held by one party after DKG.
 ///
 /// Contains the party's secret share of the private key and the joint public key.
-/// The secret component is zeroized on drop.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+/// The secret component is memory-locked using mlock and zeroized on drop.
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct KeyShare {
     /// This party's index.
-    #[zeroize(skip)]
     pub party: PartyIndex,
 
     /// Threshold: minimum parties needed to sign.
-    #[zeroize(skip)]
     pub threshold: u16,
 
     /// Total number of parties.
-    #[zeroize(skip)]
     pub total_parties: u16,
 
-    /// Secret share bytes (the sensitive part).
-    pub secret_share: Vec<u8>,
+    /// Secret share bytes (the sensitive part) - memory-locked and zeroized on drop.
+    pub secret_share: SecureVec,
 
     /// The joint public key (not sensitive).
-    #[zeroize(skip)]
     pub public_key: Vec<u8>,
+}
+
+impl Zeroize for KeyShare {
+    fn zeroize(&mut self) {
+        // SecureVec handles its own zeroization
+        // We just clear the non-sensitive fields
+        self.party = 0;
+        self.threshold = 0;
+        self.total_parties = 0;
+    }
 }
 
 impl KeyShare {
@@ -57,10 +64,18 @@ impl KeyShare {
 }
 
 /// A presignature that can be consumed for one signing operation.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct Presignature {
     pub id: [u8; 32],
-    pub data: Vec<u8>,
+    pub data: SecureVec,
+}
+
+impl Zeroize for Presignature {
+    fn zeroize(&mut self) {
+        // SecureVec handles its own zeroization
+        // Zero out the ID array
+        self.id.zeroize();
+    }
 }
 
 /// Configuration for a DKLS23 protocol session.

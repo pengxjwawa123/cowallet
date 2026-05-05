@@ -1,5 +1,19 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolCall};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+sol! {
+    /// SimpleAccountFactory.createAccount function
+    function createAccount(address owner, uint256 salt) returns (address);
+
+    /// SimpleAccount.execute function for transfers
+    function execute(address dest, uint256 value, bytes calldata func) external;
+
+    /// ERC-20 transfer function
+    function transfer(address to, uint256 amount) returns (bool);
+}
 
 /// ERC-4337 UserOperation for account abstraction.
 ///
@@ -21,32 +35,236 @@ pub struct UserOperation {
     pub signature: Bytes,
 }
 
+impl UserOperation {
+    /// Create a new UserOperation with default gas values.
+    pub fn new(sender: Address, nonce: U256, call_data: Bytes) -> Self {
+        Self {
+            sender,
+            nonce,
+            init_code: Bytes::new(),
+            call_data,
+            call_gas_limit: U256::from(100_000),
+            verification_gas_limit: U256::from(500_000),
+            pre_verification_gas: U256::from(50_000),
+            max_fee_per_gas: U256::from(10_000_000_000u64), // 10 gwei
+            max_priority_fee_per_gas: U256::from(1_500_000_000u64), // 1.5 gwei
+            paymaster_and_data: Bytes::new(),
+            signature: Bytes::new(),
+        }
+    }
+
+    /// Calculate the UserOp hash for signing.
+    /// Note: This is a simplified version; the actual hash requires EntryPoint-specific calculation.
+    pub fn hash(&self, entry_point: Address, chain_id: u64) -> B256 {
+        use sha3::{Digest, Keccak256};
+
+        let mut hasher = Keccak256::new();
+        hasher.update(self.sender.as_slice());
+        hasher.update(self.nonce.to_be_bytes_vec());
+        hasher.update(Keccak256::digest(&self.init_code));
+        hasher.update(Keccak256::digest(&self.call_data));
+        hasher.update(self.call_gas_limit.to_be_bytes_vec());
+        hasher.update(self.verification_gas_limit.to_be_bytes_vec());
+        hasher.update(self.pre_verification_gas.to_be_bytes_vec());
+        hasher.update(self.max_fee_per_gas.to_be_bytes_vec());
+        hasher.update(self.max_priority_fee_per_gas.to_be_bytes_vec());
+        hasher.update(Keccak256::digest(&self.paymaster_and_data));
+        hasher.update(entry_point.as_slice());
+        hasher.update(chain_id.to_be_bytes());
+
+        B256::from_slice(&hasher.finalize())
+    }
+}
+
 /// Build a UserOperation for a simple ETH/token transfer.
 pub fn build_transfer_userop(
-    _sender: Address,
-    _to: Address,
-    _value: U256,
-    _token: Option<Address>,
+    sender: Address,
+    nonce: U256,
+    to: Address,
+    value: U256,
+    token: Option<Address>,
 ) -> Result<UserOperation, UserOpError> {
-    // TODO: Encode call_data for:
-    // - Native transfer: direct call with value
-    // - ERC-20: encode transfer(to, amount)
-    Err(UserOpError::NotImplemented)
+    let call_data = match token {
+        None => {
+            // Native ETH transfer: encode execute(to, value, [])
+            let execute_call = executeCall {
+                dest: to,
+                value,
+                func: Bytes::new(),
+            };
+            execute_call.abi_encode().into()
+        }
+        Some(token_addr) => {
+            // ERC-20 transfer: encode execute(TokenContract, 0, transferCalldata)
+            let transfer_call = transferCall {
+                to,
+                amount: value,
+            };
+            let transfer_calldata = transfer_call.abi_encode();
+
+            let execute_call = executeCall {
+                dest: token_addr,
+                value: U256::ZERO,
+                func: transfer_calldata.into(),
+            };
+            execute_call.abi_encode().into()
+        }
+    };
+
+    Ok(UserOperation::new(sender, nonce, call_data))
 }
 
-/// Build init_code for deploying a new smart account.
-pub fn build_account_init_code(_owner_pubkey: &[u8], _salt: U256) -> Result<Bytes, UserOpError> {
-    // TODO: Encode SimpleAccountFactory.createAccount(owner, salt)
-    Err(UserOpError::NotImplemented)
+/// Build init_code for deploying a new smart account using SimpleAccountFactory.
+pub fn build_account_init_code(
+    factory_address: Address,
+    owner_pubkey: Address,
+    salt: U256,
+) -> Result<Bytes, UserOpError> {
+    // Encode createAccount call
+    let create_account_call = createAccountCall {
+        owner: owner_pubkey,
+        salt,
+    };
+    let calldata = create_account_call.abi_encode();
+
+    // init_code = factory_address + calldata
+    let mut init_code = Vec::with_capacity(20 + calldata.len());
+    init_code.extend_from_slice(factory_address.as_slice());
+    init_code.extend_from_slice(&calldata);
+
+    Ok(Bytes::from(init_code))
 }
 
-/// Submit a signed UserOperation to a bundler.
+/// JSON-RPC request for eth_sendUserOperation
+#[derive(Debug, Serialize)]
+struct SendUserOperationRequest<'a> {
+    jsonrpc: &'static str,
+    id: u64,
+    method: &'static str,
+    params: (&'a UserOperation, Address),
+}
+
+/// JSON-RPC response
+#[derive(Debug, Deserialize)]
+struct JsonRpcResponse<T> {
+    pub id: u64,
+    pub result: Option<T>,
+    pub error: Option<JsonRpcError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonRpcError {
+    pub code: i32,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+}
+
+/// Submit a signed UserOperation to a bundler via eth_sendUserOperation.
 pub async fn submit_to_bundler(
-    _userop: &UserOperation,
-    _bundler_url: &str,
+    userop: &UserOperation,
+    entry_point: Address,
+    bundler_url: &str,
 ) -> Result<String, UserOpError> {
-    // TODO: eth_sendUserOperation JSON-RPC to bundler
-    Err(UserOpError::NotImplemented)
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    let request = SendUserOperationRequest {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_sendUserOperation",
+        params: (userop, entry_point),
+    };
+
+    let response = client
+        .post(bundler_url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    let rpc_response: JsonRpcResponse<String> = response
+        .json()
+        .await
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(UserOpError::BundlerRejected(format!(
+            "code {}: {}",
+            error.code, error.message
+        )));
+    }
+
+    rpc_response
+        .result
+        .ok_or_else(|| UserOpError::BundlerRejected("no result in response".into()))
+}
+
+/// Estimate UserOperation gas using eth_estimateUserOperationGas.
+pub async fn estimate_userop_gas(
+    userop: &UserOperation,
+    entry_point: Address,
+    bundler_url: &str,
+) -> Result<(U256, U256, U256), UserOpError> {
+    #[derive(Debug, Serialize)]
+    struct EstimateGasRequest<'a> {
+        jsonrpc: &'static str,
+        id: u64,
+        method: &'static str,
+        params: (&'a UserOperation, Address),
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct GasEstimate {
+        #[serde(rename = "preVerificationGas")]
+        pre_verification_gas: Option<U256>,
+        #[serde(rename = "verificationGasLimit")]
+        verification_gas_limit: Option<U256>,
+        #[serde(rename = "callGasLimit")]
+        call_gas_limit: Option<U256>,
+    }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    let request = EstimateGasRequest {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_estimateUserOperationGas",
+        params: (userop, entry_point),
+    };
+
+    let response = client
+        .post(bundler_url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    let rpc_response: JsonRpcResponse<GasEstimate> = response
+        .json()
+        .await
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(UserOpError::BundlerRejected(format!(
+            "code {}: {}",
+            error.code, error.message
+        )));
+    }
+
+    let estimate = rpc_response
+        .result
+        .ok_or_else(|| UserOpError::BundlerRejected("no result in response".into()))?;
+
+    Ok((
+        estimate.pre_verification_gas.unwrap_or(U256::from(50_000)),
+        estimate.verification_gas_limit.unwrap_or(U256::from(500_000)),
+        estimate.call_gas_limit.unwrap_or(U256::from(100_000)),
+    ))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,4 +280,90 @@ pub enum UserOpError {
 
     #[error("account not deployed")]
     AccountNotDeployed,
+
+    #[error("network error: {0}")]
+    NetworkError(String),
+
+    #[error("encoding error: {0}")]
+    EncodingError(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn test_userop_new() {
+        let sender = address!("0x1234567890123456789012345678901234567890");
+        let nonce = U256::from(0);
+        let call_data = Bytes::from(vec![0x01, 0x02, 0x03]);
+
+        let userop = UserOperation::new(sender, nonce, call_data.clone());
+
+        assert_eq!(userop.sender, sender);
+        assert_eq!(userop.nonce, nonce);
+        assert_eq!(userop.call_data, call_data);
+        assert!(!userop.call_gas_limit.is_zero());
+    }
+
+    #[test]
+    fn test_build_native_transfer_userop() {
+        let sender = address!("0x1234567890123456789012345678901234567890");
+        let to = address!("0x0987654321098765432109876543210987654321");
+        let value = U256::from(1_000_000_000_000_000_000u128); // 1 ETH
+        let nonce = U256::from(0);
+
+        let userop = build_transfer_userop(sender, nonce, to, value, None).unwrap();
+
+        assert_eq!(userop.sender, sender);
+        assert_eq!(userop.nonce, nonce);
+        assert!(!userop.call_data.is_empty());
+        // First 4 bytes should be execute() function selector
+        assert_eq!(&userop.call_data[0..4], &[0xb6, 0x1d, 0x27, 0xf6]);
+    }
+
+    #[test]
+    fn test_build_erc20_transfer_userop() {
+        let sender = address!("0x1234567890123456789012345678901234567890");
+        let token = address!("0xA0b86a33d6fD033C1e6A973C3070349c66968360"); // USDC
+        let to = address!("0x0987654321098765432109876543210987654321");
+        let amount = U256::from(1_000_000u128); // 1 USDC (6 decimals)
+        let nonce = U256::from(0);
+
+        let userop = build_transfer_userop(sender, nonce, to, amount, Some(token)).unwrap();
+
+        assert_eq!(userop.sender, sender);
+        assert_eq!(userop.nonce, nonce);
+        assert!(!userop.call_data.is_empty());
+    }
+
+    #[test]
+    fn test_build_account_init_code() {
+        let factory = address!("0x9406Cc6185a346906296840746125a0E44976452");
+        let owner = address!("0x1234567890123456789012345678901234567890");
+        let salt = U256::from(12345);
+
+        let init_code = build_account_init_code(factory, owner, salt).unwrap();
+
+        // First 20 bytes should be factory address
+        assert_eq!(&init_code[0..20], factory.as_slice());
+        // Next 4 bytes should be createAccount() function selector
+        assert_eq!(&init_code[20..24], &[0x5f, 0xbf, 0xb9, 0xcf]);
+        // Total length should be 20 (address) + 4 (selector) + 64 (two args) = 88
+        assert_eq!(init_code.len(), 88);
+    }
+
+    #[test]
+    fn test_userop_hash() {
+        let sender = address!("0x1234567890123456789012345678901234567890");
+        let entry_point = address!("0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789");
+        let nonce = U256::from(0);
+        let call_data = Bytes::from(vec![0x01, 0x02, 0x03]);
+
+        let userop = UserOperation::new(sender, nonce, call_data);
+        let hash = userop.hash(entry_point, 1);
+
+        assert_eq!(hash.as_slice().len(), 32);
+    }
 }

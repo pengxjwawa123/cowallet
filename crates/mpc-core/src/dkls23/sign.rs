@@ -1,4 +1,4 @@
-use super::protocol::{threshold_sign, verify_signature};
+use super::protocol::verify_signature;
 use super::{KeyShare, ProtocolMessage, SessionConfig};
 use crate::errors::{MpcError, Result};
 use k256::{
@@ -182,7 +182,7 @@ impl SignSession {
                 }
             }
 
-            let secret_bytes: [u8; 32] = share.secret_share[..32].try_into().unwrap_or([0u8; 32]);
+            let secret_bytes: [u8; 32] = share.secret_share.as_bytes()[..32].try_into().unwrap_or([0u8; 32]);
             let s_i = Option::<Scalar>::from(Scalar::from_repr(secret_bytes.into()))
                 .unwrap_or(Scalar::ZERO);
             secret_sum += s_i * lagrange;
@@ -192,7 +192,7 @@ impl SignSession {
             party: 0,
             threshold: shares[0].threshold,
             total_parties: shares[0].total_parties,
-            secret_share: secret_sum.to_bytes().to_vec(),
+            secret_share: secret_sum.to_bytes().to_vec().into(),
             public_key: shares[0].public_key.clone(),
         })
     }
@@ -286,7 +286,7 @@ impl SignSession {
 
         // Parse secret share
         let share_bytes: [u8; 32] = share
-            .secret_share[..32]
+            .secret_share.as_bytes()[..32]
             .try_into()
             .map_err(|_| MpcError::SigningFailed("invalid share length".into()))?;
         let x_i_ct = Scalar::from_repr(share_bytes.into());
@@ -441,7 +441,7 @@ impl SignSession {
             .ok_or_else(|| MpcError::SigningFailed("no key share available".into()))?;
 
         // my_share is already the combined full key from new_local
-        let secret_bytes: [u8; 32] = share.secret_share[..32].try_into()
+        let secret_bytes: [u8; 32] = share.secret_share.as_bytes()[..32].try_into()
             .map_err(|_| MpcError::SigningFailed("invalid secret share length".into()))?;
         let secret_ct = Scalar::from_repr(secret_bytes.into());
         if bool::from(secret_ct.is_none()) {

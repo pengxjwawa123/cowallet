@@ -38,7 +38,7 @@ COPY --from=builder /app/target/release/api-server /usr/local/bin/
 COPY --from=builder /app/target/release/mpc-relay /usr/local/bin/
 COPY --from=builder /app/target/release/indexer /usr/local/bin/
 COPY --from=builder /app/target/release/worker /usr/local/bin/
-COPY --from=builder /app/backend/migrations ./migrations
+COPY --from=builder /app/backend/api-server/migrations ./migrations
 
 # 健康检查（仅 api-server 容器需要）
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

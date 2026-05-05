@@ -44,7 +44,7 @@ impl ThresholdKeyGen {
                 party: i as PartyIndex,
                 threshold: self.config.threshold,
                 total_parties: self.config.total_parties,
-                secret_share: share_bytes,
+                secret_share: share_bytes.into(),
                 public_key: public_key_bytes.clone(),
             })
             .collect();
@@ -145,7 +145,7 @@ pub fn threshold_sign(
         )));
     }
 
-    let share_values: Vec<Vec<u8>> = shares.iter().map(|s| s.secret_share.clone()).collect();
+    let share_values: Vec<Vec<u8>> = shares.iter().map(|s| s.secret_share.as_bytes().to_vec()).collect();
     let mut secret_bytes = shamir_reconstruct(share_indices, &share_values)?;
 
     let secret_arr: [u8; 32] = secret_bytes
@@ -229,24 +229,24 @@ mod tests {
         // Reconstruct from shares 0 and 1
         let indices = vec![0u16, 1];
         let values: Vec<Vec<u8>> = vec![
-            shares[0].secret_share.clone(),
-            shares[1].secret_share.clone(),
+            shares[0].secret_share.as_bytes().to_vec(),
+            shares[1].secret_share.as_bytes().to_vec(),
         ];
         let secret_01 = shamir_reconstruct(&indices, &values).unwrap();
 
         // Reconstruct from shares 0 and 2
         let indices2 = vec![0u16, 2];
         let values2: Vec<Vec<u8>> = vec![
-            shares[0].secret_share.clone(),
-            shares[2].secret_share.clone(),
+            shares[0].secret_share.as_bytes().to_vec(),
+            shares[2].secret_share.as_bytes().to_vec(),
         ];
         let secret_02 = shamir_reconstruct(&indices2, &values2).unwrap();
 
         // Reconstruct from shares 1 and 2
         let indices3 = vec![1u16, 2];
         let values3: Vec<Vec<u8>> = vec![
-            shares[1].secret_share.clone(),
-            shares[2].secret_share.clone(),
+            shares[1].secret_share.as_bytes().to_vec(),
+            shares[2].secret_share.as_bytes().to_vec(),
         ];
         let secret_12 = shamir_reconstruct(&indices3, &values3).unwrap();
 

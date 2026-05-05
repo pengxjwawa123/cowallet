@@ -2,7 +2,7 @@ use super::{KeyShare, ProtocolMessage, SessionConfig};
 use crate::errors::{MpcError, Result};
 use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, Field, PrimeField},
-    AffinePoint, ProjectivePoint, Scalar,
+    AffinePoint, Scalar,
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -89,12 +89,12 @@ impl ReshareSession {
 
         let t = self.old_share.threshold as usize;
         let n = self.old_share.total_parties as usize;
-        let my_idx = self.old_share.party as usize;
+        let _my_idx = self.old_share.party as usize;
         let mut rng = OsRng;
 
         // Parse our old secret share
         let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&self.old_share.secret_share[..32]);
+        bytes.copy_from_slice(&self.old_share.secret_share.as_bytes()[..32]);
         let old_secret = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
             .ok_or_else(|| MpcError::ResharingFailed("invalid old secret share".into()))?;
 
@@ -168,7 +168,7 @@ impl ReshareSession {
     /// and sums them to get their new key share. The public key is verified
     /// to be unchanged.
     pub fn process_round1(&mut self, messages: Vec<ProtocolMessage>) -> Result<()> {
-        let round1_messages = match &mut self.state {
+        let _round1_messages = match &mut self.state {
             ReshareState::AwaitingRound2 { round1_messages } => round1_messages,
             _ => return Err(MpcError::ResharingFailed("invalid state for round 1 processing".into())),
         };
@@ -224,7 +224,7 @@ impl ReshareSession {
             party: self.old_share.party,
             threshold: self.old_share.threshold,
             total_parties: self.old_share.total_parties,
-            secret_share: new_share_scalar.to_bytes().to_vec(),
+            secret_share: new_share_scalar.to_bytes().to_vec().into(),
             public_key: self.old_share.public_key.clone(),
         };
 

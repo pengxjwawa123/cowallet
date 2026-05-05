@@ -5,6 +5,7 @@
 /// 2. Secret material stays in Rust (state.rs) — Dart gets addresses and public keys
 /// 3. All async Rust work uses the shared tokio runtime
 /// 4. Errors are returned as Result<T, String> for simple FFI mapping
+use alloy_primitives::{Address, U256};
 use mpc_core::dkls23::dkg::DkgSession;
 use mpc_core::dkls23::protocol::ThresholdKeyGen;
 use mpc_core::dkls23::{ProtocolMessage, SessionConfig};
@@ -307,10 +308,27 @@ pub fn sign_hash(msg_hash: Vec<u8>) -> Result<Vec<u8>, String> {
 /// Query ETH balance for an address on Base Sepolia.
 /// Returns balance in wei as a decimal string.
 pub async fn query_eth_balance(address: String, rpc_url: String) -> Result<FfiBalance, String> {
-    // Placeholder — chain-evm::tokens::query_native_balance is a stub.
-    // When implemented, this will call the real function.
-    let _ = (address, rpc_url);
-    Err("query_native_balance not yet implemented in chain-evm".into())
+    let owner_addr: Address = address
+        .parse()
+        .map_err(|e| format!("Invalid address: {}", e))?;
+
+    let balance = chain_evm::tokens::query_native_balance(owner_addr, &rpc_url)
+        .await
+        .map_err(|e| format!("RPC error: {}", e))?;
+
+    let wei_str = balance.to_string();
+
+    // Format for display (simplified: divide by 1e18)
+    let eth_value = balance
+        .checked_div(alloy_primitives::U256::from(1_000_000_000_000_000u64))
+        .unwrap_or_default();
+    let formatted = format!("{} ETH", eth_value);
+
+    Ok(FfiBalance {
+        wei: wei_str,
+        formatted,
+        decimals: 18,
+    })
 }
 
 /// Query ERC-20 token balance.
@@ -319,8 +337,32 @@ pub async fn query_token_balance(
     token_contract: String,
     rpc_url: String,
 ) -> Result<FfiBalance, String> {
-    let _ = (owner, token_contract, rpc_url);
-    Err("query_balance not yet implemented in chain-evm".into())
+    let owner_addr: Address = owner
+        .parse()
+        .map_err(|e| format!("Invalid owner address: {}", e))?;
+
+    let token_addr: Address = token_contract
+        .parse()
+        .map_err(|e| format!("Invalid token address: {}", e))?;
+
+    let balance = chain_evm::tokens::query_balance(token_addr, owner_addr, &rpc_url)
+        .await
+        .map_err(|e| format!("RPC error: {}", e))?;
+
+    let wei_str = balance.to_string();
+
+    // Default to 6 decimals for USDC-style formatting
+    let divisor = U256::from(1_000_000u64);
+    let display_value = balance
+        .checked_div(divisor)
+        .unwrap_or_default();
+    let formatted = format!("{} tokens", display_value);
+
+    Ok(FfiBalance {
+        wei: wei_str,
+        formatted,
+        decimals: 6,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -335,15 +377,118 @@ pub async fn estimate_gas(
     _data: Option<Vec<u8>>,
     _rpc_url: String,
 ) -> Result<FfiGasEstimate, String> {
-    Err("gas estimation not yet implemented".into())
+    // Use hardcoded gas estimates (simplified for FFI)
+    // In production, this would call an RPC endpoint
+    let base_fee: u128 = 1_000_000_000; // 1 gwei
+    let priority_fee: u128 = 100_000_000; // 0.1 gwei
+
+    let gas_estimate = chain_evm::gas::estimate_gas(
+        chain_evm::gas::GasModel::OpBedrock, // Base uses Optimism Bedrock
+        false,                               // not ERC-20
+        base_fee,
+        priority_fee,
+        None,
+    );
+
+    let value: u128 = _value_wei.parse().unwrap_or(0);
+    let max_fee = gas_estimate
+        .max_fee_per_gas
+        .unwrap_or(base_fee * 2 + priority_fee);
+    let estimated_cost = value + (gas_estimate.gas_limit as u128) * max_fee;
+
+    Ok(FfiGasEstimate {
+        gas_limit: gas_estimate.gas_limit,
+        max_fee_per_gas: max_fee.to_string(),
+        max_priority_fee_per_gas: gas_estimate
+            .max_priority_fee_per_gas
+            .unwrap_or(priority_fee)
+            .to_string(),
+        estimated_cost_wei: estimated_cost.to_string(),
+    })
 }
 
-/// Build, sign, and broadcast an ETH transfer.
+//// Build, sign, and broadcast an ETH transfer.
 /// Biometric auth must happen on the Dart side BEFORE calling this.
 pub async fn send_eth(
     _to: String,
     _value_wei: String,
     _rpc_url: String,
 ) -> Result<FfiTxResult, String> {
-    Err("send_eth not yet implemented — use Dart-side signing for now".into())
+    // Get the wallet's key shares from state
+    if !state::has_shares() {
+        return Err("No wallet found — generate wallet first".into());
+    }
+
+    let share0 = state::get_share(0).ok_or("Share 0 not found")?;
+    let share1 = state::get_share(1).ok_or("Share 1 not found")?;
+    let shares = vec![share0, share1];
+
+    let to_addr: Address = _to
+        .parse()
+        .map_err(|e| format!("Invalid to address: {}", e))?;
+
+    let value = U256::from_str_radix(&_value_wei, 10)
+        .map_err(|e| format!("Invalid value: {}", e))?;
+
+    // Build GasEstimate for transaction module
+    let chain_id = 84532; // Base Sepolia
+    let max_fee: u128 = 2_000_000_000; // 2 gwei
+    let max_priority_fee: u128 = 100_000_000; // 0.1 gwei
+
+    let gas_estimate = chain_evm::transaction::GasEstimate {
+        gas_limit: 21000,
+        max_fee_per_gas: max_fee,
+        max_priority_fee_per_gas: max_priority_fee,
+        l1_data_fee: None,
+        estimated_cost_wei: U256::from(21000) * U256::from(max_fee),
+        estimated_cost_usd: None,
+    };
+
+    // Get sender address
+    let eth_addr_bytes = shares[0].eth_address();
+    let sender_addr = Address::from_slice(&eth_addr_bytes);
+
+    // Create HTTP client for RPC calls
+    let client = reqwest::Client::new();
+
+    // Fetch actual nonce from chain
+    let nonce = chain_evm::transaction::get_nonce(&client, &_rpc_url, sender_addr)
+        .await
+        .map_err(|e| format!("Failed to fetch nonce: {}", e))?;
+
+    // Build transaction request
+    let tx_request = chain_evm::transaction::TransactionRequest {
+        to: to_addr,
+        value,
+        data: Vec::new(),
+        chain_id,
+        gas_limit: Some(21000),
+        nonce: Some(nonce),
+    };
+
+    // Sign using MPC signer
+    let signer = chain_evm::signer::MpcSigner::from_shares(
+        sender_addr,
+        chain_id,
+        vec![0, 1], // use shares 0 and 1
+        shares,
+    );
+
+    // Sign the transaction
+    let (encoded, _) = chain_evm::transaction::sign_eip1559_tx(
+        &tx_request,
+        &gas_estimate,
+        nonce,
+        &signer,
+    )
+    .map_err(|e| format!("Signing failed: {:?}", e))?;
+
+    // Broadcast the signed transaction to the network
+    let tx_hash = chain_evm::transaction::broadcast_tx(&client, &_rpc_url, &encoded)
+        .await
+        .map_err(|e| format!("Broadcast failed: {}", e))?;
+
+    Ok(FfiTxResult {
+        tx_hash: format!("0x{}", hex::encode(tx_hash.as_slice())),
+    })
 }

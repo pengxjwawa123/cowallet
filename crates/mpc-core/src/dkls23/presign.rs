@@ -56,7 +56,7 @@ impl PresignSession {
 
         let presig = Presignature {
             id,
-            data: data_bytes,
+            data: data_bytes.into(),
         };
         self.state = PresignState::Complete {
             presignature: presig.clone(),

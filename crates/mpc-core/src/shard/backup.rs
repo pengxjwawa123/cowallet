@@ -120,11 +120,8 @@ pub fn split_for_social_recovery(
             "invalid threshold: {threshold}-of-{total}"
         )));
     }
-    if total > 255 {
-        return Err(MpcError::ShardEncryption(
-            "too many shares (max 255)".into(),
-        ));
-    }
+    // u8 naturally limits to 255 max, no need for additional check
+    // total is u8, so it can never exceed 255
 
     let secret = shard.as_bytes();
     let secret_len = secret.len();
