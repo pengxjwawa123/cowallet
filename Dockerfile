@@ -16,6 +16,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 # 复制源代码
 COPY crates ./crates
 COPY backend ./backend
+COPY migrations ./migrations
 
 # 构建所有二进制文件（release 优化）
 RUN cargo build --release --bin api-server --bin mpc-relay --bin indexer --bin worker
