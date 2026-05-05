@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # 1. 先创建空的 lib.rs 构建依赖层（这层可缓存）
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p crates/mpc-core/src crates/chain-evm/src crates/policy-engine/src crates/ai-bridge/src \
     && echo "fn main() {}" > crates/mpc-core/src/lib.rs \
     && echo "fn main() {}" > crates/chain-evm/src/lib.rs \
