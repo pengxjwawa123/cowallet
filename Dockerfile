@@ -1,5 +1,5 @@
 # 简单构建 - 优先保证构建成功
-FROM rust:1.85-slim AS builder
+FROM rust:1.92-slim AS builder
 
 WORKDIR /app
 
