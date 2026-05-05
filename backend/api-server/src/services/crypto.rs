@@ -18,7 +18,7 @@ pub enum CryptoError {
 }
 
 /// Encrypted data bundle with nonce
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize)]
 pub struct EncryptedData {
     #[zeroize(skip)]
     pub nonce: [u8; 12],

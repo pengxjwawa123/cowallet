@@ -5,7 +5,7 @@ mod routes;
 mod services;
 mod state;
 
-use axum::{Router, extract::State, middleware as axum_mw, response::Json, routing::get};
+use axum::{Router, extract::{State, Extension}, middleware as axum_mw, response::Json, routing::get};
 use axum::http::{Method, header, StatusCode, Request};
 use axum::body::Body;
 use serde_json::json;
@@ -93,8 +93,9 @@ async fn main() {
 
     // Initialize encryption service (in production, key from KMS/HSM)
     let encryption_key = std::env::var("ENCRYPTION_KEY")
-        .and_then(|k| hex::decode(k))
-        .unwrap_or_else(|_| {
+        .ok()
+        .and_then(|k| hex::decode(&k).ok())
+        .unwrap_or_else(|| {
             tracing::warn!("Using default encryption key - NOT FOR PRODUCTION!");
             (0..32).collect()
         });
@@ -119,7 +120,7 @@ async fn main() {
         .nest("/shards", routes::shards::router())
         .layer(Extension(encryption))
         .layer(axum_mw::from_fn(require_auth))
-        .layer(axum_mw::from_fn(standard_rate_limit_middleware)));
+        .layer(axum_mw::from_fn(standard_rate_limit_middleware));
 
     // Clone app_state for shutdown handler
     let app_state_clone = app_state.clone();

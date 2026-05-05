@@ -35,3 +35,5 @@ rand = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 async-trait = "0.1"
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["derive", "alloc"] }

@@ -732,6 +732,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "api-server"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "ai-bridge",
  "alloy-primitives",
  "anyhow",
@@ -762,6 +763,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
