@@ -471,15 +471,15 @@ mod tests {
             window_secs: 60,
         };
 
-        // User 1 uses up their quota
+        // User 1 uses up their quota (2 requests)
+        limiter.record_request("user1".to_string());
         limiter.record_request("user1".to_string());
 
         // User 2 should still have quota
-
         let status = limiter.check_rate_limit("user2", limit);
         assert!(status.allowed);
 
-        // User 1 should be rate limited
+        // User 1 should be rate limited (3rd request not allowed)
         let status = limiter.check_rate_limit("user1", limit);
         assert!(!status.allowed);
     }
