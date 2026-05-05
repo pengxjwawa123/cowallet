@@ -1,5 +1,5 @@
 # 多阶段构建：依赖层 + 代码层
-FROM rust:1.80-slim AS builder
+FROM rust:1.85-slim AS builder
 
 WORKDIR /app
 
