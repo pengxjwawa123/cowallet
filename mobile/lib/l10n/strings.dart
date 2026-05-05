@@ -85,6 +85,23 @@ class S {
   static String get nameHint => _p('存在你手机里,不会上传。', 'Stays on your phone. Never uploaded.');
   static String get continueBtn => _p('下一步', 'Continue');
 
+  // Onboarding — Backup
+  static String get backupH1 => _p('备份助记词', 'Backup recovery phrase');
+  static String get backupSub => _p('请写下以下12个单词并安全保存。这是您恢复钱包的唯一方式。', 'Write down these 12 words and keep them safe. This is the only way to recover your wallet.');
+  static String get backupImportant => _p('重要提示', 'Important');
+  static String get backupWarnBody => _p('不要截图、不要拍照、不要上传到云端。cowallet不会保存您的助记词。', 'Do not screenshot, photograph, or upload to the cloud. cowallet never stores your recovery phrase.');
+  static String get backupCopy => _p('复制到剪贴板', 'Copy to clipboard');
+  static String get backupConfirmed => _p('我已安全备份', 'I have safely backed up');
+  static String get backupSkip => _p('稍后备份 (不推荐)', 'Backup later (not recommended)');
+
+  // Onboarding — Verify Backup
+  static String get verifyH1 => _p('验证助记词', 'Verify recovery phrase');
+  static String get verifySub => _p('请按顺序选择第3、第6、第9、第12个单词', 'Tap the 3rd, 6th, 9th, and 12th words in order');
+  static String get verifySelectLabel => _p('选择单词:', 'Select words:');
+  static String get verifySubmit => _p('确认验证', 'Confirm verification');
+  static String get verifyWrongOrder => _p('助记词顺序不正确,请重新选择', 'Wrong order — please try again');
+  static String get mnemonicCopied => _p('助记词已复制到剪贴板', 'Recovery phrase copied to clipboard');
+
   // Onboarding — Ready
   static String get readyH1 => _p('都搞定了。', 'All set.');
   static String readyH1Named(String name) => _p('都搞定了,$name。', "You're in, $name.");
@@ -254,6 +271,10 @@ class S {
   static String get emergencyContactSub => _p('丢手机时帮你冻结和恢复', 'Helps freeze and recover if you lose your phone');
   static String get riskGuard => _p('风险拦截', 'Risk guard');
   static String get riskGuardSub => _p('AI 实时盯防钓鱼、授权滥用', 'AI watches for phishing, dodgy approvals');
+  static String get biometricAuth => _p('生物认证', 'Biometric authentication');
+  static String get biometricAuthSub => _p('用指纹或面容验证敏感操作', 'Use fingerprint or face for sensitive actions');
+  static String get biometricAuthReason => _p('验证以继续', 'Authenticate to continue');
+  static String get biometricNotAvailable => _p('此设备不支持生物认证', 'Biometric auth not available on this device');
   static String get conversation => _p('对话', 'Conversation');
   static String get intentMode => _p('意图提示出现时机', 'When intent card appears');
   static String get intentModeSub => _p('回车后弹卡(推荐) 或 打字时浮现', 'Pop-after-enter (default) or float-while-typing');

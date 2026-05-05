@@ -4,9 +4,69 @@ import '../../l10n/strings.dart';
 import '../../widgets/cw_chip.dart';
 import '../../widgets/section_label.dart';
 import '../../main.dart';
+import '../../services/locator.dart';
 
-class SettingsView extends StatelessWidget {
+class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
+
+  @override
+  State<SettingsView> createState() => _SettingsViewState();
+}
+
+class _SettingsViewState extends State<SettingsView> {
+  bool _biometricEnabled = false;
+  bool _biometricAvailable = false;
+  bool _hasEnrolledBiometrics = false;
+  String _biometricType = 'Biometric';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBiometricStatus();
+  }
+
+  Future<void> _loadBiometricStatus() async {
+    final available = await Services.biometrics.isAvailable();
+    final enabled = await Services.biometrics.isEnabled();
+    final hasEnrolled = await Services.biometrics.hasEnrolledBiometrics();
+    final bioType = await Services.biometrics.getPrimaryBiometricType();
+
+    if (mounted) {
+      setState(() {
+        _biometricAvailable = available;
+        _biometricEnabled = enabled;
+        _hasEnrolledBiometrics = hasEnrolled;
+        _biometricType = bioType;
+      });
+    }
+  }
+
+  String _getBiometricSubtitle() {
+    if (!_biometricAvailable) {
+      return S.biometricNotAvailable;
+    }
+    if (!_hasEnrolledBiometrics) {
+      return 'Please set up $_biometricType in your device settings first';
+    }
+    return 'Use $_biometricType to verify sensitive operations';
+  }
+
+  Future<void> _toggleBiometric(bool value) async {
+    if (!_biometricAvailable || !_hasEnrolledBiometrics) return;
+
+    if (value) {
+      // Enable: first authenticate to confirm
+      final authenticated = await Services.biometrics.authenticate(
+        reason: S.biometricAuthReason,
+      );
+      if (!authenticated) return;
+    }
+
+    await Services.biometrics.setEnabled(value);
+    if (mounted) {
+      setState(() => _biometricEnabled = value);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -176,6 +236,20 @@ class SettingsView extends StatelessWidget {
   Widget _securityList(BuildContext context) {
     return _settingsContainer(
       children: [
+        _settingRow(
+          context,
+          icon: Icons.fingerprint,
+          iconColor: CwColors.accent,
+          iconBg: CwColors.accentSoft,
+          title: S.biometricAuth,
+          subtitle: _getBiometricSubtitle(),
+          trailing: Switch(
+            value: _biometricEnabled && _biometricAvailable && _hasEnrolledBiometrics,
+            onChanged: _biometricAvailable && _hasEnrolledBiometrics ? _toggleBiometric : null,
+            activeThumbColor: CwColors.accent,
+          ),
+        ),
+        const Divider(indent: 52, height: 1),
         _settingRow(
           context,
           icon: Icons.error_outline,

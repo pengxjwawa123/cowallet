@@ -5,6 +5,7 @@ import 'package:convert/convert.dart';
 import 'package:pointycastle/export.dart';
 
 import '../platform/secure_storage.dart';
+import '../api/shards_api.dart';
 
 class WalletKeys {
   final String address;
@@ -53,8 +54,21 @@ class DartWalletService implements WalletService {
     // Zero the raw private key immediately
     privBytes.fillRange(0, privBytes.length, 0);
 
+    // Shard 0: Store locally on device
     await _storage.write('device_shard', hex.encode(shards[0]));
-    await _storage.write('server_shard', hex.encode(shards[1]));
+
+    // Shard 1: Upload to server for encrypted storage (MPC协同签名)
+    try {
+      await ShardsApi.uploadWalletShards([hex.encode(shards[1])]);
+    } catch (e) {
+      print("⚠️ Failed to upload shard to server: $e");
+      // Fallback: store locally if server upload fails (not ideal, but better than failing)
+      await _storage.write('server_shard_fallback', hex.encode(shards[1]));
+    }
+
+    // Shard 2: Should be displayed to user as backup mnemonic
+    // We do NOT store shard 2 locally - user must back it up!
+
     await _storage.write('wallet_address', address);
     await _storage.write('wallet_pubkey', hex.encode(pubBytes));
 

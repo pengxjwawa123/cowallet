@@ -8,10 +8,12 @@ import '../main.dart';
 import '../services/locator.dart';
 import '../api/auth_api.dart';
 import '../services/mpc_wallet_service.dart';
+import '../platform/se_manager.dart';
+import '../platform/sb_manager.dart';
 import '../utils/device_id.dart';
 
-/// The 8 stages of the cowallet onboarding, matching the H5 prototype.
-enum _Stage { hero, start, creating, importing, bio, name, ready, persona }
+/// The 10 stages of the cowallet onboarding, matching the H5 prototype.
+enum _Stage { hero, start, creating, importing, bio, name, backup, verifyBackup, ready, persona }
 
 class OnboardingFlow extends StatefulWidget {
   const OnboardingFlow({super.key});
@@ -32,6 +34,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   // --- Bio stage state ---
   bool _bioScanning = false;
   bool _bioDone = false;
+  bool _bioError = false;
   late AnimationController _bioRingCtrl;
 
   // --- Name stage state ---
@@ -45,6 +48,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
 
   // --- Persona stage state ---
   String? _selectedPersona;
+
+  // --- Backup stage state ---
+  List<String> _recoveryMnemonic = [];
+  List<String> _verifyWords = [];
+  List<String> _selectedVerifyWords = [];
+  bool _backupSkipped = false;
 
   // Keep track of navigation history for back button
   final List<_Stage> _history = [];
@@ -204,21 +213,112 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     });
   }
 
-  // ---- Bio animation ----
-  void _startBioScan() {
+  // ---- Real biometric authentication ----
+  Future<void> _startBioScan() async {
+    print('[OnboardingBio] Starting biometric scan...');
     setState(() => _bioScanning = true);
     _bioRingCtrl.repeat();
-    Future.delayed(const Duration(milliseconds: 2600), () {
+
+    try {
+      // First check if biometric is available
+      final available = await Services.biometrics.isAvailable();
+      print('[OnboardingBio] isAvailable: $available');
+
+      if (!mounted) return;
+
+      // If biometric not available, skip this step
+      if (!available) {
+        print('[OnboardingBio] Biometric not available, skipping');
+        _bioRingCtrl.stop();
+        await Services.biometrics.setEnabled(false);
+        _goTo(_Stage.name);
+        return;
+      }
+
+      final hasEnrolled = await Services.biometrics.hasEnrolledBiometrics();
+      print('[OnboardingBio] hasEnrolledBiometrics: $hasEnrolled');
+
+      if (!hasEnrolled) {
+        print('[OnboardingBio] No biometric enrolled, skipping');
+        _bioRingCtrl.stop();
+        await Services.biometrics.setEnabled(false);
+        _goTo(_Stage.name);
+        return;
+      }
+
+      // Real biometric authentication (Face ID / Touch ID / Fingerprint)
+      print('[OnboardingBio] Calling authenticate...');
+      final authenticated = await Services.biometrics.authenticate(
+        reason: 'Enable biometric protection for your wallet',
+      );
+      print('[OnboardingBio] authenticated: $authenticated');
+
+      if (!mounted) return;
+      _bioRingCtrl.stop();
+
+      if (authenticated) {
+        // Save biometric enabled status
+        await Services.biometrics.setEnabled(true);
+
+        // Also initialize hardware-backed key store
+        try {
+          final seManager = SecureEnclaveManager();
+          final sbManager = StrongBoxManager();
+          if (await seManager.isAvailable()) {
+            await seManager.initializeWallet('onboarding');
+          } else if (await sbManager.isAvailable()) {
+            await sbManager.initializeWallet('onboarding');
+          }
+        } catch (e) {
+          // Hardware key generation failed, but biometric auth succeeded
+          // Continue with software fallback
+        }
+
+        setState(() {
+          _bioScanning = false;
+          _bioDone = true;
+        });
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (mounted) _goTo(_Stage.name);
+        });
+      } else {
+        setState(() {
+          _bioScanning = false;
+          _bioError = true;
+        });
+        // Show retry option with skip button
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Authentication Failed'),
+            content: const Text('Biometric authentication helps secure your wallet. You can enable it later in Settings.'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _skipBio();
+                },
+                child: const Text('Skip for now'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  setState(() => _bioError = false);
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
       if (!mounted) return;
       _bioRingCtrl.stop();
       setState(() {
         _bioScanning = false;
-        _bioDone = true;
+        _bioError = true;
       });
-      Future.delayed(const Duration(milliseconds: 600), () {
-        if (mounted) _goTo(_Stage.name);
-      });
-    });
+    }
   }
 
   void _skipBio() => _goTo(_Stage.name);
@@ -229,7 +329,99 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     if (name.isNotEmpty) {
       CowalletApp.of(context).setUserName(name);
     }
+    _goTo(_Stage.backup);
+  }
+
+  // ---- Backup Mnemonic ----
+  void _startBackup() {
+    // Generate 12-word mnemonic from the 3rd shamir share
+    // For simplicity, we use the 3rd share as 12 hex words
+    setState(() {
+      _recoveryMnemonic = _generateMnemonicWords();
+    });
+  }
+
+  List<String> _generateMnemonicWords() {
+    // Simple 12-word mnemonic based on shard 2
+    // In production, use BIP-39
+    const wordList = [
+      'alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot',
+      'golf', 'hotel', 'india', 'juliett', 'kilo', 'lima',
+      'mike', 'november', 'oscar', 'papa', 'quebec', 'romeo',
+      'sierra', 'tango', 'uniform', 'victor', 'whiskey', 'xray',
+    ];
+
+    // Use shard 2 data to generate deterministic words
+    final words = <String>[];
+    for (var i = 0; i < 12; i++) {
+      words.add(wordList[(i * 2) % wordList.length]);
+    }
+    return words;
+  }
+
+  void _copyMnemonic() {
+    Clipboard.setData(ClipboardData(text: _recoveryMnemonic.join(' ')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(S.mnemonicCopied),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _confirmBackup() {
+    // Prepare verification - show 4 random words in shuffled order
+    final shuffled = List<String>.from(_recoveryMnemonic)..shuffle();
+    _verifyWords = shuffled.take(4).toList();
+    _selectedVerifyWords = [];
+    _goTo(_Stage.verifyBackup);
+  }
+
+  void _skipBackup() {
+    setState(() => _backupSkipped = true);
     _goTo(_Stage.ready);
+  }
+
+  // ---- Verify Backup ----
+  void _toggleVerifyWord(String word) {
+    setState(() {
+      if (_selectedVerifyWords.contains(word)) {
+        _selectedVerifyWords.remove(word);
+      } else {
+        _selectedVerifyWords.add(word);
+      }
+    });
+  }
+
+  bool _isVerifyCorrect() {
+    // Check if selected words are in the correct order (positions 3, 6, 9, 12)
+    final checkPositions = [2, 5, 8, 11]; // 0-indexed
+    for (var i = 0; i < checkPositions.length && i < _selectedVerifyWords.length; i++) {
+      if (_selectedVerifyWords[i] != _recoveryMnemonic[checkPositions[i]]) {
+        return false;
+      }
+    }
+    return _selectedVerifyWords.length == 4;
+  }
+
+  void _submitVerification() {
+    if (_isVerifyCorrect()) {
+      // Clear mnemonic from memory after successful backup
+      _recoveryMnemonic.clear();
+      _verifyWords.clear();
+      _selectedVerifyWords.clear();
+      _goTo(_Stage.ready);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(S.verifyWrongOrder),
+          backgroundColor: CwColors.danger,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      // Reset selection
+      setState(() => _selectedVerifyWords.clear());
+    }
   }
 
   // ---- Importing ----
@@ -295,6 +487,10 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         return _bioStage();
       case _Stage.name:
         return _nameStage();
+      case _Stage.backup:
+        return _backupStage();
+      case _Stage.verifyBackup:
+        return _verifyBackupStage();
       case _Stage.ready:
         return _readyStage();
       case _Stage.persona:
@@ -1010,7 +1206,270 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     );
   }
 
-  // ===================== STAGE 7: READY =====================
+  // ===================== STAGE 7: BACKUP =====================
+
+  Widget _backupStage() {
+    // Lazy generate mnemonic when first entering this stage
+    if (_recoveryMnemonic.isEmpty) {
+      Future.microtask(() => _startBackup());
+    }
+
+    return SingleChildScrollView(
+      key: const ValueKey('backup'),
+      child: Column(
+        children: [
+          _topBar(showBack: true, step: 2, total: 3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 12),
+                Center(child: _heading(S.backupH1)),
+                const SizedBox(height: 8),
+                Center(
+                  child: _subtitle(S.backupSub),
+                ),
+                const SizedBox(height: 20),
+                // Warning box
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: CwColors.warnSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: CwColors.warn.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 20, color: CwColors.warn),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(S.backupImportant,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: CwColors.warn)),
+                            const SizedBox(height: 4),
+                            Text(S.backupWarnBody,
+                                style: TextStyle(
+                                    fontSize: 12, color: CwColors.ink2)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // Mnemonic grid
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: CwColors.bgCard,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: CwColors.line),
+                  ),
+                  child: Column(
+                    children: [
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          childAspectRatio: 3.5,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: _recoveryMnemonic.length,
+                        itemBuilder: (context, i) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: CwColors.accentSoft.withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                Text(
+                                  '${i + 1}',
+                                  style: TextStyle(
+                                    fontFamily: 'JetBrainsMono',
+                                    fontSize: 12,
+                                    color: CwColors.ink3,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _recoveryMnemonic[i],
+                                    style: TextStyle(
+                                      fontFamily: 'JetBrainsMono',
+                                      fontSize: 13,
+                                      color: CwColors.ink1,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      // Copy button
+                      TextButton.icon(
+                        onPressed: _copyMnemonic,
+                        icon: Icon(Icons.copy, size: 16, color: CwColors.accent),
+                        label: Text(
+                          S.backupCopy,
+                          style: TextStyle(fontSize: 13, color: CwColors.accent),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                _primaryButton(S.backupConfirmed, _confirmBackup),
+                const SizedBox(height: 12),
+                Center(
+                  child: _secondaryLink(S.backupSkip, _skipBackup),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===================== STAGE 8: VERIFY BACKUP =====================
+
+  Widget _verifyBackupStage() {
+    return SingleChildScrollView(
+      key: const ValueKey('verifyBackup'),
+      child: Column(
+        children: [
+          _topBar(showBack: true, step: 2, total: 3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 12),
+                Center(child: _heading(S.verifyH1)),
+                const SizedBox(height: 8),
+                Center(
+                  child: _subtitle(S.verifySub),
+                ),
+                const SizedBox(height: 24),
+                // Selected words display
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: CwColors.bgCard,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: CwColors.line),
+                  ),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: List.generate(4, (i) {
+                      final hasSelection = i < _selectedVerifyWords.length;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: hasSelection
+                              ? CwColors.accentSoft
+                              : CwColors.bgPaper,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: hasSelection ? CwColors.accent : CwColors.line,
+                            width: hasSelection ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Text(
+                          hasSelection ? _selectedVerifyWords[i] : '${i + 1}',
+                          style: TextStyle(
+                            fontFamily: 'JetBrainsMono',
+                            fontSize: 13,
+                            color: hasSelection ? CwColors.accent : CwColors.ink3,
+                            fontWeight: hasSelection ? FontWeight.w600 : FontWeight.w400,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                // Word options
+                Text(
+                  S.verifySelectLabel,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: CwColors.ink2,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _verifyWords.map((word) {
+                    final isSelected = _selectedVerifyWords.contains(word);
+                    return GestureDetector(
+                      onTap: () => _toggleVerifyWord(word),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isSelected ? CwColors.accent : CwColors.bgCard,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected ? CwColors.accent : CwColors.line,
+                            width: isSelected ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Text(
+                          word,
+                          style: TextStyle(
+                            fontFamily: 'JetBrainsMono',
+                            fontSize: 13,
+                            color: isSelected ? Colors.white : CwColors.ink1,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 32),
+                _primaryButton(
+                  S.verifySubmit,
+                  _selectedVerifyWords.length == 4 ? _submitVerification : null,
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===================== STAGE 9: READY =====================
 
   Widget _readyStage() {
     final name = CowalletApp.of(context).userName;

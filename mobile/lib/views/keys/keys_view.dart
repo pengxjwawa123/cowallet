@@ -2,9 +2,49 @@ import 'package:flutter/material.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/cw_chip.dart';
+import '../../services/locator.dart';
 
-class KeysView extends StatelessWidget {
+class KeysView extends StatefulWidget {
   const KeysView({super.key});
+
+  @override
+  State<KeysView> createState() => _KeysViewState();
+}
+
+class _KeysViewState extends State<KeysView> {
+  bool _isAuthenticated = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricStatus();
+  }
+
+  Future<void> _checkBiometricStatus() async {
+    final available = await Services.biometrics.isAvailable();
+    final enabled = await Services.biometrics.isEnabled();
+    final hasEnrolled = await Services.biometrics.hasEnrolledBiometrics();
+    if (mounted) {
+      // If biometric not available, not enabled, or no biometric enrolled,
+      // auto-show keys without requiring authentication
+      if (!available || !enabled || !hasEnrolled) {
+        setState(() => _isAuthenticated = true);
+      }
+    }
+  }
+
+  Future<bool> _authenticate() async {
+    if (_isAuthenticated) return true;
+
+    final authenticated = await Services.biometrics.authenticate(
+      reason: S.biometricAuthReason,
+    );
+
+    if (authenticated && mounted) {
+      setState(() => _isAuthenticated = true);
+    }
+    return authenticated;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +121,8 @@ class KeysView extends StatelessWidget {
             where: S.keyPhoneWhere,
             chipLabel: 'OK',
             chipVariant: ChipVariant.green,
-            meta: S.keyPhoneMeta,
+            meta: _isAuthenticated ? S.keyPhoneMeta : '••••••••',
+            requireAuth: true,
           ),
           const SizedBox(height: 10),
           _keyCard(
@@ -95,7 +136,8 @@ class KeysView extends StatelessWidget {
             where: S.keyCloudWhere,
             chipLabel: 'OK',
             chipVariant: ChipVariant.green,
-            meta: S.keyCloudMeta,
+            meta: _isAuthenticated ? S.keyCloudMeta : '••••••••',
+            requireAuth: true,
           ),
           const SizedBox(height: 10),
           _keyCard(
@@ -109,8 +151,9 @@ class KeysView extends StatelessWidget {
             where: S.keyRecoveryWhere,
             chipLabel: S.keyRecoveryTag,
             chipVariant: ChipVariant.amber,
-            meta: S.keyRecoveryMeta,
+            meta: _isAuthenticated ? S.keyRecoveryMeta : '••••••••',
             actionLabel: S.keyRecoveryAction,
+            requireAuth: true,
           ),
           const SizedBox(height: 24),
 
@@ -208,101 +251,109 @@ class KeysView extends StatelessWidget {
     required ChipVariant chipVariant,
     required String meta,
     String? actionLabel,
+    bool requireAuth = false,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Icon
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: iconBg,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, size: 20, color: iconColor),
-              ),
-              const SizedBox(width: 12),
-              // Title + where
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontFamily: 'NotoSerifSC',
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: CwColors.ink1,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      where,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: CwColors.ink3,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Chip
-              CwChip(
-                label: chipLabel,
-                variant: chipVariant,
-                showDot: true,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          // Meta
-          Padding(
-            padding: const EdgeInsets.only(left: 52),
-            child: Text(
-              meta,
-              style: const TextStyle(
-                fontFamily: 'JetBrainsMono',
-                fontSize: 10,
-                color: CwColors.ink3,
-              ),
-            ),
-          ),
-          // Action button (recovery card only)
-          if (actionLabel != null) ...[
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () {},
-                style: FilledButton.styleFrom(
-                  backgroundColor: CwColors.accent,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size.fromHeight(40),
-                  shape: RoundedRectangleBorder(
+    return GestureDetector(
+      onTap: requireAuth && !_isAuthenticated
+          ? () => _authenticate()
+          : null,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Icon
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: iconBg,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  textStyle: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                  child: Icon(icon, size: 20, color: iconColor),
+                ),
+                const SizedBox(width: 12),
+                // Title + where
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontFamily: 'NotoSerifSC',
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: CwColors.ink1,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        where,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: CwColors.ink3,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: Text(actionLabel),
+                // Chip
+                CwChip(
+                  label: chipLabel,
+                  variant: chipVariant,
+                  showDot: true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Meta
+            Padding(
+              padding: const EdgeInsets.only(left: 52),
+              child: Text(
+                meta,
+                style: const TextStyle(
+                  fontFamily: 'JetBrainsMono',
+                  fontSize: 10,
+                  color: CwColors.ink3,
+                ),
               ),
             ),
+            // Action button (recovery card only)
+            if (actionLabel != null) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _isAuthenticated
+                      ? () {}
+                      : () => _authenticate(),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: CwColors.accent,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  child: Text(_isAuthenticated ? actionLabel : S.biometricAuthReason),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

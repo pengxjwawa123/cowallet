@@ -91,6 +91,24 @@ async fn main() {
         .nest("/mpc", routes::mpc::router())
         .layer(axum_mw::from_fn(strict_rate_limit_middleware));
 
+    // Initialize encryption service (in production, key from KMS/HSM)
+    let encryption_key = std::env::var("ENCRYPTION_KEY")
+        .and_then(|k| hex::decode(k))
+        .unwrap_or_else(|_| {
+            tracing::warn!("Using default encryption key - NOT FOR PRODUCTION!");
+            (0..32).collect()
+        });
+
+    let mut key_array = [0u8; 32];
+    if encryption_key.len() == 32 {
+        key_array.copy_from_slice(&encryption_key);
+    }
+
+    let encryption = services::crypto::EncryptionService::new(
+        &key_array,
+        "default-key",
+    );
+
     // Protected routes with standard rate limiting (100 req/min)
     let protected = Router::new()
         .merge(mpc_routes)
@@ -98,8 +116,10 @@ async fn main() {
         .nest("/policy", routes::policy::router())
         .nest("/ai", routes::ai::router())
         .nest("/yield", routes::yield_::router())
+        .nest("/shards", routes::shards::router())
+        .layer(Extension(encryption))
         .layer(axum_mw::from_fn(require_auth))
-        .layer(axum_mw::from_fn(standard_rate_limit_middleware));
+        .layer(axum_mw::from_fn(standard_rate_limit_middleware)));
 
     // Clone app_state for shutdown handler
     let app_state_clone = app_state.clone();
