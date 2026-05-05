@@ -1,5 +1,5 @@
-# 简单构建 - 优先保证构建成功
-FROM rust:1.92-slim AS builder
+# 多阶段构建 - 使用 bookworm 基础镜像确保 GLIBC 兼容
+FROM rust:1.92-bookworm AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ COPY migrations ./migrations
 # 构建二进制文件
 RUN cargo build --release --bin api-server --bin mpc-relay --bin indexer --bin worker
 
-# 运行层
+# 运行层 - 使用相同的 Debian bookworm 版本
 FROM debian:bookworm-slim
 
 WORKDIR /app
