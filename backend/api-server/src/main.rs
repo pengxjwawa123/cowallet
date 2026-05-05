@@ -5,7 +5,7 @@ mod routes;
 mod services;
 mod state;
 
-use axum::{Router, extract::{State, Extension}, middleware as axum_mw, response::Json, routing::get};
+use axum::{Router, extract::{State, Extension}, middleware as axum_mw, middleware::Next, response::Json, routing::get};
 use axum::http::{Method, header, StatusCode, Request};
 use axum::body::Body;
 use serde_json::json;
