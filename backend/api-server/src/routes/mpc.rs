@@ -15,10 +15,10 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/session", post(create_session))
-        .route("/session/{id}", get(get_session))
-        .route("/session/{id}", delete(abort_session))
-        .route("/session/{id}/msg", post(send_message))
-        .route("/session/{id}/msg", get(recv_messages))
+        .route("/session/:id", get(get_session))
+        .route("/session/:id", delete(abort_session))
+        .route("/session/:id/msg", post(send_message))
+        .route("/session/:id/msg", get(recv_messages))
 }
 
 #[derive(Deserialize)]
