@@ -16,7 +16,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/shard", post(upload_shard))
-        .route("/shard/:location", get(get_shard))
+        .route("/shard/{location}", get(get_shard))
 }
 
 #[derive(Deserialize)]
