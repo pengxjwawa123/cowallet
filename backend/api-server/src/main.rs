@@ -87,8 +87,7 @@ async fn main() {
     };
 
     // MPC routes with strict rate limiting (10 req/min)
-    let mpc_routes = Router::new()
-        .nest("/mpc", routes::mpc::router())
+    let mpc_routes = routes::mpc::router()
         .layer(axum_mw::from_fn(strict_rate_limit_middleware));
 
     // Initialize encryption service (in production, key from KMS/HSM)
@@ -112,7 +111,7 @@ async fn main() {
 
     // Protected routes with standard rate limiting (100 req/min)
     let protected = Router::new()
-        .merge(mpc_routes)
+        .nest("/mpc", mpc_routes)
         .nest("/tx", routes::tx::router())
         .nest("/policy", routes::policy::router())
         .nest("/ai", routes::ai::router())
