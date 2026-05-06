@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Query, State},
     http::StatusCode,
     routing::{delete, get, post},
     Extension,
@@ -194,10 +194,16 @@ pub async fn create_session(
     }))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct SessionQuery {
+    session_id: uuid::Uuid,
+}
+
 pub async fn get_session(
     State(state): State<AppState>,
-    Path(id): Path<uuid::Uuid>,
+    Query(query): Query<SessionQuery>,
 ) -> Result<Json<SessionResponse>, StatusCode> {
+    let id = query.session_id;
     let db = state
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -220,8 +226,9 @@ pub async fn get_session(
 
 pub async fn abort_session(
     State(state): State<AppState>,
-    Path(id): Path<uuid::Uuid>,
+    Query(query): Query<SessionQuery>,
 ) -> Result<StatusCode, StatusCode> {
+    let id = query.session_id;
     let db = state
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -261,9 +268,10 @@ pub(crate) struct SendMessageResponse {
 
 pub async fn send_message(
     State(state): State<AppState>,
-    Path(session_id): Path<uuid::Uuid>,
+    Query(query): Query<SessionQuery>,
     Json(body): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, StatusCode> {
+    let session_id = query.session_id;
     let db = state
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -377,8 +385,9 @@ pub(crate) struct MessageResponse {
 
 pub async fn recv_messages(
     State(state): State<AppState>,
-    Path(session_id): Path<uuid::Uuid>,
+    Query(query): Query<SessionQuery>,
 ) -> Result<Json<Vec<MessageResponse>>, StatusCode> {
+    let session_id = query.session_id;
     let db = state
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
