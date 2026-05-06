@@ -32,7 +32,7 @@ pub(crate) struct CreateSessionRequest {
 pub(crate) struct SessionResponse {
     session_id: String,
     status: String,
-    current_round: i16,
+    current_round: i32,
     last_activity: Option<String>,
 }
 
@@ -135,7 +135,7 @@ pub async fn get_session(
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    let row: (String, i16, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+    let row: (String, i32, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
         "SELECT status, current_round, last_activity FROM mpc_sessions WHERE id = $1"
     )
     .bind(id)
@@ -200,7 +200,7 @@ pub async fn send_message(
     let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Fetch session details
-    let session: (String, Vec<i16>, i16, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+    let session: (String, Vec<i16>, i32, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
         "SELECT status, parties, current_round, expires_at FROM mpc_sessions WHERE id = $1"
     )
     .bind(session_id)
@@ -208,9 +208,9 @@ pub async fn send_message(
     .await
     .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let status = session.0;
+    let _status = session.0;
     let parties = session.1;
-    let current_round = session.2;
+    let current_round = session.2 as i16;
 
     // Validate party indices
     if !parties.contains(&body.from_party) || !parties.contains(&body.to_party) {
@@ -237,7 +237,7 @@ pub async fn send_message(
 
     // Store message
     let message_id: i64 = sqlx::query_scalar(
-        "INSERT INTO mpc_messages (session_id, from_party, to_party, round, payload, hmac_verified)
+        "INSERT INTO mpc_messages (session_id, from_party, to_party, round, payload, verified)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id"
     )
@@ -296,7 +296,7 @@ pub async fn recv_messages(
     }
 
     let messages: Vec<(i64, i16, i16, i16, Vec<u8>, bool, chrono::DateTime<Utc>)> = sqlx::query_as(
-        "SELECT id, from_party, to_party, round, payload, hmac_verified, created_at
+        "SELECT id, from_party, to_party, round, payload, verified, created_at
          FROM mpc_messages
          WHERE session_id = $1
          ORDER BY round ASC, created_at ASC"

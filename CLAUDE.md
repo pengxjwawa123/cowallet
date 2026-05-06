@@ -45,78 +45,92 @@ mobile/                 # Flutter app (Dart + Rust FFI)
 prototype/              # Static HTML mockup (bilingual, phone-frame design)
 ```
 
+### API Route Structure
+
+```
+/health, /ready, /live, /metrics   — Public probes
+/api/v1/auth/*                     — Public (auth rate limit: 5 req/min)
+/api/v1/price/*                    — Public
+/api/v1/mpc/*                      — Protected + strict rate limit (10 req/min)
+/api/v1/tx/*                       — Protected
+/api/v1/policy/*                   — Protected
+/api/v1/ai/*                       — Protected
+/api/v1/yield/*                    — Protected
+/api/v1/shards/*                   — Protected
+```
+
+Protected routes require JWT via `Authorization: Bearer <token>`. Auth middleware in `backend/api-server/src/middleware/auth.rs`.
+
+### Mobile App Architecture
+
+```
+mobile/lib/
+├── api/          # HTTP API clients (auth, mpc, ai, shards, wallet, policy)
+├── bridge/       # Rust FFI bridge (flutter_rust_bridge v2 generated)
+├── config/       # API base URL, timeouts
+├── network/      # Dio HTTP client with auto-token injection
+├── platform/     # Native platform channels (Secure Enclave, StrongBox, biometrics)
+├── state/        # App state management
+├── views/        # UI screens (home, wallet, chat, send, receive, keys, settings)
+└── widgets/      # Reusable UI components
+```
+
+The mobile app uses Dio for HTTP. Token is auto-injected from secure storage via interceptor (`mobile/lib/network/dio_client.dart`).
+
 ## Development Commands
 
-### Local Development (Native)
+### Quick Start (macOS with Docker for infra)
 
-**Prerequisites**: PostgreSQL 16+, Redis 7+, NATS 2.x, Rust 1.75+, GCC 11+ (for aws-lc-sys)
-
-```bash
-# One-time initialization (starts PostgreSQL/Redis, creates DB, runs migrations)
-make local-init
-
-# Start services (requires NATS running separately)
-# Terminal 1:
-sudo systemctl start nats  # or: nats-server -js &
-
-# Terminal 2:
-make local-start            # Starts API server on localhost:3000
-
-# Database migrations
-make local-migrate          # Run pending migrations
-sqlx migrate revert         # Revert last migration
-
-# Build and test
-make local-build            # cargo build --release
-cargo test                  # Run all tests
-cargo test -p mpc-core      # Test single crate
-
-# Stop services
-make local-stop             # Kill application processes
-
-# Health check
-curl http://localhost:3000/health
-```
-
-### Docker Development
+Uses `Makefile.local` — starts Postgres/Redis/NATS in Docker, runs API natively:
 
 ```bash
-make docker-up              # Start all services (API, PostgreSQL, Redis, NATS)
-make docker-logs            # Follow logs
-make docker-down            # Stop services
-make docker-clean           # Stop and remove volumes
-make docker-rebuild         # Full rebuild
+make -f Makefile.local up       # Start infra (Postgres:5433, Redis:6380, NATS:4223)
+make -f Makefile.local migrate  # Run migrations
+make -f Makefile.local dev      # up + migrate + cargo run api-server
+make -f Makefile.local down     # Stop infra
 ```
 
-### Flutter Mobile App
+### Local Development (CentOS/Linux with native services)
+
+**Prerequisites**: PostgreSQL 16+, Redis 7+, NATS 2.x, Rust stable, GCC 11+ (for aws-lc-sys)
+
+```bash
+make local-init                 # One-time: start PG/Redis, create DB, run migrations
+make local-start                # cargo run --release --bin api-server
+make local-migrate              # sqlx migrate run
+make local-stop                 # Kill app processes
+```
+
+### Docker (full stack)
+
+```bash
+make docker-up                  # Start all services (API + infra)
+make docker-logs                # Follow logs
+make docker-down                # Stop
+make docker-clean               # Stop + remove volumes
+make docker-rebuild             # Rebuild from scratch
+```
+
+### Build & Test
+
+```bash
+cargo check --workspace         # Fast type-check
+cargo build --release           # Full build
+cargo test                      # All tests
+cargo test -p mpc-core          # Single crate
+cargo fmt                       # Format
+cargo clippy -- -D warnings     # Lint
+cargo run -p api-server         # Run API server (dev mode)
+```
+
+### Flutter Mobile
 
 ```bash
 cd mobile
-
-# Install dependencies
-flutter pub get
-
-# Run on device/emulator
-flutter run
-
-# Build
-flutter build apk           # Android
-flutter build ios           # iOS (requires macOS + Xcode)
-
-# Run tests
-flutter test
-
-# Code generation (after modifying FFI)
-flutter_rust_bridge_codegen generate
-```
-
-### Cargo Shortcuts
-
-```bash
-cargo fmt                   # Format code
-cargo clippy -- -D warnings # Lint with warnings-as-errors
-cargo run -p api-server     # Run specific binary
-cargo check --workspace     # Fast type-check all crates
+flutter pub get                 # Install deps
+flutter run                     # Run on device/emulator
+flutter test                    # Run tests
+flutter_rust_bridge_codegen generate  # Regenerate FFI after Rust changes
 ```
 
 ## Key Technical Details
@@ -171,10 +185,12 @@ sign_hash(msg_hash: Vec<u8>) -> Result<Vec<u8>, String>
 
 ### Backend Services
 
-- **api-server** (port 3000): Axum HTTP API with Tower middleware (CORS, tracing, rate limiting)
+- **api-server** (port 3000): Axum HTTP API with Tower middleware stack (CORS, tracing, rate limiting, security headers, request body limit 10MB, 30s timeout). Can start in degraded mode without DB.
 - **mpc-relay**: NATS-based pub-sub for MPC round messages between devices/server
 - **indexer**: Tracks blockchain events (deposits, withdrawals) for balance updates
 - **worker**: Background jobs (price feeds, pending tx monitoring, webhook notifications)
+
+AppState (`backend/api-server/src/state.rs`) holds the DB pool, HTTP client, Claude client, rate limiter, circuit breakers, and caches. Migrations auto-run on startup via `sqlx::migrate!`.
 
 ### Environment Variables
 
@@ -185,8 +201,14 @@ DATABASE_URL=postgres://postgres@localhost:5432/cowallet
 REDIS_URL=redis://localhost:6379
 NATS_URL=nats://localhost:4222
 RPC_URL=https://sepolia.base.org              # EVM RPC endpoint
-CLAUDE_API_KEY=sk-ant-xxxxx                   # For AI features
+RPC_WS_URL=wss://sepolia.base.org             # WebSocket RPC
+ANTHROPIC_API_KEY=sk-ant-xxxxx                # For AI features (Claude client)
+JWT_SECRET=...                                # Min 32 chars for token signing
+ENCRYPTION_KEY=...                            # 32-byte hex for shard encryption
+CORS_ALLOWED_ORIGINS=http://localhost:3000    # Comma-separated origins
 ```
+
+Note: Docker Compose maps non-standard host ports (Postgres:5433, Redis:6380, NATS:4223) to avoid conflicts with local services. The `Makefile.local` `migrate` target uses `postgres://postgres:postgres@localhost:5433/cowallet`.
 
 ## Testing Strategy
 
@@ -238,34 +260,22 @@ flutter_rust_bridge_codegen generate
 flutter pub get
 ```
 
-## Documentation
+## Database
 
-- **PLAN.md** — Full 6-layer architecture, technical stack, Gantt chart
-- **IMPLEMENTATION.md** — Phase-by-phase implementation roadmap (currently Phase 2, 25% complete)
-- **QUICK_START.md** — CentOS deployment quick reference (中文)
-- **DEPLOY.md** — Detailed deployment guide for production
-- **DOCKER.md** — Docker Compose setup and troubleshooting
+Migrations live in `backend/migrations/` (sequential numbered SQL files). The `mpc_sessions` and `mpc_messages` tables are the core MPC state. Key tables: `users`, `mpc_sessions`, `mpc_messages`, `shard_metadata`, `transactions`, `policies`.
+
+Migrations auto-run on api-server startup. To run manually:
+```bash
+sqlx migrate run --source backend/migrations
+```
+
+## Deployment
+
+Production deploys to ECS via GitHub Actions (`.github/workflows/deploy-ecs.yml`). The Dockerfile builds all workspace binaries; the specific binary is selected via `command:` in docker-compose.
 
 ## HTML Prototype (`prototype/index.html`)
 
-A self-contained single-file (~3100 lines) mockup:
-
-- **Structure**: CSS (lines ~10–1980), HTML (~1980–1982), JavaScript (~1983–3097)
-- **Design**: Phone-frame mockup with paper/ink palette (Claude design language)
-- **Bilingual**: CSS-driven `data-zh`/`data-en` attributes with `::before` pseudo-elements
-- **Features**: Onboarding flow, wallet views, chat composer, intent detection (regex-based), automated demo (`demo.run()`)
-- **Conventions**: `$` = `querySelector`, `data-nav="view"` triggers `setView()`, `data-onb="action"` for onboarding steps
-
-Open directly in browser (no build step):
+A self-contained single-file (~3100 lines) mockup. Open directly in browser (no build step):
 ```bash
-cd prototype
-python3 -m http.server 8000  # or: npx serve .
+cd prototype && python3 -m http.server 8000
 ```
-
-## Project Status
-
-- **Current Phase**: Phase 2 (25% complete)
-- **Target**: W24 (6 months from start)
-- **EVM Focus**: Ethereum, Base, Arbitrum, Optimism, BSC (Bitcoin, Solana, Cosmos deferred)
-- **Completed**: Rust workspace, FFI bridge, DKG protocol, basic API server
-- **In Progress**: Policy engine, ERC-4337 integration, mobile UI
