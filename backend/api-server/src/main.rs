@@ -107,12 +107,12 @@ async fn main() {
 
     // Protected routes with standard rate limiting (100 req/min)
     // MPC routes defined directly to avoid nest path parameter issues
+    // MPC routes with strict rate limiting (10 req/min)
+    let mpc_routes = routes::mpc::router()
+        .layer(axum_mw::from_fn(strict_rate_limit_middleware));
+
     let protected = Router::new()
-        .route("/mpc/session", axum::routing::post(routes::mpc::create_session))
-        .route("/mpc/session/get", axum::routing::get(routes::mpc::get_session))
-        .route("/mpc/session/abort", axum::routing::delete(routes::mpc::abort_session))
-        .route("/mpc/msg", axum::routing::post(routes::mpc::send_message))
-        .route("/mpc/msg", axum::routing::get(routes::mpc::recv_messages))
+        .nest("/mpc", mpc_routes)
         .nest("/tx", routes::tx::router())
         .nest("/policy", routes::policy::router())
         .nest("/ai", routes::ai::router())
