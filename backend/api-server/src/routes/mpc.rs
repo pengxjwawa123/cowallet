@@ -90,6 +90,12 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
+    let valid_types = ["dkg", "keygen", "presign", "sign", "reshare"];
+    if !valid_types.contains(&body.session_type.as_str()) {
+        tracing::warn!("Invalid session_type: {}", body.session_type);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let session_id = uuid::Uuid::new_v4();
     let threshold = body.threshold.unwrap_or(2);
 

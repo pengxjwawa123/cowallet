@@ -17,7 +17,7 @@ CREATE INDEX idx_users_device_id ON users(device_id);
 -- MPC sessions
 CREATE TABLE mpc_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    session_type TEXT NOT NULL CHECK (session_type IN ('dkg', 'presign', 'sign', 'reshare')),
+    session_type TEXT NOT NULL CHECK (session_type IN ('dkg', 'keygen', 'presign', 'sign', 'reshare')),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed', 'failed', 'expired')),
     user_id UUID NOT NULL REFERENCES users(id),
     parties SMALLINT[] NOT NULL,
