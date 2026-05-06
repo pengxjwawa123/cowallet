@@ -93,18 +93,24 @@ pub async fn create_session(
     let session_id = uuid::Uuid::new_v4();
     let threshold = body.threshold.unwrap_or(2);
 
+    let user_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
     let result = sqlx::query(
         "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round)
          VALUES ($1, $2, $3, $4, $5, 'pending', 0)"
     )
     .bind(session_id)
-    .bind(&claims.sub)
+    .bind(user_id)
     .bind(&body.session_type)
     .bind(&body.parties)
     .bind(threshold)
     .execute(db)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        tracing::error!("Failed to create MPC session: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     tracing::info!("Created MPC session {} for user {}", session_id, claims.sub);
 
