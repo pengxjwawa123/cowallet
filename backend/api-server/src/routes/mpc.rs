@@ -23,14 +23,14 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Deserialize)]
-struct CreateSessionRequest {
+pub(crate) struct CreateSessionRequest {
     session_type: String,
     parties: Vec<i16>,
     threshold: Option<i16>,
 }
 
 #[derive(Serialize)]
-struct SessionResponse {
+pub(crate) struct SessionResponse {
     session_id: String,
     status: String,
     current_round: i16,
@@ -244,7 +244,7 @@ pub async fn abort_session(
 }
 
 #[derive(Deserialize)]
-struct SendMessageRequest {
+pub(crate) struct SendMessageRequest {
     from_party: i16,
     to_party: i16,
     round: i16,
@@ -254,7 +254,7 @@ struct SendMessageRequest {
 }
 
 #[derive(Serialize)]
-struct SendMessageResponse {
+pub(crate) struct SendMessageResponse {
     message_id: i64,
     verified: bool,
 }
@@ -365,7 +365,7 @@ pub async fn send_message(
 }
 
 #[derive(Serialize)]
-struct MessageResponse {
+pub(crate) struct MessageResponse {
     id: i64,
     from_party: i16,
     to_party: i16,
