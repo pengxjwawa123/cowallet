@@ -271,7 +271,7 @@ impl ChainIndexer {
         }
     }
 
-    /// Poll for new blocks and process them
+    /// Poll for new blocks and process them (batched to respect RPC limits)
     async fn poll_new_blocks(&mut self) -> Result<(), IndexerError> {
         let provider = alloy_provider::ProviderBuilder::new()
             .connect_http(self.config.rpc_ws_url.parse().expect("invalid RPC URL"));
@@ -279,16 +279,24 @@ impl ChainIndexer {
         let current_block = provider.get_block_number().await
             .map_err(|e| IndexerError::Rpc(e.to_string()))?;
 
-        if current_block > self.last_processed_block {
-            self.process_block_range(
-                &provider,
-                self.last_processed_block + 1,
-                current_block,
-            ).await
+        if current_block <= self.last_processed_block {
+            return Ok(());
+        }
+
+        let batch_size = 2000u64;
+        let mut from_block = self.last_processed_block + 1;
+
+        while from_block <= current_block {
+            let to_block = std::cmp::min(from_block + batch_size - 1, current_block);
+
+            self.process_block_range(&provider, from_block, to_block).await
                 .map_err(|e| IndexerError::Rpc(e.to_string()))?;
-            self.update_last_processed_block(current_block).await?;
-            self.last_processed_block = current_block;
-            tracing::debug!("Processed up to block {}", current_block);
+
+            self.update_last_processed_block(to_block).await?;
+            self.last_processed_block = to_block;
+            tracing::debug!("Processed blocks {} - {}", from_block, to_block);
+
+            from_block = to_block + 1;
         }
 
         Ok(())

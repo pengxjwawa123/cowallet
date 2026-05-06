@@ -19,18 +19,19 @@ CREATE TABLE mpc_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_type TEXT NOT NULL CHECK (session_type IN ('dkg', 'presign', 'sign', 'reshare')),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed', 'failed', 'expired')),
-    initiator_id UUID NOT NULL REFERENCES users(id),
+    user_id UUID NOT NULL REFERENCES users(id),
     parties SMALLINT[] NOT NULL,
     threshold SMALLINT NOT NULL DEFAULT 2,
     total_parties SMALLINT NOT NULL DEFAULT 3,
     current_round INTEGER NOT NULL DEFAULT 0,
+    last_activity TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '5 minutes')
 );
 
 CREATE INDEX idx_mpc_sessions_status ON mpc_sessions(status) WHERE status = 'active';
-CREATE INDEX idx_mpc_sessions_initiator ON mpc_sessions(initiator_id);
+CREATE INDEX idx_mpc_sessions_user ON mpc_sessions(user_id);
 
 -- MPC protocol messages (ephemeral, cleaned up after session completes)
 CREATE TABLE mpc_messages (

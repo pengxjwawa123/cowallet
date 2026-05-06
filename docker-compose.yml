@@ -12,11 +12,10 @@ services:
       POSTGRES_DB: cowallet
       POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
-
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
+      - ./backend/migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -30,7 +29,7 @@ services:
     container_name: cowallet-redis
     command: redis-server --appendonly yes
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -46,8 +45,8 @@ services:
     container_name: cowallet-nats
     command: -js -m 8222 --http_port 8222
     ports:
-      - "4223:4222"    # NATS 客户端
-      - "8223:8222"    # HTTP 管理
+      - "127.0.0.1:4223:4222"    # NATS 客户端
+      - "127.0.0.1:8223:8222"    # HTTP 管理
     volumes:
       - nats_data:/data
     healthcheck:
