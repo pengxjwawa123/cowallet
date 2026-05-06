@@ -116,6 +116,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/cowallet
       RPC_URL: https://sepolia.base.org
+      RPC_WS_URL: wss://sepolia.base.org
       RUST_LOG: info,indexer=debug
     depends_on:
       postgres:
