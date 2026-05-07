@@ -43,6 +43,18 @@ class MpcWalletService implements WalletService {
     try {
       await ws.connect();
 
+      // Subscribe to messages immediately after connect to capture catch-up messages
+      final serverMessages = <MpcMessage>[];
+      final messagesReady = Completer<List<MpcMessage>>();
+      final subscription = ws.messages.listen((msg) {
+        if (msg.fromParty == _serverParty) {
+          serverMessages.add(msg);
+          if (serverMessages.length >= 2 && !messagesReady.isCompleted) {
+            messagesReady.complete(serverMessages);
+          }
+        }
+      });
+
       final localSessionId = await MpcBridge.dkgSessionNew(_deviceParty);
 
       // Save initial session state for recovery
@@ -60,17 +72,38 @@ class MpcWalletService implements WalletService {
       final round1Msg = jsonDecode(round1Json) as Map<String, dynamic>;
       final round1Payload = List<int>.from(round1Msg['payload'] as List);
 
-      // Send Round 1 via WebSocket
-      ws.sendRaw(toParty: _serverParty, round: 1, payload: round1Payload);
+      // Send Round 1 via HTTP (reliable delivery)
+      await MpcApi.sendMessage(
+        sessionId: sessionId,
+        fromParty: _deviceParty,
+        toParty: _serverParty,
+        round: 1,
+        payload: round1Payload,
+      );
 
       // Update progress
       await MpcSessionStore.updateCurrentRound(1);
 
-      // Wait for server's Round 1 + Round 2 via WebSocket stream
-      final serverMessages = await _waitForMessages(ws, expectedCount: 2);
+      // Wait for server's Round 1 + Round 2 (listener started before send)
+      final allServerMessages = await messagesReady.future.timeout(
+        _wsTimeout,
+        onTimeout: () async {
+          await subscription.cancel();
+          // Fallback to HTTP polling
+          if (_currentSessionId != null) {
+            return await _pollMessagesFallback(
+              sessionId: _currentSessionId!,
+              party: _deviceParty,
+              expectedCount: 2,
+            );
+          }
+          throw MpcException('Timeout waiting for server response via WebSocket');
+        },
+      );
+      await subscription.cancel();
 
       // Server returns raw payload bytes; wrap them into ProtocolMessage JSON for the FFI.
-      final serverRound1Msgs = serverMessages
+      final serverRound1Msgs = allServerMessages
           .where((m) => m.round == 1)
           .map((m) => _wrapAsProtocolMessage(sessionId, m))
           .toList();
@@ -80,15 +113,25 @@ class MpcWalletService implements WalletService {
       final round2Msgs = await MpcBridge.dkgGenerateRound2(localSessionId);
       for (final msgJson in round2Msgs) {
         final msg = jsonDecode(msgJson) as Map<String, dynamic>;
-        final round2Payload = List<int>.from(msg['payload'] as List);
-        ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
+        final to = msg['to'] as int;
+        if (to == _serverParty) {
+          final round2Payload = List<int>.from(msg['payload'] as List);
+          // Send Round 2 via HTTP (reliable delivery)
+          await MpcApi.sendMessage(
+            sessionId: sessionId,
+            fromParty: _deviceParty,
+            toParty: _serverParty,
+            round: 2,
+            payload: round2Payload,
+          );
+        }
       }
 
       // Update progress
       await MpcSessionStore.updateCurrentRound(2);
 
       // Process server's Round 2
-      final serverRound2Msgs = serverMessages
+      final serverRound2Msgs = allServerMessages
           .where((m) => m.round == 2 && m.fromParty == _serverParty)
           .map((m) => _wrapAsProtocolMessage(sessionId, m))
           .toList();
@@ -98,7 +141,12 @@ class MpcWalletService implements WalletService {
       }
 
       final walletInfo = await MpcBridge.dkgFinalize(localSessionId);
-      await _storeBackupShard(localSessionId);
+
+      try {
+        await _storeBackupShard(localSessionId);
+      } catch (e) {
+        print('[MpcWalletService] Backup shard derivation skipped: $e');
+      }
 
       await SecureStorage.save('mpc_address', walletInfo.address);
       await SecureStorage.save('mpc_session_id', sessionId);

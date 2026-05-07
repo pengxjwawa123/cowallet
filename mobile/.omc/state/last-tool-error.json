@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"head -50 /Users/jingle/cat/cowallet/mobile/lib/bridge/api.dart\",\"description\":\"Check generated API dart file\"}",
-  "error": "Exit code 1\nhead: /Users/jingle/cat/cowallet/mobile/lib/bridge/api.dart: No such file or directory",
-  "timestamp": "2026-05-07T02:38:10.889Z",
-  "retry_count": 2
+  "tool_input_preview": "{\"command\":\"adb shell am start -n com.cowallet.mpc/.MainActivity 2>&1\",\"description\":\"Launch the app on device\"}",
+  "error": "Exit code 1\nStarting: Intent { cmp=com.cowallet.mpc/.MainActivity }\nError type 3\nError: Activity class {com.cowallet.mpc/com.cowallet.mpc.MainActivity} does not exist.",
+  "timestamp": "2026-05-07T11:26:16.712Z",
+  "retry_count": 1
 }

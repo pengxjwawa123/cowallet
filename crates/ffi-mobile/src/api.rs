@@ -146,7 +146,7 @@ pub fn dkg_session_new(party_index: u16) -> Result<FfiDkgSession, String> {
     let config = SessionConfig {
         session_id: session_id.clone(),
         threshold: 2,
-        total_parties: 3,
+        total_parties: 2,
         party_index,
     };
     

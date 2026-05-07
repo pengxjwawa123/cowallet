@@ -256,11 +256,31 @@ pub async fn send_message(
                 body.round,
                 &body.payload,
             ).await {
-                Ok(_) => {
-                    tracing::debug!(
-                        "Server participant processed message for session {} round {}",
-                        session_id, body.round
+                Ok(responses) => {
+                    tracing::info!(
+                        "Server participant processed message for session {} round {}, {} responses",
+                        session_id, body.round, responses.len()
                     );
+                    // Publish response messages to NATS so the client's WS gets them in real-time.
+                    // Messages are already stored in DB by the participant's store_outbound_message.
+                    if let Some(nats) = &state.nats {
+                        for (from, to, payload) in responses {
+                            // to == -1 means broadcast; send to the requesting party
+                            let target_party = if to == -1 { body.from_party } else { to };
+                            let response_msg = serde_json::json!({
+                                "from_party": from,
+                                "to_party": target_party,
+                                "round": body.round + 1,
+                                "payload": payload,
+                            });
+                            let subject = format!("cowallet.mpc.{}.{}", session_id, target_party);
+                            if let Ok(data) = serde_json::to_vec(&response_msg) {
+                                if let Err(e) = nats.publish(subject.clone(), data.into()).await {
+                                    tracing::warn!("NATS publish to {} failed: {}", subject, e);
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!(

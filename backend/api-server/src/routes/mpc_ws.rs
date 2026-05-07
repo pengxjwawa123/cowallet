@@ -189,13 +189,30 @@ async fn handle_ws_connection(
 
         match msg {
             Message::Text(text) => {
-                if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
-                    handle_client_message(&state, session_id, party_index, ws_msg).await;
+                match serde_json::from_str::<WsMessage>(&text) {
+                    Ok(ws_msg) => {
+                        handle_client_message(&state, session_id, party_index, ws_msg).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "WS text deserialization failed for session {} party {}: {} (first 200 chars: {})",
+                            session_id, party_index, e,
+                            &text[..text.len().min(200)]
+                        );
+                    }
                 }
             }
             Message::Binary(data) => {
-                if let Ok(ws_msg) = serde_json::from_slice::<WsMessage>(&data) {
-                    handle_client_message(&state, session_id, party_index, ws_msg).await;
+                match serde_json::from_slice::<WsMessage>(&data) {
+                    Ok(ws_msg) => {
+                        handle_client_message(&state, session_id, party_index, ws_msg).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "WS binary deserialization failed for session {} party {}: {} (len: {})",
+                            session_id, party_index, e, data.len()
+                        );
+                    }
                 }
             }
             Message::Close(_) => break,
@@ -218,6 +235,11 @@ async fn handle_client_message(
     from_party: i16,
     ws_msg: WsMessage,
 ) {
+    tracing::info!(
+        "WS received: session {} from_party={} to_party={} round={} payload_len={}",
+        session_id, ws_msg.from_party, ws_msg.to_party, ws_msg.round, ws_msg.payload.len()
+    );
+
     // Validate that from_party matches the authenticated party
     if ws_msg.from_party != from_party {
         tracing::warn!(
@@ -281,14 +303,16 @@ async fn handle_client_message(
                 Ok(responses) => {
                     // Publish server responses via NATS for the requesting party
                     for (from, to, payload) in responses {
+                        // to == -1 means broadcast; deliver to the requesting party
+                        let target_party = if to == -1 { ws_msg.from_party } else { to };
                         let response_msg = WsMessage {
                             from_party: from,
-                            to_party: to,
+                            to_party: target_party,
                             round: ws_msg.round + 1,
                             payload,
                         };
                         if let Some(nats) = &state.nats {
-                            let subject = format!("cowallet.mpc.{}.{}", session_id, to);
+                            let subject = format!("cowallet.mpc.{}.{}", session_id, target_party);
                             if let Ok(data) = serde_json::to_vec(&response_msg) {
                                 let _ = nats.publish(subject, data.into()).await;
                             }
