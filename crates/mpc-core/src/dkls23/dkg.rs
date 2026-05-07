@@ -394,6 +394,7 @@ impl DkgSession {
             DkgState::Complete { share } => {
                 let mut backup_scalar = Scalar::ZERO;
 
+                // First try to find evaluations from Round 2 messages
                 for msg in &self.round2_messages {
                     for (recipient, share_bytes) in &msg.evaluations {
                         if *recipient == backup_party_index {
@@ -408,16 +409,33 @@ impl DkgSession {
                     }
                 }
 
+                // If no Round 2 evaluations exist for backup party, compute directly
+                // from our local polynomial (device's contribution to the backup shard)
+                if backup_scalar == Scalar::ZERO {
+                    if let Some(coeffs) = &self.my_polynomial {
+                        let x = Scalar::from((backup_party_index + 1) as u64);
+                        let mut x_pow = Scalar::ONE;
+                        for coeff in coeffs {
+                            backup_scalar += coeff * &x_pow;
+                            x_pow *= x;
+                        }
+                    } else {
+                        return Err(MpcError::DkgFailed(
+                            "no evaluations found for backup party and polynomial unavailable".into(),
+                        ));
+                    }
+                }
+
                 if backup_scalar == Scalar::ZERO {
                     return Err(MpcError::DkgFailed(
-                        "no evaluations found for backup party".into(),
+                        "backup share computation resulted in zero".into(),
                     ));
                 }
 
                 Ok(KeyShare {
                     party: backup_party_index,
                     threshold: share.threshold,
-                    total_parties: share.total_parties,
+                    total_parties: share.total_parties + 1, // include backup party in total
                     secret_share: backup_scalar.to_bytes().to_vec().into(),
                     public_key: share.public_key.clone(),
                     paillier_pk: None,
