@@ -29,6 +29,10 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 async-trait = "0.1"
 chrono = { workspace = true }
+num-bigint = { workspace = true }
+num-integer = { workspace = true }
+num-traits = { workspace = true }
+glass_pumpkin = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

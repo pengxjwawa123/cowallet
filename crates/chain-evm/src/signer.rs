@@ -2,6 +2,8 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::Signature;
 use mpc_core::dkls23::{KeyShare, SessionConfig, sign::SignSession};
 
+use crate::userop::UserOperation;
+
 /// MPC-backed signer implementing the alloy Signer trait.
 ///
 /// For M2/testnet: holds key shares directly and signs locally.
@@ -28,6 +30,40 @@ impl MpcSigner {
             share_indices,
             shares,
         }
+    }
+
+    /// Sign a UserOperation hash using the local MPC protocol.
+    ///
+    /// Returns a 65-byte ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
+    pub fn sign_user_op_hash(&self, hash: [u8; 32]) -> Result<[u8; 65], String> {
+        let b256_hash = B256::from(hash);
+        let sig = self
+            .sign_hash_inner(&b256_hash)
+            .map_err(|e| e.to_string())?;
+
+        // Encode as 65-byte signature: r (32) || s (32) || v (1)
+        let mut result = [0u8; 65];
+        let r_bytes = sig.r().to_be_bytes::<32>();
+        let s_bytes = sig.s().to_be_bytes::<32>();
+        result[..32].copy_from_slice(&r_bytes);
+        result[32..64].copy_from_slice(&s_bytes);
+        result[64] = sig.v() as u8;
+        Ok(result)
+    }
+
+    /// Sign a UserOperation in place.
+    ///
+    /// Computes the userOp hash, signs it via MPC, and sets the signature on the UserOp.
+    pub fn sign_user_operation(
+        &self,
+        user_op: &mut UserOperation,
+        entry_point: Address,
+        chain_id: u64,
+    ) -> Result<(), String> {
+        let hash = user_op.hash(entry_point, chain_id);
+        let sig_bytes = self.sign_user_op_hash(hash.0)?;
+        user_op.sign(&sig_bytes);
+        Ok(())
     }
 
     pub(crate) fn sign_hash_inner(&self, hash: &B256) -> Result<Signature, MpcSignerError> {

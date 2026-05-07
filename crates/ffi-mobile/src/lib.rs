@@ -1,3 +1,4 @@
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
 // FFI bridge for Flutter ↔ Rust via flutter_rust_bridge.
 //
 // This crate re-exports FFI-safe types and functions from the workspace crates.

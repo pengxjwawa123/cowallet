@@ -29,9 +29,38 @@ class TxApi {
     );
   }
 
-  /// 获取交易历史记录
+  /// 获取交易历史记录（新版本 - 按地址查询）
+  /// [address] 钱包地址
+  /// [chainId] 可选的链ID筛选
+  /// [limit] 每页数量，默认50，最大100
+  /// [offset] 偏移量，用于分页
+  static Future<Result<Map<String, dynamic>>> getTransactionHistory(
+    String address, {
+    int? chainId,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    return await DioClient.get(
+      "/tx/history",
+      params: {
+        "address": address,
+        if (chainId != null) "chain_id": chainId,
+        "limit": limit,
+        "offset": offset,
+      },
+    );
+  }
+
+  /// 获取单个交易详情
+  /// [txHash] 交易哈希
+  static Future<Result<Map<String, dynamic>>> getTransaction(String txHash) async {
+    return await DioClient.get("/tx/$txHash");
+  }
+
+  /// 获取交易历史记录（旧版本 - 按用户查询，保留向后兼容）
   /// [limit] 每页数量，默认20，最大100
   /// [offset] 偏移量，用于分页
+  @Deprecated('Use getTransactionHistory with address parameter instead')
   static Future<Result<List<dynamic>>> getHistory({
     int limit = 20,
     int offset = 0,

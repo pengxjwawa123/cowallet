@@ -43,6 +43,18 @@ async fn main() {
         }));
     }
 
+    if let Some(db_pool) = db.clone() {
+        handles.push(tokio::spawn(async move {
+            reshare_scheduler_task(db_pool).await;
+        }));
+    }
+
+    if let Some(db_pool) = db.clone() {
+        handles.push(tokio::spawn(async move {
+            reshare_completion_task(db_pool).await;
+        }));
+    }
+
     handles.push(tokio::spawn(async move {
         price_updater_task(http).await;
     }));
@@ -125,6 +137,167 @@ async fn yield_refresh_task() {
                 }
             }
             Err(e) => tracing::warn!("yield data refresh failed: {}", e),
+        }
+    }
+}
+
+/// Reshare Scheduler Task: checks for wallets needing key reshare
+/// Runs every hour (configurable via RESHARE_CHECK_INTERVAL_SECS env var).
+/// Wallets are reshared every 30 days (configurable via RESHARE_INTERVAL_DAYS env var).
+async fn reshare_scheduler_task(db: PgPool) {
+    let check_interval_secs: u64 = std::env::var("RESHARE_CHECK_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3600);
+    let reshare_interval_days: i64 = std::env::var("RESHARE_INTERVAL_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
+    let mut interval = tokio::time::interval(Duration::from_secs(check_interval_secs));
+
+    tracing::info!(
+        "reshare scheduler started: check every {}s, reshare interval {} days",
+        check_interval_secs,
+        reshare_interval_days
+    );
+
+    loop {
+        interval.tick().await;
+
+        let interval_str = format!("{} days", reshare_interval_days);
+
+        let wallets = sqlx::query_as::<_, (String, String)>(&format!(
+            "SELECT w.id, w.user_id FROM wallets w \
+             WHERE w.status = 'active' \
+             AND (w.last_reshare IS NULL OR w.last_reshare < NOW() - interval '{}')",
+            interval_str
+        ))
+        .fetch_all(&db)
+        .await;
+
+        match wallets {
+            Ok(rows) => {
+                if rows.is_empty() {
+                    tracing::debug!("no wallets need reshare");
+                    continue;
+                }
+
+                tracing::info!("{} wallet(s) need reshare", rows.len());
+
+                for (wallet_id, user_id) in rows {
+                    let session_id = uuid::Uuid::new_v4().to_string();
+
+                    let result = sqlx::query(
+                        "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round, wallet_id) \
+                         VALUES ($1, $2, 'reshare', ARRAY[0,1], 2, 'pending', 0, $3)"
+                    )
+                    .bind(&session_id)
+                    .bind(&user_id)
+                    .bind(&wallet_id)
+                    .execute(&db)
+                    .await;
+
+                    match result {
+                        Ok(_) => {
+                            tracing::info!(
+                                "Scheduled reshare for wallet {} (user {}), session {}",
+                                wallet_id,
+                                user_id,
+                                session_id
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "failed to create reshare session for wallet {}: {}",
+                                wallet_id,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("reshare scheduler query failed: {}", e);
+            }
+        }
+    }
+}
+
+/// Reshare Completion Task: detects completed reshare sessions and updates wallets.
+/// Runs every 5 minutes. Marks processed sessions as 'archived'.
+async fn reshare_completion_task(db: PgPool) {
+    let mut interval = tokio::time::interval(Duration::from_secs(300));
+
+    tracing::info!("reshare completion task started: check every 5 minutes");
+
+    loop {
+        interval.tick().await;
+
+        let sessions = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, wallet_id FROM mpc_sessions \
+             WHERE session_type = 'reshare' \
+             AND status = 'completed' \
+             AND wallet_id IS NOT NULL",
+        )
+        .fetch_all(&db)
+        .await;
+
+        match sessions {
+            Ok(rows) => {
+                if rows.is_empty() {
+                    tracing::debug!("no completed reshare sessions to process");
+                    continue;
+                }
+
+                tracing::info!("{} completed reshare session(s) to process", rows.len());
+
+                for (session_id, wallet_id) in rows {
+                    // Update the wallet's last_reshare timestamp and increment reshare_count
+                    let update_result = sqlx::query(
+                        "UPDATE wallets SET last_reshare = NOW(), reshare_count = reshare_count + 1 WHERE id = $1",
+                    )
+                    .bind(&wallet_id)
+                    .execute(&db)
+                    .await;
+
+                    match update_result {
+                        Ok(_) => {
+                            tracing::info!(
+                                "updated wallet {} after reshare completion (session {})",
+                                wallet_id,
+                                session_id
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "failed to update wallet {} after reshare: {}",
+                                wallet_id,
+                                e
+                            );
+                            continue;
+                        }
+                    }
+
+                    // Archive the session to avoid re-processing
+                    if let Err(e) = sqlx::query(
+                        "UPDATE mpc_sessions SET status = 'archived' WHERE id = $1",
+                    )
+                    .bind(&session_id)
+                    .execute(&db)
+                    .await
+                    {
+                        tracing::error!(
+                            "failed to archive reshare session {}: {}",
+                            session_id,
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("reshare completion query failed: {}", e);
+            }
         }
     }
 }

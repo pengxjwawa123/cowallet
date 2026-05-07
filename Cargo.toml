@@ -52,7 +52,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 
 # Backend
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-full", "timeout", "limit", "metrics"] }
 metrics = "0.23"
@@ -80,6 +80,12 @@ chrono = { version = "0.4", features = ["serde"] }
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 hex = "0.4"
+
+# Big integer / Paillier
+num-bigint = { version = "0.4", features = ["rand", "serde"] }
+num-integer = "0.1"
+num-traits = "0.2"
+glass_pumpkin = "1"
 
 # Testing
 proptest = "1"

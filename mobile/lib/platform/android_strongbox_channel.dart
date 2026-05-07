@@ -138,4 +138,30 @@ class AndroidStrongBoxChannel {
       throw SbException('deleteSecret failed: ${e.message}');
     }
   }
+
+  /// Store encrypted device shard using hardware-backed encryption
+  /// The shard is encrypted with a StrongBox/Keystore key before storage
+  static Future<void> storeEncryptedShard(List<int> shardBytes) async {
+    try {
+      await storageChannel.invokeMethod<void>(
+        'storeEncryptedShard',
+        {'data': shardBytes},
+      );
+    } on PlatformException catch (e) {
+      throw SbException('storeEncryptedShard failed: ${e.message}');
+    }
+  }
+
+  /// Load and decrypt device shard using hardware-backed decryption
+  /// Returns null if no shard is stored
+  static Future<List<int>?> loadEncryptedShard() async {
+    try {
+      final result = await storageChannel.invokeMethod<List<dynamic>>(
+        'loadEncryptedShard',
+      );
+      return result?.cast<int>();
+    } on PlatformException catch (e) {
+      throw SbException('loadEncryptedShard failed: ${e.message}');
+    }
+  }
 }

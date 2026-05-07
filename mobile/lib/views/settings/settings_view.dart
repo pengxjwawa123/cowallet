@@ -5,6 +5,7 @@ import '../../widgets/cw_chip.dart';
 import '../../widgets/section_label.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
+import '../../utils/secure_storage.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -18,11 +19,15 @@ class _SettingsViewState extends State<SettingsView> {
   bool _biometricAvailable = false;
   bool _hasEnrolledBiometrics = false;
   String _biometricType = 'Biometric';
+  bool _autoRotateEnabled = false;
+  String? _lastRotationDate;
+  bool _isRotating = false;
 
   @override
   void initState() {
     super.initState();
     _loadBiometricStatus();
+    _loadKeySecuritySettings();
   }
 
   Future<void> _loadBiometricStatus() async {
@@ -68,6 +73,87 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
+  Future<void> _loadKeySecuritySettings() async {
+    final autoRotate = await SecureStorage.get('auto_rotate_keys');
+    final lastRotation = await SecureStorage.get('last_key_rotation');
+
+    if (mounted) {
+      setState(() {
+        _autoRotateEnabled = autoRotate == 'true';
+        _lastRotationDate = lastRotation;
+      });
+    }
+  }
+
+  Future<void> _toggleAutoRotate(bool value) async {
+    await SecureStorage.save('auto_rotate_keys', value.toString());
+    if (mounted) {
+      setState(() => _autoRotateEnabled = value);
+    }
+  }
+
+  Future<void> _performKeyRotation() async {
+    if (_isRotating) return;
+
+    setState(() => _isRotating = true);
+
+    try {
+      final walletAddress = await Services.mpcWallet.getAddress();
+      await Services.mpcWallet.runReshare(walletId: walletAddress);
+
+      final now = DateTime.now().toIso8601String();
+      await SecureStorage.save('last_key_rotation', now);
+
+      if (mounted) {
+        setState(() {
+          _lastRotationDate = now;
+          _isRotating = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(S.rotationSuccess),
+            backgroundColor: CwColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isRotating = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${S.rotationFailed}: $e'),
+            backgroundColor: CwColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  String _formatLastRotation() {
+    if (_lastRotationDate == null) return S.never;
+
+    try {
+      final date = DateTime.parse(_lastRotationDate!);
+      final now = DateTime.now();
+      final diff = now.difference(date);
+
+      if (diff.inDays == 0) {
+        return S.today;
+      } else if (diff.inDays == 1) {
+        return S.lang == Lang.zh ? '昨天' : 'Yesterday';
+      } else if (diff.inDays < 30) {
+        return S.lang == Lang.zh ? '${diff.inDays} 天前' : '${diff.inDays} days ago';
+      } else {
+        final months = (diff.inDays / 30).floor();
+        return S.lang == Lang.zh ? '$months 个月前' : '$months months ago';
+      }
+    } catch (e) {
+      return S.never;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -86,6 +172,10 @@ class _SettingsViewState extends State<SettingsView> {
           _keysCard(context),
           const SizedBox(height: 10),
           _securityList(context),
+
+          // ── Section: 密钥安全 ──
+          SectionLabel(title: S.keySecurity),
+          _keySecurityList(context),
 
           // ── Section: 对话 ──
           SectionLabel(title: S.conversation),
@@ -383,6 +473,50 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
+  // ── Key Security settings list ──
+  Widget _keySecurityList(BuildContext context) {
+    return _settingsContainer(
+      children: [
+        _settingRow(
+          context,
+          icon: Icons.autorenew,
+          iconColor: CwColors.accent,
+          iconBg: CwColors.accentSoft,
+          title: S.rotateKeyShares,
+          subtitle: '${S.lastRotation}: ${_formatLastRotation()}',
+          trailing: _isRotating
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  color: CwColors.accent,
+                  onPressed: _performKeyRotation,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+          onTap: _isRotating ? null : _performKeyRotation,
+        ),
+        const Divider(indent: 52, height: 1),
+        _settingRow(
+          context,
+          icon: Icons.schedule,
+          iconColor: CwColors.info,
+          iconBg: CwColors.infoSoft,
+          title: S.autoRotate,
+          subtitle: S.autoRotateSub,
+          trailing: Switch(
+            value: _autoRotateEnabled,
+            onChanged: _toggleAutoRotate,
+            activeThumbColor: CwColors.accent,
+          ),
+        ),
+      ],
+    );
+  }
+
   // ── Setting row ──
   Widget _settingRow(
     BuildContext context, {
@@ -440,7 +574,7 @@ class _SettingsViewState extends State<SettingsView> {
               ),
             ),
             // Trailing
-            ?trailing,
+            if (trailing != null) trailing,
           ],
         ),
       ),

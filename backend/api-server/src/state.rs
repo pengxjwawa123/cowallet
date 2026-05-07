@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use sqlx::PgPool;
 
 use crate::middleware::audit::AuditLogger;
@@ -7,6 +8,8 @@ use crate::retry::{CircuitBreaker, CircuitBreakerConfig};
 use crate::routes::price::PriceCache;
 use crate::routes::yield_::YieldCache;
 use crate::services::claude::ClaudeClient;
+use crate::services::mpc_participant::MpcParticipant;
+use crate::services::presign_manager::PresignManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -16,11 +19,14 @@ pub struct AppState {
     pub yield_cache: YieldCache,
     pub http: reqwest::Client,
     pub claude: Option<ClaudeClient>,
+    pub nats: Option<async_nats::Client>,
     pub rate_limiter: AnyRateLimiter,
     pub rpc_circuit_breaker: CircuitBreaker,
     pub defi_circuit_breaker: CircuitBreaker,
     pub metrics: MetricsStore,
     pub audit_logger: AuditLogger,
+    pub mpc_participant: Option<Arc<MpcParticipant>>,
+    pub presign_manager: Option<Arc<PresignManager>>,
 }
 
 impl AppState {
@@ -61,6 +67,26 @@ impl AppState {
         let db = pool_options.connect(database_url).await?;
         sqlx::migrate!("../migrations").run(&db).await?;
 
+        // Initialize NATS client if URL is available
+        let nats = match std::env::var("NATS_URL") {
+            Ok(url) => {
+                match async_nats::connect(&url).await {
+                    Ok(client) => {
+                        tracing::info!("Connected to NATS at {}", url);
+                        Some(client)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to connect to NATS at {}: {} — WS will fall back to DB polling", url, e);
+                        None
+                    }
+                }
+            }
+            Err(_) => {
+                tracing::info!("NATS_URL not set — MPC WebSocket will use DB polling fallback");
+                None
+            }
+        };
+
         // Initialize Claude client if API key is available
         let claude = std::env::var("ANTHROPIC_API_KEY")
             .ok()
@@ -72,6 +98,28 @@ impl AppState {
                 }
             });
 
+        // Initialize MPC participant with encryption service (ENCRYPTION_KEY validated in main)
+        let encryption_key = hex::decode(
+            std::env::var("ENCRYPTION_KEY").expect("ENCRYPTION_KEY must be set")
+        ).expect("ENCRYPTION_KEY must be valid hex");
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(&encryption_key);
+        let encryption = crate::services::crypto::EncryptionService::new(&key_array, "server-mpc");
+
+        // Initialize PresignManager with encryption service
+        let presign_manager = Arc::new(PresignManager::new(db.clone(), encryption.clone()));
+        let min_presignatures: u32 = std::env::var("PRESIGN_MIN_COUNT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+        presign_manager.spawn_background_task(min_presignatures);
+
+        // Initialize MPC participant with encryption service and presign manager
+        let mut participant = MpcParticipant::new(db.clone(), encryption);
+        participant.set_presign_manager(Arc::clone(&presign_manager));
+        let participant = Arc::new(participant);
+        participant.spawn_cleanup();
+
         Ok(Self {
             db: Some(db.clone()),
             rpc_url,
@@ -79,39 +127,17 @@ impl AppState {
             yield_cache: YieldCache::new(),
             http: Self::create_http_client(),
             claude,
+            nats,
             rate_limiter: AnyRateLimiter::from_env().unwrap_or_else(|_| AnyRateLimiter::in_memory()),
             rpc_circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
             defi_circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
             metrics: MetricsStore::new(),
             audit_logger: AuditLogger::new(Some(db)),
+            mpc_participant: Some(participant),
+            presign_manager: Some(presign_manager),
         })
     }
 
-    pub fn without_db() -> Self {
-        let claude = std::env::var("ANTHROPIC_API_KEY")
-            .ok()
-            .and_then(|key| match ClaudeClient::new(key) {
-                Ok(client) => Some(client),
-                Err(e) => {
-                    tracing::warn!("Failed to initialize Claude client: {}", e);
-                    None
-                }
-            });
-
-        Self {
-            db: None,
-            rpc_url: "https://sepolia.base.org".into(),
-            price_cache: PriceCache::new(),
-            yield_cache: YieldCache::new(),
-            http: Self::create_http_client(),
-            claude,
-            rate_limiter: AnyRateLimiter::from_env().unwrap_or_else(|_| AnyRateLimiter::in_memory()),
-            rpc_circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
-            defi_circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
-            metrics: MetricsStore::new(),
-            audit_logger: AuditLogger::noop(),
-        }
-    }
 
     /// Create a production-grade HTTP client with reasonable defaults
     fn create_http_client() -> reqwest::Client {

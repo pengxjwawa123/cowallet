@@ -39,6 +39,7 @@ pub struct ChainIndexer {
     db: PgPool,
     tracked_addresses: HashSet<Address>,
     last_processed_block: u64,
+    last_address_refresh: std::time::Instant,
 }
 
 impl ChainIndexer {
@@ -62,12 +63,54 @@ impl ChainIndexer {
             .map(|(b,)| b as u64)
             .unwrap_or(config.start_block.unwrap_or(0));
 
-        Ok(Self {
+        let mut indexer = Self {
             config,
             db,
             tracked_addresses: HashSet::new(),
             last_processed_block,
-        })
+            last_address_refresh: std::time::Instant::now(),
+        };
+
+        // Load tracked addresses from database
+        indexer.refresh_tracked_addresses().await?;
+
+        Ok(indexer)
+    }
+
+    /// Load tracked addresses from wallets table
+    async fn refresh_tracked_addresses(&mut self) -> Result<(), IndexerError> {
+        let rows: Vec<(Vec<u8>,)> = sqlx::query_as(
+            "SELECT eth_address FROM wallets WHERE $1 = ANY(chain_ids)"
+        )
+        .bind(self.config.chain_id as i64)
+        .fetch_all(&self.db)
+        .await?;
+
+        let mut new_addresses = HashSet::new();
+        for (addr_bytes,) in rows {
+            if addr_bytes.len() == 20 {
+                let addr = Address::from_slice(&addr_bytes);
+                new_addresses.insert(addr);
+            }
+        }
+
+        let added_count = new_addresses.difference(&self.tracked_addresses).count();
+        let removed_count = self.tracked_addresses.difference(&new_addresses).count();
+
+        self.tracked_addresses = new_addresses;
+        self.last_address_refresh = std::time::Instant::now();
+
+        if added_count > 0 || removed_count > 0 {
+            tracing::info!(
+                "Refreshed tracked addresses: {} total (+{} -{}) on chain {}",
+                self.tracked_addresses.len(),
+                added_count,
+                removed_count,
+                self.config.chain_id
+            );
+        }
+
+        Ok(())
     }
 
     /// Add an address to track for transfers
@@ -124,7 +167,7 @@ impl ChainIndexer {
         from_block: u64,
         to_block: u64,
     ) -> Result<(), IndexerError> {
-        // Build Transfer event filter (ERC-20 Transfer signature)
+        // Process ERC-20 Transfer events
         let transfer_signature = alloy_primitives::b256!(
             "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a1fc74ea488187093022"
         );
@@ -140,6 +183,10 @@ impl ChainIndexer {
         for log in logs {
             self.process_transfer_log(log).await?;
         }
+
+        // TODO: Add native ETH transfer indexing
+        // This would require using trace_block or iterating through transactions
+        // For now, focusing on ERC-20 token transfers which are the most common use case
 
         Ok(())
     }
@@ -264,6 +311,13 @@ impl ChainIndexer {
 
         loop {
             interval.tick().await;
+
+            // Refresh tracked addresses every 60 seconds
+            if self.last_address_refresh.elapsed() > Duration::from_secs(60) {
+                if let Err(e) = self.refresh_tracked_addresses().await {
+                    tracing::error!("Error refreshing tracked addresses: {}", e);
+                }
+            }
 
             if let Err(e) = self.poll_new_blocks().await {
                 tracing::error!("Error polling new blocks: {}", e);

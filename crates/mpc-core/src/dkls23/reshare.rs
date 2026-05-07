@@ -41,6 +41,7 @@ pub struct ReshareRound2Message {
     pub evaluations: Vec<(u16, Vec<u8>)>,
 }
 
+#[allow(dead_code)]
 enum ReshareState {
     AwaitingRound1,
     Round1Done,
@@ -226,6 +227,7 @@ impl ReshareSession {
             total_parties: self.old_share.total_parties,
             secret_share: new_share_scalar.to_bytes().to_vec().into(),
             public_key: self.old_share.public_key.clone(),
+            paillier_pk: self.old_share.paillier_pk.clone(),
         };
 
         self.state = ReshareState::Complete { new_share };

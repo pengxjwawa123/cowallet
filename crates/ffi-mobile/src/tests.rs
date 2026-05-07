@@ -3,8 +3,10 @@
 #[cfg(test)]
 mod tests {
     use crate::api::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_generate_wallet_creates_valid_address() {
         let wallet = generate_wallet().expect("Failed to generate wallet");
         
@@ -20,12 +22,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_has_wallet_after_generation() {
         let _wallet = generate_wallet().expect("Failed to generate wallet");
         assert!(has_wallet(), "has_wallet should return true after generation");
     }
 
     #[test]
+    #[serial]
     fn test_get_key_status_returns_valid_status() {
         let _wallet = generate_wallet().expect("Failed to generate wallet");
         let status = get_key_status();
@@ -36,6 +40,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_clear_wallet_removes_shares() {
         let _wallet = generate_wallet().expect("Failed to generate wallet");
         assert!(has_wallet(), "Wallet should exist after generation");
@@ -45,6 +50,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_sign_hash_requires_32_bytes() {
         let _wallet = generate_wallet().expect("Failed to generate wallet");
         
@@ -55,6 +61,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_dkg_session_lifecycle() {
         let session_id = crate::api::dkg_session_new(0)
             .expect("Failed to create DKG session")

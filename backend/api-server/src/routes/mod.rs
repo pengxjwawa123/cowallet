@@ -1,8 +1,11 @@
 pub mod ai;
 pub mod auth;
 pub mod mpc;
+pub mod mpc_ws;
 pub mod policy;
 pub mod price;
 pub mod tx;
+pub mod tx_history;
+pub mod wallets;
 pub mod yield_;
 pub mod shards;

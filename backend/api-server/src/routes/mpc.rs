@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{delete, get, post},
     Extension,
@@ -19,6 +19,8 @@ pub fn router() -> Router<AppState> {
         .route("/session/{id}", delete(abort_session))
         .route("/session/{id}/msg", post(send_message))
         .route("/session/{id}/msg", get(recv_messages))
+        .route("/presign/status", get(presign_status))
+        .route("/presign/generate", post(presign_generate))
 }
 
 #[derive(Deserialize)]
@@ -26,6 +28,10 @@ pub(crate) struct CreateSessionRequest {
     session_type: String,
     parties: Vec<i16>,
     threshold: Option<i16>,
+    /// Optional wallet ID for multi-wallet support.
+    /// When provided, the session is associated with a specific wallet
+    /// and uses that wallet's key share for signing.
+    wallet_id: Option<uuid::Uuid>,
 }
 
 #[derive(Serialize)]
@@ -34,52 +40,6 @@ pub(crate) struct SessionResponse {
     status: String,
     current_round: i32,
     last_activity: Option<String>,
-}
-
-/// Valid session states
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum SessionStatus {
-    Pending,
-    Active,
-    Completed,
-    Failed,
-    Expired,
-}
-
-impl SessionStatus {
-    fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "pending" => Some(SessionStatus::Pending),
-            "active" => Some(SessionStatus::Active),
-            "completed" => Some(SessionStatus::Completed),
-            "failed" => Some(SessionStatus::Failed),
-            "expired" => Some(SessionStatus::Expired),
-            _ => None,
-        }
-    }
-
-    fn to_str(self) -> &'static str {
-        match self {
-            SessionStatus::Pending => "pending",
-            SessionStatus::Active => "active",
-            SessionStatus::Completed => "completed",
-            SessionStatus::Failed => "failed",
-            SessionStatus::Expired => "expired",
-        }
-    }
-
-    /// Check if state transition is valid
-    fn can_transition_to(self, next: SessionStatus) -> bool {
-        match (self, next) {
-            (SessionStatus::Pending, SessionStatus::Active) => true,
-            (SessionStatus::Pending, SessionStatus::Failed) => true,
-            (SessionStatus::Active, SessionStatus::Completed) => true,
-            (SessionStatus::Active, SessionStatus::Failed) => true,
-            (_, SessionStatus::Expired) => true,
-            (current, next) if current == next => true, // Same state is fine
-            _ => false,
-        }
-    }
 }
 
 /// Create a new MPC session
@@ -102,15 +62,16 @@ pub async fn create_session(
     let user_id = uuid::Uuid::parse_str(&claims.sub)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
-    let result = sqlx::query(
-        "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round)
-         VALUES ($1, $2, $3, $4, $5, 'pending', 0)"
+    sqlx::query(
+        "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round, wallet_id)
+         VALUES ($1, $2, $3, $4, $5, 'active', 0, $6)"
     )
     .bind(session_id)
     .bind(user_id)
     .bind(&body.session_type)
     .bind(&body.parties)
     .bind(threshold)
+    .bind(body.wallet_id)
     .execute(db)
     .await
     .map_err(|e| {
@@ -120,9 +81,24 @@ pub async fn create_session(
 
     tracing::info!("Created MPC session {} for user {}", session_id, claims.sub);
 
+    // Notify the server MPC participant to join this session
+    if let Some(participant) = &state.mpc_participant {
+        if let Err(e) = participant.on_session_created(
+            session_id,
+            user_id,
+            &body.session_type,
+            &body.parties,
+            threshold,
+            body.wallet_id,
+        ).await {
+            tracing::error!("Server participant failed to join session {}: {}", session_id, e);
+            // Non-fatal: session still exists, client can retry
+        }
+    }
+
     Ok(Json(SessionResponse {
         session_id: session_id.to_string(),
-        status: "pending".to_string(),
+        status: "active".to_string(),
         current_round: 0,
         last_activity: None,
     }))
@@ -194,23 +170,30 @@ pub(crate) struct SendMessageResponse {
 /// Send a message to another party in the session
 pub async fn send_message(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Path(session_id): Path<uuid::Uuid>,
     Json(body): Json<SendMessageRequest>,
 ) -> Result<Json<SendMessageResponse>, StatusCode> {
     let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Fetch session details
-    let session: (String, Vec<i16>, i32, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
-        "SELECT status, parties, current_round, expires_at FROM mpc_sessions WHERE id = $1"
+    let session: (String, Vec<i16>, i32, uuid::Uuid) = sqlx::query_as(
+        "SELECT status, parties, current_round, user_id FROM mpc_sessions WHERE id = $1"
     )
     .bind(session_id)
     .fetch_one(db)
     .await
     .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let _status = session.0;
-    let parties = session.1;
+    let status = &session.0;
+    let parties = &session.1;
     let current_round = session.2 as i16;
+    let session_user_id = session.3;
+
+    // Session must be active
+    if status != "active" {
+        return Err(StatusCode::GONE);
+    }
 
     // Validate party indices
     if !parties.contains(&body.from_party) || !parties.contains(&body.to_party) {
@@ -224,7 +207,6 @@ pub async fn send_message(
 
     // Verify HMAC if provided
     let verified = if let Some(hmac) = &body.hmac {
-        // In production, use the session's shared secret
         let secret = session_id.to_string();
         let mut mac = Sha256::new();
         mac.update(secret.as_bytes());
@@ -249,21 +231,59 @@ pub async fn send_message(
     .bind(verified)
     .fetch_one(db)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        tracing::error!("Failed to store message: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
-    // Update session activity
+    // Update session activity and round
     sqlx::query(
-        "UPDATE mpc_sessions SET last_activity = NOW() WHERE id = $1"
+        "UPDATE mpc_sessions SET last_activity = NOW(), current_round = GREATEST(current_round, $2)
+         WHERE id = $1"
     )
     .bind(session_id)
+    .bind(body.round as i32)
     .execute(db)
     .await
     .ok();
+
+    // If this message is addressed to the server (Party 1), trigger the participant
+    if body.to_party == 1 {
+        if let Some(participant) = &state.mpc_participant {
+            match participant.on_message_received(
+                session_id,
+                body.from_party,
+                body.round,
+                &body.payload,
+            ).await {
+                Ok(_) => {
+                    tracing::debug!(
+                        "Server participant processed message for session {} round {}",
+                        session_id, body.round
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Server participant error for session {} round {}: {}",
+                        session_id, body.round, e
+                    );
+                }
+            }
+        }
+    }
 
     Ok(Json(SendMessageResponse {
         message_id,
         verified,
     }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RecvQuery {
+    /// Filter messages addressed to this party (required).
+    party: Option<i16>,
+    /// Only return messages after this ID (for polling).
+    after_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -277,10 +297,14 @@ pub(crate) struct MessageResponse {
     created_at: String,
 }
 
-/// Receive messages for a session (polling-based)
+/// Receive messages for a session (polling-based).
+/// Query params:
+///   ?party=0  — filter messages addressed to this party (or broadcast)
+///   ?after_id=5 — only return messages with id > this value
 pub async fn recv_messages(
     State(state): State<AppState>,
     Path(session_id): Path<uuid::Uuid>,
+    Query(query): Query<RecvQuery>,
 ) -> Result<Json<Vec<MessageResponse>>, StatusCode> {
     let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
@@ -295,16 +319,36 @@ pub async fn recv_messages(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    let messages: Vec<(i64, i16, i16, i16, Vec<u8>, bool, chrono::DateTime<Utc>)> = sqlx::query_as(
-        "SELECT id, from_party, to_party, round, payload, verified, created_at
-         FROM mpc_messages
-         WHERE session_id = $1
-         ORDER BY round ASC, created_at ASC"
-    )
-    .bind(session_id)
-    .fetch_all(db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let after_id = query.after_id.unwrap_or(0);
+
+    let messages: Vec<(i64, i16, i16, i16, Vec<u8>, bool, chrono::DateTime<Utc>)> = if let Some(party) = query.party {
+        // Filter: messages addressed to this party OR broadcast (0xFFFF = 65535 as i16 = -1)
+        sqlx::query_as(
+            "SELECT id, from_party, to_party, round, payload, verified, created_at
+             FROM mpc_messages
+             WHERE session_id = $1 AND id > $2 AND (to_party = $3 OR to_party = -1)
+             ORDER BY round ASC, created_at ASC"
+        )
+        .bind(session_id)
+        .bind(after_id)
+        .bind(party)
+        .fetch_all(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        // No filter — return all (backwards compatible)
+        sqlx::query_as(
+            "SELECT id, from_party, to_party, round, payload, verified, created_at
+             FROM mpc_messages
+             WHERE session_id = $1 AND id > $2
+             ORDER BY round ASC, created_at ASC"
+        )
+        .bind(session_id)
+        .bind(after_id)
+        .fetch_all(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
 
     Ok(Json(messages.into_iter().map(|m| MessageResponse {
         id: m.0,
@@ -315,4 +359,89 @@ pub async fn recv_messages(
         verified: m.5,
         created_at: m.6.to_rfc3339(),
     }).collect()))
+}
+
+// ─── Presignature Management Endpoints ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub(crate) struct PresignStatusQuery {
+    wallet_id: uuid::Uuid,
+}
+
+#[derive(Serialize)]
+pub(crate) struct PresignStatusResponse {
+    available: i64,
+    wallet_id: String,
+}
+
+/// GET /presign/status?wallet_id={id}
+/// Returns the number of available presignatures for the given wallet.
+pub async fn presign_status(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    Query(query): Query<PresignStatusQuery>,
+) -> Result<Json<PresignStatusResponse>, StatusCode> {
+    let presign_mgr = state.presign_manager
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let available = presign_mgr
+        .get_available_count(query.wallet_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("presign_status error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(PresignStatusResponse {
+        available,
+        wallet_id: query.wallet_id.to_string(),
+    }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PresignGenerateRequest {
+    wallet_id: uuid::Uuid,
+    count: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct PresignGenerateResponse {
+    generated: u32,
+    wallet_id: String,
+}
+
+/// POST /presign/generate
+/// Triggers presignature generation for the given wallet.
+pub async fn presign_generate(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<PresignGenerateRequest>,
+) -> Result<Json<PresignGenerateResponse>, StatusCode> {
+    let presign_mgr = state.presign_manager
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let user_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let count = body.count.unwrap_or(5).min(50);
+
+    let generated = presign_mgr
+        .generate_presignatures(user_id, body.wallet_id, count)
+        .await
+        .map_err(|e| {
+            tracing::error!("presign_generate error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    tracing::info!(
+        "User {} generated {} presignatures for wallet {}",
+        user_id, generated, body.wallet_id
+    );
+
+    Ok(Json(PresignGenerateResponse {
+        generated,
+        wallet_id: body.wallet_id.to_string(),
+    }))
 }

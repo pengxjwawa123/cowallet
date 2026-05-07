@@ -24,12 +24,14 @@ pub struct DkgSession {
     config: SessionConfig,
     state: DkgState,
     my_secret: Option<Scalar>,
+    my_polynomial: Option<Vec<Scalar>>,
     public_key: Option<Vec<u8>>,
     round1_messages: Vec<DkgRound1Message>,
     round2_messages: Vec<DkgRound2Message>,
 }
 
 /// DKG session state
+#[allow(dead_code)]
 enum DkgState {
     Initialized,
     Round1Done,
@@ -44,6 +46,8 @@ pub struct DkgRound1Message {
     pub session_id: String,
     pub party_index: u16,
     pub commitments: Vec<Vec<u8>>, // C_0, C_1, ..., C_{t-1} where C_j = f(j)*G
+    /// Schnorr proof of knowledge of the constant term a_0 (required)
+    pub schnorr_proof: crate::crypto::schnorr::SchnorrProof,
 }
 
 /// Round 2 message: Secret point evaluations
@@ -59,6 +63,12 @@ impl Zeroize for DkgSession {
         if let Some(_s) = self.my_secret.take() {
             // my_secret has been taken (dropped)
         }
+        if let Some(ref mut poly) = self.my_polynomial {
+            for coeff in poly.iter_mut() {
+                *coeff = Scalar::ZERO;
+            }
+        }
+        self.my_polynomial = None;
         self.public_key.zeroize();
         self.round1_messages.clear();
         self.round2_messages.clear();
@@ -78,6 +88,7 @@ impl DkgSession {
             config,
             state: DkgState::Initialized,
             my_secret: None,
+            my_polynomial: None,
             public_key: None,
             round1_messages: Vec::new(),
             round2_messages: Vec::new(),
@@ -103,8 +114,9 @@ impl DkgSession {
             coeffs.push(Scalar::random(&mut rng));
         }
 
-        // Store the constant term (our secret share contribution)
+        // Store the full polynomial for Round 2 evaluation consistency
         self.my_secret = Some(coeffs[0]);
+        self.my_polynomial = Some(coeffs.clone());
 
         // Generate commitments: C_j = a_j * G for each coefficient
         let mut commitments = Vec::with_capacity(t);
@@ -114,10 +126,18 @@ impl DkgSession {
             commitments.push(affine.to_encoded_point(true).as_bytes().to_vec());
         }
 
+        // Schnorr proof of knowledge of a_0 (the constant term / secret contribution)
+        let schnorr_proof = {
+            use crate::crypto::schnorr::SchnorrProof;
+            let c0 = &commitments[0]; // C_0 = a_0 * G
+            SchnorrProof::prove(&coeffs[0], c0, b"DKG-Round1")
+        };
+
         let round1 = DkgRound1Message {
             session_id: self.config.session_id.clone(),
             party_index: self.config.party_index,
             commitments,
+            schnorr_proof,
         };
 
         // Store our own message
@@ -157,6 +177,14 @@ impl DkgSession {
                 )));
             }
 
+            // Verify Schnorr proof of knowledge of a_0
+            if !round1.schnorr_proof.verify(&round1.commitments[0], b"DKG-Round1") {
+                return Err(MpcError::DkgFailed(format!(
+                    "party {} failed Schnorr proof of knowledge",
+                    round1.party_index
+                )));
+            }
+
             self.round1_messages.push(round1);
         }
 
@@ -179,18 +207,11 @@ impl DkgSession {
         }
 
         let my_idx = self.config.party_index as usize;
-        let t = self.config.threshold as usize;
 
-        // Re-generate our polynomial coefficients from the secret
-        // In production, we would have stored the full polynomial
-        let mut rng = OsRng;
-        let mut coeffs = Vec::with_capacity(t);
-        if let Some(secret) = self.my_secret {
-            coeffs.push(secret);
-        }
-        for _ in 1..t {
-            coeffs.push(Scalar::random(&mut rng));
-        }
+        // Use the stored polynomial from Round 1 (ensures consistency with commitments)
+        let coeffs = self.my_polynomial.as_ref()
+            .ok_or_else(|| MpcError::DkgFailed("polynomial not stored from round 1".into()))?
+            .clone();
 
         let mut messages = Vec::new();
 
@@ -249,6 +270,9 @@ impl DkgSession {
     /// Each party sums all the shares they received:
     ///   x_i = sum_{j=1..n} s_ji
     ///
+    /// Feldman VSS verification ensures each share is consistent with Round 1 commitments:
+    ///   s_ij * G == C_{i,0} + (j+1)*C_{i,1} + (j+1)^2*C_{i,2} + ...
+    ///
     /// The joint public key is the sum of all the constant commitments.
     pub fn process_round2(&mut self, messages: Vec<ProtocolMessage>) -> Result<KeyShare> {
         match self.state {
@@ -276,18 +300,24 @@ impl DkgSession {
             ));
         }
 
-        // Sum all the shares sent to us
+        // Sum all the shares sent to us, with Feldman VSS verification
         let mut my_share = Scalar::ZERO;
         let my_idx = self.config.party_index;
 
         for msg in &self.round2_messages {
             for (recipient, share_bytes) in &msg.evaluations {
                 if *recipient == my_idx {
-                    // This share is for us
                     let mut bytes = [0u8; 32];
                     bytes.copy_from_slice(&share_bytes[..32]);
                     let share = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
                         .ok_or_else(|| MpcError::DkgFailed("invalid share value".into()))?;
+
+                    // Feldman VSS verification:
+                    // Verify s_ij * G == sum_k( C_{sender,k} * (my_idx+1)^k )
+                    if let Some(round1) = self.round1_messages.iter().find(|r| r.party_index == msg.from_party) {
+                        Self::verify_feldman_share(&share, my_idx, &round1.commitments)?;
+                    }
+
                     my_share += share;
                 }
             }
@@ -320,6 +350,7 @@ impl DkgSession {
             total_parties: self.config.total_parties,
             secret_share: my_share.to_bytes().to_vec().into(),
             public_key,
+            paillier_pk: None,
         };
 
         self.state = DkgState::Complete {
@@ -353,6 +384,88 @@ impl DkgSession {
             DkgState::Failed { error } => Err(MpcError::DkgFailed(error.clone())),
             _ => Err(MpcError::DkgFailed("DKG not yet complete".into())),
         }
+    }
+
+    /// Derive the backup shard (Party 2) after DKG completes.
+    /// Sums all f_i(3) evaluations from Round 2 messages addressed to Party 2.
+    /// This allows the device to generate the backup shard for offline storage.
+    pub fn derive_backup_share(&self, backup_party_index: u16) -> Result<KeyShare> {
+        match &self.state {
+            DkgState::Complete { share } => {
+                let mut backup_scalar = Scalar::ZERO;
+
+                for msg in &self.round2_messages {
+                    for (recipient, share_bytes) in &msg.evaluations {
+                        if *recipient == backup_party_index {
+                            let mut bytes = [0u8; 32];
+                            if share_bytes.len() >= 32 {
+                                bytes.copy_from_slice(&share_bytes[..32]);
+                            }
+                            let s = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
+                                .ok_or_else(|| MpcError::DkgFailed("invalid backup share value".into()))?;
+                            backup_scalar += s;
+                        }
+                    }
+                }
+
+                if backup_scalar == Scalar::ZERO {
+                    return Err(MpcError::DkgFailed(
+                        "no evaluations found for backup party".into(),
+                    ));
+                }
+
+                Ok(KeyShare {
+                    party: backup_party_index,
+                    threshold: share.threshold,
+                    total_parties: share.total_parties,
+                    secret_share: backup_scalar.to_bytes().to_vec().into(),
+                    public_key: share.public_key.clone(),
+                    paillier_pk: None,
+                })
+            }
+            _ => Err(MpcError::DkgFailed("DKG not yet complete".into())),
+        }
+    }
+
+    /// Feldman VSS verification: verify that a share is consistent with the commitments.
+    ///
+    /// Checks: share * G == C_0 + x*C_1 + x^2*C_2 + ... + x^{t-1}*C_{t-1}
+    /// where x = recipient_index + 1 (1-indexed evaluation points for Shamir)
+    fn verify_feldman_share(share: &Scalar, recipient_index: u16, commitments: &[Vec<u8>]) -> Result<()> {
+        let x = Scalar::from((recipient_index + 1) as u64);
+
+        // LHS: share * G
+        let share_point = ProjectivePoint::from(AffinePoint::GENERATOR) * share;
+
+        // RHS: sum_k( C_k * x^k )
+        let mut expected = ProjectivePoint::IDENTITY;
+        let mut x_pow = Scalar::ONE;
+
+        for c_bytes in commitments {
+            // Parse commitment point
+            if c_bytes.len() < 33 {
+                return Err(MpcError::DkgFailed("commitment too short".into()));
+            }
+            let mut key_bytes = [0u8; 33];
+            key_bytes.copy_from_slice(&c_bytes[..33]);
+
+            let encoded = k256::elliptic_curve::sec1::EncodedPoint::<k256::Secp256k1>::from_bytes(&key_bytes[..])
+                .map_err(|_| MpcError::DkgFailed("invalid commitment encoding".into()))?;
+            let ct_point = AffinePoint::from_encoded_point(&encoded);
+            if bool::from(ct_point.is_none()) {
+                return Err(MpcError::DkgFailed("invalid commitment point".into()));
+            }
+            let c_point = ProjectivePoint::from(ct_point.unwrap());
+
+            expected += c_point * x_pow;
+            x_pow *= x;
+        }
+
+        if share_point != expected {
+            return Err(MpcError::DkgFailed("Feldman VSS verification failed: share inconsistent with commitments".into()));
+        }
+
+        Ok(())
     }
 
     /// Get number of received round 1 messages.

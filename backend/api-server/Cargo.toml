@@ -37,3 +37,8 @@ metrics-exporter-prometheus = { workspace = true }
 async-trait = "0.1"
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["derive", "alloc"] }
+bincode = "1.3"
+dashmap = "6"
+tokio-tungstenite = "0.24"
+k256 = { version = "0.13", features = ["arithmetic", "ecdsa"] }
+sha3 = "0.10"

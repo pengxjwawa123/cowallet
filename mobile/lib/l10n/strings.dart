@@ -319,4 +319,27 @@ class S {
     '门限签名 (TSS) · 设备端用 Secure Enclave,云端由 Anchorage Digital 托管(SOC2/ISO27001)。任一分片不产生完整私钥。',
     "Threshold signatures (TSS). Device share in Secure Enclave; cloud share at Anchorage Digital (SOC2/ISO27001). No share reconstructs the full private key.",
   );
+
+  // Key Security (Reshare)
+  static String get keySecurity => _p('密钥安全', 'Key Security');
+  static String get rotateKeyShares => _p('轮转密钥分片', 'Rotate Key Shares');
+  static String get rotateKeySharesSub => _p('刷新密钥分片，旧分片失效，地址不变', 'Refresh key shares, old shares invalidated, address unchanged');
+  static String get lastRotation => _p('上次轮转', 'Last rotation');
+  static String get never => _p('从未', 'Never');
+  static String get autoRotate => _p('每 30 天自动轮转', 'Auto-rotate every 30 days');
+  static String get autoRotateSub => _p('定期刷新分片以提高安全性', 'Periodically refresh shares for better security');
+  static String get rotating => _p('轮转中...', 'Rotating...');
+  static String get rotationSuccess => _p('密钥轮转成功', 'Key rotation successful');
+  static String get rotationFailed => _p('密钥轮转失败', 'Key rotation failed');
+
+  // Presignatures
+  static String get presignatures => _p('预签名', 'Presignatures');
+  static String get presignaturesAvailable => _p('可用预签名', 'Available presignatures');
+  static String get generatePresignatures => _p('生成预签名', 'Generate Presignatures');
+  static String get presignaturesSub => _p('预计算签名材料，加速交易执行', 'Pre-computed signing material for faster transactions');
+  static String get selectCount => _p('选择数量', 'Select count');
+  static String get generating => _p('生成中...', 'Generating...');
+  static String get generationSuccess => _p('预签名生成成功', 'Presignatures generated successfully');
+  static String get generationFailed => _p('预签名生成失败', 'Presignature generation failed');
+  static String get generate => _p('生成', 'Generate');
 }

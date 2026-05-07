@@ -1,6 +1,6 @@
 // FFI wrapper for communicating with Rust MPC backend
 
-import 'dart:convert';
+import 'dart:typed_data';
 import 'ffi.dart';
 
 /// Wrapper class for MPC FFI operations
@@ -113,19 +113,225 @@ class MpcBridge {
     }
   }
 
-  /// ===== Signing =====
+  /// Derive the backup shard (Party 2) from DKG session.
+  /// Must be called after dkgFinalize. Returns the raw 32-byte secret share.
+  static Future<List<int>> dkgDeriveBackupShare(String sessionId, {int backupPartyIndex = 2}) async {
+    try {
+      return await api.dkgDeriveBackupShare(sessionId, backupPartyIndex);
+    } catch (e) {
+      throw MpcException('Failed to derive backup share: $e');
+    }
+  }
 
-  /// Sign a message hash (32 bytes)
+  /// ===== Distributed Signing (2-party ECDSA, no key reconstruction) =====
+
+  /// Step 1: Generate Round 1 (R_0 = k_0*G) for the distributed signing protocol.
+  /// Returns the payload to send to the server and the session ID.
+  static Future<SignRound1Result> signGenerateRound1(List<int> msgHash) async {
+    if (msgHash.length != 32) {
+      throw MpcException('Message hash must be exactly 32 bytes');
+    }
+    try {
+      final result = await api.signGenerateRound1(Uint8List.fromList(msgHash));
+      return SignRound1Result(
+        sessionId: result.sessionId,
+        payload: result.payload,
+        msgHash: result.msgHash,
+      );
+    } catch (e) {
+      throw MpcException('Sign round 1 generation failed: $e');
+    }
+  }
+
+  /// Step 2: Process server's R_1 and generate DeviceContribution (c_0, k_0_inv).
+  /// Returns the Round 2 payload to send to server.
+  static Future<List<int>> signProcessRound1AndGenerateRound2(
+    String sessionId,
+    List<int> serverRound1Payload,
+  ) async {
+    try {
+      return await api.signProcessRound1AndGenerateRound2(sessionId, Uint8List.fromList(serverRound1Payload));
+    } catch (e) {
+      throw MpcException('Sign round 1 processing failed: $e');
+    }
+  }
+
+  /// Step 3: Process server's signature (s) and return final 65-byte signature.
+  static Future<List<int>> signProcessRound2(
+    String sessionId,
+    List<int> serverRound2Payload,
+  ) async {
+    try {
+      final result = await api.signProcessRound2(sessionId, Uint8List.fromList(serverRound2Payload));
+      return result.signature;
+    } catch (e) {
+      throw MpcException('Sign round 2 processing failed: $e');
+    }
+  }
+
+  /// Legacy: Sign locally (for testing only — reconstructs full key!)
   static Future<List<int>> signHash(List<int> msgHash) async {
     if (msgHash.length != 32) {
       throw MpcException('Message hash must be exactly 32 bytes');
     }
     try {
-      return await api.signHash(msgHash);
+      return await api.signHash(Uint8List.fromList(msgHash));
     } catch (e) {
       throw MpcException('Signing failed: $e');
     }
   }
+
+  /// ===== Reshare Protocol (Proactive Key Refresh) =====
+
+  /// Initialize a reshare session with the current device shard.
+  static Future<String> reshareSessionNew(int partyIndex) async {
+    try {
+      final session = await api.reshareSessionNew(partyIndex);
+      return session.sessionId;
+    } catch (e) {
+      throw MpcException('Failed to create reshare session: $e');
+    }
+  }
+
+  /// Generate reshare Round 1 messages (new VSS polynomial evaluations).
+  static Future<List<String>> reshareGenerateRound1(String sessionId) async {
+    try {
+      final result = await api.reshareGenerateRound1(sessionId);
+      return result.messagesJson;
+    } catch (e) {
+      throw MpcException('Reshare round 1 generation failed: $e');
+    }
+  }
+
+  /// Process reshare Round 1 messages from other parties.
+  static Future<void> reshareProcessRound1(
+    String sessionId,
+    List<String> messagesJson,
+  ) async {
+    try {
+      return await api.reshareProcessRound1(sessionId, messagesJson);
+    } catch (e) {
+      throw MpcException('Reshare round 1 processing failed: $e');
+    }
+  }
+
+  /// Finalize reshare: replaces old shard with new shard in memory.
+  static Future<WalletInfo> reshareFinalize(String sessionId) async {
+    try {
+      final result = await api.reshareFinalize(sessionId);
+      return WalletInfo(
+        address: result.address,
+        publicKey: result.publicKey,
+      );
+    } catch (e) {
+      throw MpcException('Reshare finalization failed: $e');
+    }
+  }
+
+  /// ===== Presign Protocol (Pre-computed signing material) =====
+
+  /// Generate presign Round 1 (ephemeral k, R_0 = k_0*G) without a message hash.
+  static Future<PresignRound1Result> presignGenerateRound1() async {
+    try {
+      final result = await api.presignGenerateRound1();
+      return PresignRound1Result(
+        sessionId: result.sessionId,
+        payload: result.payload,
+      );
+    } catch (e) {
+      throw MpcException('Presign round 1 generation failed: $e');
+    }
+  }
+
+  /// Process server's presign Round 1 and generate Round 2.
+  static Future<List<int>> presignProcessRound1AndGenerateRound2(
+    String sessionId,
+    List<int> serverRound1Payload,
+  ) async {
+    try {
+      return await api.presignProcessRound1AndGenerateRound2(
+        sessionId,
+        Uint8List.fromList(serverRound1Payload),
+      );
+    } catch (e) {
+      throw MpcException('Presign round 1 processing failed: $e');
+    }
+  }
+
+  /// Finalize presign and extract opaque presignature data.
+  static Future<List<int>> presignFinalize(String sessionId) async {
+    try {
+      final result = await api.presignFinalize(sessionId);
+      return result.presigData;
+    } catch (e) {
+      throw MpcException('Presign finalization failed: $e');
+    }
+  }
+
+  /// ===== Recovery Protocol (Restore device shard using backup + server) =====
+
+  /// Import and validate the backup shard for recovery.
+  /// The backup shard is stored temporarily until recovery is complete.
+  static Future<void> recoveryImportBackupShard(List<int> backupBytes) async {
+    try {
+      return await api.recoveryImportBackupShard(Uint8List.fromList(backupBytes));
+    } catch (e) {
+      throw MpcException('Failed to import backup shard: $e');
+    }
+  }
+
+  /// Reconstruct the device shard (Party 0) using backup + server contributions.
+  /// Returns the recovered wallet info with address and public key.
+  static Future<WalletInfo> recoveryReconstructDeviceShard({
+    required String sessionId,
+    required List<String> serverMessagesJson,
+    required List<int> publicKey,
+  }) async {
+    try {
+      final result = await api.recoveryReconstructDeviceShard(
+        sessionId,
+        serverMessagesJson,
+        Uint8List.fromList(publicKey),
+      );
+      return WalletInfo(
+        address: result.address,
+        publicKey: result.publicKey,
+      );
+    } catch (e) {
+      throw MpcException('Recovery reconstruction failed: $e');
+    }
+  }
+
+  /// Clear the temporary backup shard from recovery state.
+  static Future<void> recoveryClearBackupShard() async {
+    try {
+      return await api.recoveryClearBackupShard();
+    } catch (e) {
+      throw MpcException('Failed to clear recovery backup: $e');
+    }
+  }
+
+  /// Check if a backup shard has been imported for recovery.
+  static Future<bool> recoveryHasBackupShard() async {
+    try {
+      return await api.recoveryHasBackupShard();
+    } catch (e) {
+      throw MpcException('Failed to check recovery backup: $e');
+    }
+  }
+}
+
+/// Result from distributed sign Round 1
+class SignRound1Result {
+  final String sessionId;
+  final List<int> payload;
+  final List<int> msgHash;
+
+  SignRound1Result({
+    required this.sessionId,
+    required this.payload,
+    required this.msgHash,
+  });
 }
 
 /// Model classes for Dart
@@ -170,6 +376,17 @@ class DkgSession {
 
   @override
   String toString() => 'DkgSession(id: $sessionId)';
+}
+
+/// Result from presign Round 1
+class PresignRound1Result {
+  final String sessionId;
+  final List<int> payload;
+
+  PresignRound1Result({
+    required this.sessionId,
+    required this.payload,
+  });
 }
 
 /// Exception type for MPC operations

@@ -2,20 +2,85 @@ import 'package:dio/dio.dart';
 
 class ChainConfig {
   final int chainId;
+  final String name;
   final String rpcUrl;
   final String usdcContract;
+  final String usdtContract;
 
   const ChainConfig({
     required this.chainId,
+    required this.name,
     required this.rpcUrl,
     required this.usdcContract,
+    this.usdtContract = '',
   });
 
   static const baseSepolia = ChainConfig(
     chainId: 84532,
+    name: 'Base Sepolia',
     rpcUrl: 'https://sepolia.base.org',
     usdcContract: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
   );
+
+  static const baseMainnet = ChainConfig(
+    chainId: 8453,
+    name: 'Base',
+    rpcUrl: 'https://mainnet.base.org',
+    usdcContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    usdtContract: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+  );
+
+  static const ethereum = ChainConfig(
+    chainId: 1,
+    name: 'Ethereum',
+    rpcUrl: 'https://eth.llamarpc.com',
+    usdcContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    usdtContract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+  );
+
+  static const arbitrum = ChainConfig(
+    chainId: 42161,
+    name: 'Arbitrum',
+    rpcUrl: 'https://arb1.arbitrum.io/rpc',
+    usdcContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    usdtContract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+  );
+
+  static const optimism = ChainConfig(
+    chainId: 10,
+    name: 'Optimism',
+    rpcUrl: 'https://mainnet.optimism.io',
+    usdcContract: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+    usdtContract: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58',
+  );
+
+  static const bsc = ChainConfig(
+    chainId: 56,
+    name: 'BSC',
+    rpcUrl: 'https://bsc-dataseed.binance.org',
+    usdcContract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    usdtContract: '0x55d398326f99059fF775485246999027B3197955',
+  );
+
+  static const all = [baseSepolia, baseMainnet, ethereum, arbitrum, optimism, bsc];
+
+  static ChainConfig byId(int chainId) {
+    return all.firstWhere(
+      (c) => c.chainId == chainId,
+      orElse: () => baseSepolia,
+    );
+  }
+
+  String tokenContract(String symbol) {
+    switch (symbol.toUpperCase()) {
+      case 'USDC':
+        return usdcContract;
+      case 'USDT':
+        return usdtContract;
+      default:
+        return '';
+    }
+  }
 }
 
 class RpcException implements Exception {
@@ -37,19 +102,34 @@ abstract class ChainService {
   Future<BigInt> estimateGas(Map<String, dynamic> txParams);
   Future<BigInt?> getBaseFee();
   Future<Map<String, dynamic>?> getTransactionReceipt(String txHash);
+  String tokenContract(String symbol);
+  ChainConfig get currentConfig;
 }
 
 class JsonRpcChainService implements ChainService {
   final Dio _dio;
-  final String _rpcUrl;
+  String _rpcUrl;
+  ChainConfig _config;
   int _requestId = 0;
 
-  JsonRpcChainService({Dio? dio, String? rpcUrl})
+  JsonRpcChainService({Dio? dio, ChainConfig? config})
       : _dio = dio ?? Dio(),
-        _rpcUrl = rpcUrl ?? ChainConfig.baseSepolia.rpcUrl {
+        _config = config ?? ChainConfig.baseSepolia,
+        _rpcUrl = (config ?? ChainConfig.baseSepolia).rpcUrl {
     _dio.options.connectTimeout = const Duration(seconds: 15);
     _dio.options.receiveTimeout = const Duration(seconds: 15);
   }
+
+  void switchChain(ChainConfig config) {
+    _config = config;
+    _rpcUrl = config.rpcUrl;
+  }
+
+  @override
+  ChainConfig get currentConfig => _config;
+
+  @override
+  String tokenContract(String symbol) => _config.tokenContract(symbol);
 
   Future<dynamic> _call(String method, List<dynamic> params) async {
     _requestId++;

@@ -47,8 +47,12 @@ dependencies:
   # QR code
   qr_flutter: ^4.1.0
 
+  # File / path utilities
+  path_provider: ^2.1.5
+
   # Networking
   dio: ^5.7.0
+  web_socket_channel: ^3.0.1
 
   # Internationalization
   flutter_localizations:

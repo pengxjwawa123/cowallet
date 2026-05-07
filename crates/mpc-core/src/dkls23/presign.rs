@@ -3,6 +3,7 @@ use crate::errors::{MpcError, Result};
 use rand::RngCore;
 
 pub struct PresignSession {
+    #[allow(dead_code)]
     config: SessionConfig,
     share_indices: Vec<u16>,
     shares: Vec<KeyShare>,

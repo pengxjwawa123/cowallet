@@ -46,6 +46,7 @@ impl ThresholdKeyGen {
                 total_parties: self.config.total_parties,
                 secret_share: share_bytes.into(),
                 public_key: public_key_bytes.clone(),
+                paillier_pk: None,
             })
             .collect();
 

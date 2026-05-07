@@ -31,6 +31,12 @@ pub struct KeyShare {
 
     /// The joint public key (not sensitive).
     pub public_key: Vec<u8>,
+
+    /// Paillier public key of this party's signing counterpart.
+    /// Device stores the server's Paillier pk; Server stores device's Paillier pk.
+    /// None for the backup shard (Party 2) which doesn't participate in signing.
+    #[zeroize(skip)]
+    pub paillier_pk: Option<Vec<u8>>,
 }
 
 impl Zeroize for KeyShare {

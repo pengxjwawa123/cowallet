@@ -15,9 +15,12 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/submit", post(submit))
-        .route("/history", get(history))
         .route("/summary", get(spending_summary))
         .route("/simulate", post(simulate))
+        .route("/userop", post(submit_userop))
+        .route("/userop/submit", post(submit_signed_userop))
+        // Merge history routes from tx_history module
+        .merge(super::tx_history::router())
 }
 
 #[derive(Deserialize)]
@@ -172,31 +175,8 @@ async fn submit(
 }
 
 #[derive(Deserialize)]
-struct HistoryQuery {
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
-
-#[derive(Deserialize)]
 struct SummaryQuery {
     days: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct TxRecord {
-    id: String,
-    chain_id: i64,
-    to_addr: String,
-    value: String,
-    token: Option<String>,
-    tx_hash: Option<String>,
-    status: String,
-    created_at: String,
-}
-
-#[derive(Serialize)]
-struct HistoryResponse {
-    transactions: Vec<TxRecord>,
 }
 
 #[derive(Serialize)]
@@ -214,50 +194,7 @@ struct SpendingSummaryResponse {
     by_token: Vec<TokenSpend>,
 }
 
-async fn history(
-    State(state): State<AppState>,
-    claims: axum::Extension<Claims>,
-    Query(q): Query<HistoryQuery>,
-) -> Result<Json<HistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let db = state
-        .require_db()
-        .map_err(|_| db_unavailable())?;
-    let user_id: uuid::Uuid = claims.0.sub.parse()
-        .map_err(|_| db_error("invalid user id in token"))?;
-    let limit = q.limit.unwrap_or(20).min(100);
-    let offset = q.offset.unwrap_or(0);
-
-    let rows: Vec<(uuid::Uuid, i64, Vec<u8>, String, Option<String>, Option<Vec<u8>>, String, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(
-            "SELECT id, chain_id, to_addr, value, token, tx_hash, status, created_at
-             FROM transactions WHERE user_id = $1
-             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-        )
-        .bind(user_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(db)
-        .await
-        .map_err(|e| db_error(&e.to_string()))?;
-
-    let transactions = rows
-        .into_iter()
-        .map(|(id, chain_id, to_addr, value, token, tx_hash, status, created_at)| {
-            TxRecord {
-                id: id.to_string(),
-                chain_id,
-                to_addr: format!("0x{}", hex::encode(&to_addr)),
-                value,
-                token,
-                tx_hash: tx_hash.map(|h| format!("0x{}", hex::encode(&h))),
-                status,
-                created_at: created_at.to_rfc3339(),
-            }
-        })
-        .collect();
-
-    Ok(Json(HistoryResponse { transactions }))
-}
+// history function removed - now handled by tx_history module
 
 async fn spending_summary(
     State(state): State<AppState>,
@@ -386,6 +323,224 @@ async fn simulate(
         success: true,
         return_data,
         gas_used: None,
+    }))
+}
+
+// ─── ERC-4337 UserOperation Endpoints ───────────────────────────────────────
+
+/// Default ERC-4337 v0.6 EntryPoint address
+const DEFAULT_ENTRY_POINT: &str = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789";
+
+#[derive(Deserialize)]
+struct SubmitUserOpRequest {
+    sender: String,
+    nonce: String,
+    call_data: String,
+    chain_id: Option<u64>,
+    #[allow(dead_code)]
+    bundler_url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SubmitUserOpResponse {
+    session_id: String,
+    user_op_hash: String,
+}
+
+/// POST /userop
+///
+/// Constructs a UserOperation, computes the userOpHash, and initiates
+/// an MPC signing session. The actual signature is completed asynchronously.
+async fn submit_userop(
+    State(state): State<AppState>,
+    claims: axum::Extension<Claims>,
+    Json(body): Json<SubmitUserOpRequest>,
+) -> Result<Json<SubmitUserOpResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state.require_db().map_err(|_| db_unavailable())?;
+    let user_id: uuid::Uuid = claims
+        .0
+        .sub
+        .parse()
+        .map_err(|_| rpc_error("invalid user id in token"))?;
+
+    let chain_id = body.chain_id.unwrap_or(84532);
+
+    // Parse sender address
+    let sender_str = body.sender.strip_prefix("0x").unwrap_or(&body.sender);
+    let sender_bytes = hex::decode(sender_str)
+        .map_err(|_| rpc_error("invalid sender address"))?;
+    if sender_bytes.len() != 20 {
+        return Err(rpc_error("sender address must be 20 bytes"));
+    }
+    let sender = alloy_primitives::Address::from_slice(&sender_bytes);
+
+    // Parse nonce
+    let nonce_str = body.nonce.strip_prefix("0x").unwrap_or(&body.nonce);
+    let nonce = alloy_primitives::U256::from_str_radix(nonce_str, 16)
+        .map_err(|_| rpc_error("invalid nonce hex value"))?;
+
+    // Parse call_data
+    let call_data_str = body.call_data.strip_prefix("0x").unwrap_or(&body.call_data);
+    let call_data_bytes = hex::decode(call_data_str)
+        .map_err(|_| rpc_error("invalid call_data hex"))?;
+
+    // Build UserOperation
+    let user_op = chain_evm::userop::UserOperation::new(
+        sender,
+        nonce,
+        alloy_primitives::Bytes::from(call_data_bytes),
+    );
+
+    // Parse entry point
+    let ep_str = DEFAULT_ENTRY_POINT.strip_prefix("0x").unwrap_or(DEFAULT_ENTRY_POINT);
+    let ep_bytes = hex::decode(ep_str).expect("default entry point is valid hex");
+    let entry_point = alloy_primitives::Address::from_slice(&ep_bytes);
+
+    // Compute userOpHash
+    let user_op_hash = user_op.hash(entry_point, chain_id);
+    let user_op_hash_hex = format!("0x{}", hex::encode(user_op_hash.as_slice()));
+
+    // Create an MPC signing session with the hash
+    let session_id = uuid::Uuid::new_v4();
+    let parties: Vec<i16> = vec![0, 1]; // device + server
+
+    sqlx::query(
+        "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round)
+         VALUES ($1, $2, 'sign', $3, 2, 'active', 0)"
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&parties)
+    .execute(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create MPC signing session for userop: {}", e);
+        rpc_error("failed to create signing session")
+    })?;
+
+    // Notify the server MPC participant
+    if let Some(participant) = &state.mpc_participant {
+        if let Err(e) = participant
+            .on_session_created(session_id, user_id, "sign", &parties, 2, None)
+            .await
+        {
+            tracing::error!(
+                "Server participant failed to join userop session {}: {}",
+                session_id,
+                e
+            );
+        }
+    }
+
+    tracing::info!(
+        "Created userop signing session {} for user {}, hash={}",
+        session_id,
+        user_id,
+        user_op_hash_hex
+    );
+
+    Ok(Json(SubmitUserOpResponse {
+        session_id: session_id.to_string(),
+        user_op_hash: user_op_hash_hex,
+    }))
+}
+
+#[derive(Deserialize)]
+struct SubmitSignedUserOpRequest {
+    user_op: serde_json::Value,
+    chain_id: Option<u64>,
+    bundler_url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SubmitSignedUserOpResponse {
+    user_op_hash: String,
+}
+
+/// POST /userop/submit
+///
+/// Submits an already-signed UserOperation to a bundler via eth_sendUserOperation.
+async fn submit_signed_userop(
+    State(state): State<AppState>,
+    _claims: axum::Extension<Claims>,
+    Json(body): Json<SubmitSignedUserOpRequest>,
+) -> Result<Json<SubmitSignedUserOpResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let _chain_id = body.chain_id.unwrap_or(84532);
+
+    // Parse the UserOperation from the JSON value
+    let op = &body.user_op;
+
+    let parse_address = |field: &str| -> Result<alloy_primitives::Address, (StatusCode, Json<ErrorResponse>)> {
+        let val = op.get(field).and_then(|v| v.as_str())
+            .ok_or_else(|| rpc_error(&format!("missing field: {}", field)))?;
+        let s = val.strip_prefix("0x").unwrap_or(val);
+        let bytes = hex::decode(s).map_err(|_| rpc_error(&format!("invalid hex for {}", field)))?;
+        if bytes.len() != 20 {
+            return Err(rpc_error(&format!("{} must be 20 bytes", field)));
+        }
+        Ok(alloy_primitives::Address::from_slice(&bytes))
+    };
+
+    let parse_u256 = |field: &str| -> Result<alloy_primitives::U256, (StatusCode, Json<ErrorResponse>)> {
+        let val = op.get(field).and_then(|v| v.as_str())
+            .ok_or_else(|| rpc_error(&format!("missing field: {}", field)))?;
+        let s = val.strip_prefix("0x").unwrap_or(val);
+        alloy_primitives::U256::from_str_radix(s, 16)
+            .map_err(|_| rpc_error(&format!("invalid hex U256 for {}", field)))
+    };
+
+    let parse_bytes = |field: &str| -> Result<alloy_primitives::Bytes, (StatusCode, Json<ErrorResponse>)> {
+        let val = op.get(field).and_then(|v| v.as_str()).unwrap_or("0x");
+        let s = val.strip_prefix("0x").unwrap_or(val);
+        let bytes = hex::decode(s).map_err(|_| rpc_error(&format!("invalid hex for {}", field)))?;
+        Ok(alloy_primitives::Bytes::from(bytes))
+    };
+
+    let sender = parse_address("sender")?;
+    let nonce = parse_u256("nonce")?;
+    let init_code = parse_bytes("initCode")?;
+    let call_data = parse_bytes("callData")?;
+    let call_gas_limit = parse_u256("callGasLimit")?;
+    let verification_gas_limit = parse_u256("verificationGasLimit")?;
+    let pre_verification_gas = parse_u256("preVerificationGas")?;
+    let max_fee_per_gas = parse_u256("maxFeePerGas")?;
+    let max_priority_fee_per_gas = parse_u256("maxPriorityFeePerGas")?;
+    let paymaster_and_data = parse_bytes("paymasterAndData")?;
+    let signature = parse_bytes("signature")?;
+
+    let user_op = chain_evm::userop::UserOperation {
+        sender,
+        nonce,
+        init_code,
+        call_data,
+        call_gas_limit,
+        verification_gas_limit,
+        pre_verification_gas,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        paymaster_and_data,
+        signature,
+    };
+
+    // Determine bundler URL
+    let bundler_url = body
+        .bundler_url
+        .or_else(|| std::env::var("BUNDLER_URL").ok())
+        .ok_or_else(|| rpc_error("no bundler URL configured"))?;
+
+    // Parse entry point
+    let ep_str = DEFAULT_ENTRY_POINT.strip_prefix("0x").unwrap_or(DEFAULT_ENTRY_POINT);
+    let ep_bytes = hex::decode(ep_str).expect("default entry point is valid hex");
+    let entry_point = alloy_primitives::Address::from_slice(&ep_bytes);
+
+    // Submit to bundler
+    let op_hash = user_op
+        .submit_to_bundler(&state.http, &bundler_url, entry_point)
+        .await
+        .map_err(|e| rpc_error(&e))?;
+
+    Ok(Json(SubmitSignedUserOpResponse {
+        user_op_hash: format!("0x{}", hex::encode(op_hash.as_slice())),
     }))
 }
 

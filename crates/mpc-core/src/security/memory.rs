@@ -264,7 +264,7 @@ impl From<Vec<u8>> for SecureVec {
     fn from(v: Vec<u8>) -> Self {
         Self::new(v).unwrap_or_else(|_| {
             // Fallback: attempt to store at least the data, even if locking fails
-            let mut data = Vec::new();
+            let data = Vec::new();
             // Safety: no data is locked
             let guard = unsafe { mlock_guard(std::ptr::null(), 0) };
             Self { data, _guard: guard }

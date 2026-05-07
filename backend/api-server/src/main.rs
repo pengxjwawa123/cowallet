@@ -78,27 +78,17 @@ async fn main() {
     let rpc_url =
         std::env::var("RPC_URL").unwrap_or_else(|_| "https://sepolia.base.org".into());
 
-    let app_state = match AppState::new(&database_url, rpc_url).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("DB unavailable ({e}), starting without database");
-            AppState::without_db()
-        }
-    };
+    let app_state = AppState::new(&database_url, rpc_url).await
+        .expect("Database connection required — cannot start without PostgreSQL");
 
-    // Initialize encryption service (in production, key from KMS/HSM)
     let encryption_key = std::env::var("ENCRYPTION_KEY")
-        .ok()
-        .and_then(|k| hex::decode(&k).ok())
-        .unwrap_or_else(|| {
-            tracing::warn!("Using default encryption key - NOT FOR PRODUCTION!");
-            (0..32).collect()
-        });
+        .expect("ENCRYPTION_KEY must be set (64 hex chars = 32 bytes)");
+    let encryption_key = hex::decode(&encryption_key)
+        .expect("ENCRYPTION_KEY must be valid hex");
 
     let mut key_array = [0u8; 32];
-    if encryption_key.len() == 32 {
-        key_array.copy_from_slice(&encryption_key);
-    }
+    assert!(encryption_key.len() == 32, "ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars)");
+    key_array.copy_from_slice(&encryption_key);
 
     let encryption = services::crypto::EncryptionService::new(
         &key_array,
@@ -118,6 +108,7 @@ async fn main() {
         .nest("/ai", routes::ai::router())
         .nest("/yield", routes::yield_::router())
         .nest("/shards", routes::shards::router())
+        .nest("/wallets", routes::wallets::router())
         .layer(Extension(encryption))
         .layer(axum_mw::from_fn(require_auth))
         .layer(axum_mw::from_fn(standard_rate_limit_middleware));
@@ -185,6 +176,7 @@ async fn main() {
         .route("/ready", get(ready))
         .route("/live", get(live))
         .route("/metrics", get(metrics))
+        .merge(routes::mpc_ws::router())
         .nest("/api/v1/auth", routes::auth::router()
             .layer(axum_mw::from_fn(auth_rate_limit_middleware)))
         .nest("/api/v1/price", routes::price::router())

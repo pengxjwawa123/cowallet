@@ -53,6 +53,57 @@ impl UserOperation {
         }
     }
 
+    /// Set the signature on this UserOperation from a 65-byte ECDSA signature.
+    pub fn sign(&mut self, signature: &[u8; 65]) {
+        self.signature = Bytes::from(signature.to_vec());
+    }
+
+    /// ABI-encode all UserOp fields except signature for hashing per ERC-4337 spec.
+    ///
+    /// Per the EntryPoint contract, the pack is:
+    /// abi.encode(sender, nonce, keccak256(initCode), keccak256(callData),
+    ///            callGasLimit, verificationGasLimit, preVerificationGas,
+    ///            maxFeePerGas, maxPriorityFeePerGas, keccak256(paymasterAndData))
+    pub fn pack_for_hash(&self) -> Vec<u8> {
+        use sha3::{Digest, Keccak256};
+
+        // Each field is ABI-encoded as a 32-byte word
+        let mut packed = Vec::with_capacity(320);
+
+        // sender: left-padded to 32 bytes
+        packed.extend_from_slice(&[0u8; 12]);
+        packed.extend_from_slice(self.sender.as_slice());
+
+        // nonce: 32 bytes big-endian
+        packed.extend_from_slice(&self.nonce.to_be_bytes::<32>());
+
+        // keccak256(initCode)
+        packed.extend_from_slice(&Keccak256::digest(&self.init_code));
+
+        // keccak256(callData)
+        packed.extend_from_slice(&Keccak256::digest(&self.call_data));
+
+        // callGasLimit
+        packed.extend_from_slice(&self.call_gas_limit.to_be_bytes::<32>());
+
+        // verificationGasLimit
+        packed.extend_from_slice(&self.verification_gas_limit.to_be_bytes::<32>());
+
+        // preVerificationGas
+        packed.extend_from_slice(&self.pre_verification_gas.to_be_bytes::<32>());
+
+        // maxFeePerGas
+        packed.extend_from_slice(&self.max_fee_per_gas.to_be_bytes::<32>());
+
+        // maxPriorityFeePerGas
+        packed.extend_from_slice(&self.max_priority_fee_per_gas.to_be_bytes::<32>());
+
+        // keccak256(paymasterAndData)
+        packed.extend_from_slice(&Keccak256::digest(&self.paymaster_and_data));
+
+        packed
+    }
+
     /// Calculate the UserOp hash for signing.
     /// Note: This is a simplified version; the actual hash requires EntryPoint-specific calculation.
     pub fn hash(&self, entry_point: Address, chain_id: u64) -> B256 {
@@ -73,6 +124,80 @@ impl UserOperation {
         hasher.update(chain_id.to_be_bytes());
 
         B256::from_slice(&hasher.finalize())
+    }
+
+    /// Format the UserOperation as a JSON object for `eth_sendUserOperation` RPC.
+    pub fn to_json_rpc(&self) -> serde_json::Value {
+        serde_json::json!({
+            "sender": format!("{}", self.sender),
+            "nonce": format!("0x{:x}", self.nonce),
+            "initCode": format!("0x{}", hex::encode(&self.init_code)),
+            "callData": format!("0x{}", hex::encode(&self.call_data)),
+            "callGasLimit": format!("0x{:x}", self.call_gas_limit),
+            "verificationGasLimit": format!("0x{:x}", self.verification_gas_limit),
+            "preVerificationGas": format!("0x{:x}", self.pre_verification_gas),
+            "maxFeePerGas": format!("0x{:x}", self.max_fee_per_gas),
+            "maxPriorityFeePerGas": format!("0x{:x}", self.max_priority_fee_per_gas),
+            "paymasterAndData": format!("0x{}", hex::encode(&self.paymaster_and_data)),
+            "signature": format!("0x{}", hex::encode(&self.signature)),
+        })
+    }
+
+    /// Submit this signed UserOperation to a bundler via `eth_sendUserOperation`.
+    ///
+    /// Returns the userOpHash on success.
+    pub async fn submit_to_bundler(
+        &self,
+        client: &Client,
+        bundler_url: &str,
+        entry_point: Address,
+    ) -> Result<B256, String> {
+        let rpc_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_sendUserOperation",
+            "params": [self.to_json_rpc(), format!("{}", entry_point)]
+        });
+
+        let response = client
+            .post(bundler_url)
+            .json(&rpc_body)
+            .send()
+            .await
+            .map_err(|e| format!("bundler request failed: {}", e))?;
+
+        let rpc_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("invalid bundler response: {}", e))?;
+
+        if let Some(error) = rpc_response.get("error") {
+            let msg = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown bundler error");
+            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+            return Err(format!("bundler rejected (code {}): {}", code, msg));
+        }
+
+        let result = rpc_response
+            .get("result")
+            .and_then(|r| r.as_str())
+            .ok_or_else(|| "no result in bundler response".to_string())?;
+
+        // Parse the hex hash
+        let hash_str = result.strip_prefix("0x").unwrap_or(result);
+        let hash_bytes = hex::decode(hash_str)
+            .map_err(|e| format!("invalid hash in bundler response: {}", e))?;
+
+        if hash_bytes.len() != 32 {
+            return Err(format!(
+                "unexpected hash length from bundler: {} bytes",
+                hash_bytes.len()
+            ));
+        }
+
+        Ok(B256::from_slice(&hash_bytes))
     }
 }
 

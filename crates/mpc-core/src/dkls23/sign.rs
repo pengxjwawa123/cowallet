@@ -1,5 +1,9 @@
 use super::protocol::verify_signature;
 use super::{KeyShare, ProtocolMessage, SessionConfig};
+use crate::crypto::paillier::{
+    biguint_to_scalar_bytes, scalar_to_biguint, secp256k1_order, PaillierCiphertext,
+    PaillierKeypair, PaillierPublicKey,
+};
 use crate::errors::{MpcError, Result};
 use k256::{
     elliptic_curve::{
@@ -9,6 +13,8 @@ use k256::{
     },
     AffinePoint, EncodedPoint, Scalar,
 };
+use num_bigint::BigUint;
+use num_traits::Zero;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -30,9 +36,18 @@ pub struct SignSession {
     // Protocol state
     round1_messages: Vec<SignRound1Message>,
     round2_messages: Vec<SignRound2Message>,
+
+    // Ephemeral key state (must persist across rounds!)
+    my_k: Option<Scalar>,           // My ephemeral secret k_i
+    aggregate_r_point: Option<AffinePoint>,  // R = (k_0 * k_1) * G
+    r_scalar: Option<Scalar>,       // r = R.x mod n
+
+    // Paillier keypair for MtA (device holds this, generates during session)
+    paillier_keypair: Option<PaillierKeypair>,
 }
 
 /// Internal state of the signing session
+#[allow(dead_code)]
 enum SignState {
     Initialized,
     Round1Done,
@@ -47,14 +62,38 @@ pub struct SignRound1Message {
     pub session_id: String,
     pub party_index: u16,
     pub k_public: Vec<u8>, // K = k*G, ephemeral public key
+    /// Schnorr proof of knowledge of k_i (required)
+    pub schnorr_proof: crate::crypto::schnorr::SchnorrProof,
 }
 
-/// Round 2 message: Each party sends their signature share
+/// Round 2 message: Paillier-based MtA protocol messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignRound2Message {
-    pub session_id: String,
-    pub party_index: u16,
-    pub sigma_share: Vec<u8>, // σ_i = k_i * m + k_i * r * x_i
+pub enum SignRound2Message {
+    /// Device → Server: Paillier-encrypted values for homomorphic signature computation.
+    /// Server uses Enc(k_0^{-1} * x'_0) and Enc(k_0^{-1}) to compute Enc(s) without
+    /// ever learning k_0^{-1} or x'_0.
+    MtARequest {
+        session_id: String,
+        party_index: u16,
+        /// [pk_len(4) | pk_json | ciphertext_json] — Enc(k_0^{-1} * x'_0)
+        encrypted_share: Vec<u8>,
+        /// [ciphertext_json] — Enc(k_0^{-1}), needed for server's x'_1 term
+        encrypted_k_inv: Vec<u8>,
+        /// k_0^{-1} * m (plaintext partial signature from device)
+        partial_s: Vec<u8>,
+        /// Range proof for Enc(k_0^{-1} * x'_0): proves value ∈ [0, q)
+        range_proof_share: crate::crypto::paillier_proof::PaillierRangeProof,
+        /// Range proof for Enc(k_0^{-1}): proves value ∈ [0, q)
+        range_proof_k_inv: crate::crypto::paillier_proof::PaillierRangeProof,
+        /// Proof that the Paillier modulus N is a product of two safe primes
+        modulus_proof: crate::crypto::paillier_proof::PaillierModulusProof,
+    },
+    /// Server → Device: Enc(s) ciphertext for device to decrypt
+    ServerSignature {
+        session_id: String,
+        party_index: u16,
+        s: Vec<u8>,
+    },
 }
 
 /// A completed ECDSA signature
@@ -96,24 +135,6 @@ impl EcdsaSignature {
     }
 }
 
-/// Ephemeral key pair used in a single signing session
-struct EphemeralKey {
-    secret: Scalar,
-    public: AffinePoint,
-}
-
-impl Zeroize for EphemeralKey {
-    fn zeroize(&mut self) {
-        // Scalar doesn't expose direct zeroization, but we drop it
-        self.secret = Scalar::ZERO;
-    }
-}
-
-impl Drop for EphemeralKey {
-    fn drop(&mut self) {
-        self.zeroize();
-    }
-}
 
 impl SignSession {
     /// Create a new distributed signing session.
@@ -133,6 +154,10 @@ impl SignSession {
             state: SignState::Initialized,
             round1_messages: Vec::new(),
             round2_messages: Vec::new(),
+            my_k: None,
+            aggregate_r_point: None,
+            r_scalar: None,
+            paillier_keypair: None,
         }
     }
 
@@ -156,6 +181,10 @@ impl SignSession {
             state: SignState::Initialized,
             round1_messages: Vec::new(),
             round2_messages: Vec::new(),
+            my_k: None,
+            aggregate_r_point: None,
+            r_scalar: None,
+            paillier_keypair: None,
         }
     }
 
@@ -194,32 +223,84 @@ impl SignSession {
             total_parties: shares[0].total_parties,
             secret_share: secret_sum.to_bytes().to_vec().into(),
             public_key: shares[0].public_key.clone(),
+            paillier_pk: None,
         })
+    }
+
+    /// Compute Lagrange coefficient for this party in the signing subset.
+    /// For distributed signing, the secret shares need to be weighted by Lagrange coefficients
+    /// to reconstruct the secret at x=0.
+    fn compute_lagrange_coefficient(&self) -> Result<Scalar> {
+        // Collect all party indices (my own + others from round1 messages)
+        let mut party_indices: Vec<u16> = vec![self.party_index];
+        for msg in &self.round1_messages {
+            if msg.party_index != self.party_index {
+                party_indices.push(msg.party_index);
+            }
+        }
+
+        if party_indices.len() < 2 {
+            return Err(MpcError::SigningFailed("need at least 2 parties".into()));
+        }
+
+        // Compute Lagrange coefficient for this party
+        // L_i = product_{j!=i} (0 - x_j) / (x_i - x_j)
+        // where x_i = party_index + 1 (Shamir shares use 1-indexed evaluation points)
+
+        let x_i = Scalar::from((self.party_index + 1) as u64);
+        let mut lagrange = Scalar::ONE;
+
+        for &j in &party_indices {
+            if j != self.party_index {
+                let x_j = Scalar::from((j + 1) as u64);
+                let numerator = Scalar::ZERO - x_j; // (0 - x_j)
+                let denominator = x_i - x_j;        // (x_i - x_j)
+                let inv_den_ct = denominator.invert();
+                if bool::from(inv_den_ct.is_none()) {
+                    return Err(MpcError::SigningFailed("lagrange denominator is zero".into()));
+                }
+                let inv_den = inv_den_ct.unwrap();
+                lagrange *= numerator * inv_den;
+            }
+        }
+
+        Ok(lagrange)
     }
 
     /// Generate Round 1 message containing ephemeral public key.
     ///
     /// In Round 1, each party generates an ephemeral key k_i and
-    /// broadcasts K_i = k_i * G to all other parties.
+    /// broadcasts R_i = k_i * G to all other parties.
+    /// CRITICAL: We store k_i for use in Round 2!
     pub fn generate_round1(&mut self) -> Result<ProtocolMessage> {
         match self.state {
             SignState::Initialized => {}
             _ => return Err(MpcError::SigningFailed("invalid state for round 1".into())),
         }
 
-        // Generate ephemeral key pair
+        // Generate ephemeral key pair and STORE IT
         let mut rng = OsRng;
-        let k = Scalar::random(&mut rng);
-        let k_public = AffinePoint::GENERATOR * k;
-        let k_public_affine: AffinePoint = k_public.into();
+        let k_i = Scalar::random(&mut rng);
+        let r_i_point = AffinePoint::GENERATOR * k_i;
+        let r_i_affine: AffinePoint = r_i_point.into();
 
-        // Store K for later
-        let k_public_bytes = k_public_affine.to_encoded_point(true).as_bytes().to_vec();
+        // Store k_i for Round 2 (critical!)
+        self.my_k = Some(k_i);
+
+        // Send R_i = k_i * G
+        let r_i_bytes = r_i_affine.to_encoded_point(true).as_bytes().to_vec();
+
+        // Schnorr proof of knowledge of k_i
+        let schnorr_proof = {
+            use crate::crypto::schnorr::SchnorrProof;
+            SchnorrProof::prove(&k_i, &r_i_bytes, b"Sign-Round1")
+        };
 
         let round1 = SignRound1Message {
             session_id: self.config.session_id.clone(),
             party_index: self.party_index,
-            k_public: k_public_bytes,
+            k_public: r_i_bytes,
+            schnorr_proof,
         };
 
         // Store our own round1 message
@@ -240,8 +321,9 @@ impl SignSession {
 
     /// Process Round 1 messages from other parties.
     ///
-    /// Aggregates all ephemeral public keys to compute the combined
-    /// ephemeral public key K = product(K_i) = (sum k_i) * G
+    /// For 2-party signing, receives R_j from the other party.
+    /// Computes aggregate R = k_i * R_j = (k_0 * k_1) * G multiplicatively.
+    /// Derives r = R.x mod n for use in Round 2.
     pub fn process_round1(&mut self, messages: Vec<ProtocolMessage>) -> Result<()> {
         for msg in messages {
             if msg.round != 1 {
@@ -251,21 +333,67 @@ impl SignSession {
             let round1: SignRound1Message = bincode::deserialize(&msg.payload)
                 .map_err(|e| MpcError::SigningFailed(format!("invalid round 1 message: {}", e)))?;
 
-            self.round1_messages.push(round1);
+            // Don't add our own message again
+            if round1.party_index != self.party_index {
+                // Verify Schnorr proof of knowledge of k_i
+                if !round1.schnorr_proof.verify(&round1.k_public, b"Sign-Round1") {
+                    return Err(MpcError::SigningFailed(format!(
+                        "party {} failed Schnorr proof for ephemeral key",
+                        round1.party_index
+                    )));
+                }
+                self.round1_messages.push(round1);
+            }
         }
 
-        // Check if we have enough messages (threshold)
+        // Check if we have enough messages (threshold - 1, since we already have our own)
         if self.round1_messages.len() >= self.config.threshold as usize {
+            // Compute aggregate R = k_i * R_j (multiplicative nonce sharing)
+            let my_k = self.my_k.ok_or_else(||
+                MpcError::SigningFailed("my ephemeral key not set".into()))?;
+
+            // Get other party's R_j
+            let other_party_msg = self.round1_messages.iter()
+                .find(|m| m.party_index != self.party_index)
+                .ok_or_else(|| MpcError::SigningFailed("no other party message".into()))?;
+
+            // Parse R_j
+            let encoded = EncodedPoint::from_bytes(&other_party_msg.k_public)
+                .map_err(|_| MpcError::SigningFailed("invalid R_j encoding".into()))?;
+            let r_j_ct = AffinePoint::from_encoded_point(&encoded);
+            if bool::from(r_j_ct.is_none()) {
+                return Err(MpcError::SigningFailed("invalid R_j point".into()));
+            }
+            let r_j = r_j_ct.unwrap();
+
+            // Compute R = k_i * R_j = (k_i * k_j) * G
+            let aggregate_r_proj = r_j * my_k;
+            let aggregate_r: AffinePoint = aggregate_r_proj.into();
+
+            // Extract r = R.x mod n
+            let r_bytes = aggregate_r.to_encoded_point(false).as_bytes()[1..33].to_vec();
+            let mut r_array = [0u8; 32];
+            r_array.copy_from_slice(&r_bytes);
+            let r_scalar_ct = Scalar::from_repr(r_array.into());
+            if bool::from(r_scalar_ct.is_none()) {
+                return Err(MpcError::SigningFailed("invalid r value".into()));
+            }
+
+            self.aggregate_r_point = Some(aggregate_r);
+            self.r_scalar = Some(r_scalar_ct.unwrap());
             self.state = SignState::Round1Done;
         }
 
         Ok(())
     }
 
-    /// Generate Round 2 message with signature share.
+    /// Generate Round 2 message with MtA-based signature contribution.
     ///
-    /// In Round 2, each party computes σ_i = k_i * m + k_i * r * x_i
-    /// and sends it to all other parties for aggregation.
+    /// Lower-indexed party (device): Generates Paillier keypair, encrypts k_0^{-1} * x'_0,
+    /// and sends MtARequest with the ciphertext + partial_s = k_0^{-1} * m.
+    /// The server NEVER learns k_0^{-1} or x'_0 individually.
+    ///
+    /// Higher-indexed party (server): Waits for MtA request (no-op until process_round2).
     pub fn generate_round2(&mut self) -> Result<ProtocolMessage> {
         match self.state {
             SignState::Round1Done => {}
@@ -277,14 +405,18 @@ impl SignSession {
             .as_ref()
             .ok_or_else(|| MpcError::SigningFailed("no key share available".into()))?;
 
-        // Parse message hash as scalar
+        let my_k = self.my_k.ok_or_else(||
+            MpcError::SigningFailed("ephemeral key not set".into()))?;
+        #[allow(unused_variables)]
+        let r = self.r_scalar.ok_or_else(||
+            MpcError::SigningFailed("r scalar not computed".into()))?;
+
         let m_ct = Scalar::from_repr(self.message_hash.into());
         if bool::from(m_ct.is_none()) {
             return Err(MpcError::SigningFailed("invalid message hash".into()));
         }
         let m = m_ct.unwrap();
 
-        // Parse secret share
         let share_bytes: [u8; 32] = share
             .secret_share.as_bytes()[..32]
             .try_into()
@@ -295,53 +427,107 @@ impl SignSession {
         }
         let x_i = x_i_ct.unwrap();
 
-        // Compute aggregate ephemeral public key
-        // In a real implementation, we'd use MPC to compute K = sum(k_i) * G
-        // For now, we use our local k (simulated)
-        let mut rng = OsRng;
-        let k = Scalar::random(&mut rng);
-        let k_point = AffinePoint::GENERATOR * k;
-        let k_affine: AffinePoint = k_point.into();
+        let lagrange = self.compute_lagrange_coefficient()?;
+        let x_prime_i = x_i * lagrange;
 
-        // Extract r = x-coordinate of K
-        let r_bytes = k_affine.to_encoded_point(true).as_bytes()[1..33].to_vec();
-        let mut r_array = [0u8; 32];
-        r_array.copy_from_slice(&r_bytes);
-        let r_scalar_ct = Scalar::from_repr(r_array.into());
-        if bool::from(r_scalar_ct.is_none()) {
-            return Err(MpcError::SigningFailed("invalid r value".into()));
+        let k_i_inv = my_k.invert().unwrap_or(Scalar::ONE);
+
+        let other_party_index = self.round1_messages.iter()
+            .find(|msg| msg.party_index != self.party_index)
+            .map(|msg| msg.party_index)
+            .ok_or_else(|| MpcError::SigningFailed("no other party found".into()))?;
+
+        if self.party_index < other_party_index {
+            // Device: use Paillier MtA to protect k_0^{-1} and x'_0
+            let paillier = PaillierKeypair::generate();
+
+            // Generate randomness explicitly so we can produce range proofs
+            let r1 = gen_coprime_to(&paillier.public.n);
+            let r2 = gen_coprime_to(&paillier.public.n);
+
+            // Encrypt k_0^{-1} * x'_0 with known randomness
+            let k_inv_x_prime: Scalar = k_i_inv * x_prime_i;
+            let k_inv_x_bytes: [u8; 32] = k_inv_x_prime.to_bytes().into();
+            let k_inv_x_int = scalar_to_biguint(&k_inv_x_bytes);
+            let encrypted_share = paillier.public.encrypt_with_randomness(&k_inv_x_int, &r1);
+
+            // Encrypt k_0^{-1} with known randomness
+            let k_inv_bytes: [u8; 32] = k_i_inv.to_bytes().into();
+            let k_inv_int = scalar_to_biguint(&k_inv_bytes);
+            let encrypted_k_inv = paillier.public.encrypt_with_randomness(&k_inv_int, &r2);
+
+            // Range proofs: prove both ciphertexts encrypt values in [0, q)
+            use crate::crypto::paillier_proof::{PaillierModulusProof, PaillierRangeProof};
+            let range_proof_share = PaillierRangeProof::prove(
+                &paillier.public, &encrypted_share, &k_inv_x_int, &r1, b"MtA-share",
+            );
+            let range_proof_k_inv = PaillierRangeProof::prove(
+                &paillier.public, &encrypted_k_inv, &k_inv_int, &r2, b"MtA-k-inv",
+            );
+
+            // Modulus proof: prove N = p*q with p,q safe primes
+            let modulus_proof = PaillierModulusProof::prove(
+                &paillier.public.n, &paillier.secret.p, &paillier.secret.q,
+            );
+
+            // partial_s = k_0^{-1} * m (safe to send: without knowing k_0, useless)
+            let partial_s = k_i_inv * m;
+
+            // Serialize Enc(k_0^{-1} * x'_0)
+            let encrypted_bytes = serde_json::to_vec(&encrypted_share)
+                .map_err(|e| MpcError::SigningFailed(format!("paillier serialization failed: {}", e)))?;
+
+            // Pack [pk_len(4) | pk_json | ciphertext_json] for encrypted_share
+            let pk_bytes = serde_json::to_vec(&paillier.public)
+                .map_err(|e| MpcError::SigningFailed(format!("pk serialization failed: {}", e)))?;
+            let pk_len = (pk_bytes.len() as u32).to_le_bytes();
+            let mut combined = Vec::with_capacity(4 + pk_bytes.len() + encrypted_bytes.len());
+            combined.extend_from_slice(&pk_len);
+            combined.extend_from_slice(&pk_bytes);
+            combined.extend_from_slice(&encrypted_bytes);
+
+            // Serialize Enc(k_0^{-1})
+            let encrypted_k_inv_bytes = serde_json::to_vec(&encrypted_k_inv)
+                .map_err(|e| MpcError::SigningFailed(format!("k_inv serialization failed: {}", e)))?;
+
+            // Store keypair for decryption in process_round2
+            self.paillier_keypair = Some(paillier);
+
+            let round2 = SignRound2Message::MtARequest {
+                session_id: self.config.session_id.clone(),
+                party_index: self.party_index,
+                encrypted_share: combined,
+                encrypted_k_inv: encrypted_k_inv_bytes,
+                partial_s: partial_s.to_bytes().to_vec(),
+                range_proof_share,
+                range_proof_k_inv,
+                modulus_proof,
+            };
+
+            self.round2_messages.push(round2.clone());
+
+            let payload = bincode::serialize(&round2)
+                .map_err(|e| MpcError::SigningFailed(format!("serialization failed: {}", e)))?;
+
+            Ok(ProtocolMessage {
+                session_id: self.config.session_id.clone(),
+                from: self.party_index,
+                to: other_party_index,
+                round: 2,
+                payload,
+            })
+        } else {
+            Err(MpcError::SigningFailed("server waits for device MtA request".into()))
         }
-        let r_scalar = r_scalar_ct.unwrap();
-
-        // Compute signature share: sigma_i = k * (m + r * x_i)
-        // Note: In real DKLS23, this would be multiplicative with Paillier encryption
-        // For this implementation, we use additive approach
-        let sigma_i = k * (m + r_scalar * x_i);
-
-        let round2 = SignRound2Message {
-            session_id: self.config.session_id.clone(),
-            party_index: self.party_index,
-            sigma_share: sigma_i.to_bytes().to_vec(),
-        };
-
-        self.round2_messages.push(round2.clone());
-
-        let payload = bincode::serialize(&round2)
-            .map_err(|e| MpcError::SigningFailed(format!("serialization failed: {}", e)))?;
-
-        Ok(ProtocolMessage {
-            session_id: self.config.session_id.clone(),
-            from: self.party_index,
-            to: 0xFFFF,
-            round: 2,
-            payload,
-        })
     }
 
     /// Process Round 2 messages and aggregate into final signature.
     ///
-    /// Combines all signature shares using Lagrange interpolation
-    /// to produce the final valid ECDSA signature.
+    /// Higher-indexed party (server): Receives MtARequest, uses Paillier homomorphism
+    /// to compute s = k_1^{-1} * (partial_s + r * Enc(k_0^{-1} * x'_0)) + k_1^{-1} * r * x'_1
+    /// Server never learns k_0^{-1} or x'_0.
+    ///
+    /// Lower-indexed party (device): Receives ServerSignature {s}, forms complete signature.
     pub fn process_round2(&mut self, messages: Vec<ProtocolMessage>) -> Result<EcdsaSignature> {
         match self.state {
             SignState::Round1Done => {}
@@ -349,7 +535,6 @@ impl SignSession {
             _ => return Err(MpcError::SigningFailed("must complete round 1 first".into())),
         }
 
-        // Process incoming messages
         for msg in messages {
             if msg.round != 2 {
                 continue;
@@ -358,70 +543,217 @@ impl SignSession {
             let round2: SignRound2Message = bincode::deserialize(&msg.payload)
                 .map_err(|e| MpcError::SigningFailed(format!("invalid round 2 message: {}", e)))?;
 
-            self.round2_messages.push(round2);
+            let msg_party = match &round2 {
+                SignRound2Message::MtARequest { party_index, .. } => *party_index,
+                SignRound2Message::ServerSignature { party_index, .. } => *party_index,
+            };
+            if msg_party != self.party_index {
+                self.round2_messages.push(round2);
+            }
         }
 
-        // Check if we have threshold number of shares
-        if self.round2_messages.len() < self.config.threshold as usize {
-            return Err(MpcError::SigningFailed(
-                "insufficient signature shares".into(),
-            ));
-        }
+        let other_party_index = self.round1_messages.iter()
+            .find(|msg| msg.party_index != self.party_index)
+            .map(|msg| msg.party_index)
+            .ok_or_else(|| MpcError::SigningFailed("no other party found".into()))?;
 
-        // Aggregate signature shares
-        // In real DKLS23, this would use homomorphic properties
-        // For this implementation, we sum the sigma shares
-        let mut s_sum = Scalar::ZERO;
-        for msg in &self.round2_messages {
-            let mut sigma_bytes = [0u8; 32];
-            sigma_bytes.copy_from_slice(&msg.sigma_share[..32]);
-            let sigma_i_ct = Scalar::from_repr(sigma_bytes.into());
-            if bool::from(sigma_i_ct.is_none()) {
-                return Err(MpcError::SigningFailed("invalid sigma share".into()));
-            }
-            let sigma_i = sigma_i_ct.unwrap();
-            s_sum += sigma_i;
-        }
-
-        // Get r from any round1 message (should all be same aggregate)
-        // For demo, use first available K
-        let r_value = if let Some(round1) = self.round1_messages.first() {
-            // Parse compressed public key
-            let mut key_bytes = [0u8; 33];
-            if round1.k_public.len() >= 33 {
-                key_bytes.copy_from_slice(&round1.k_public[..33]);
-            }
-            let encoded = EncodedPoint::from_bytes(&key_bytes[..])
-                .map_err(|_| MpcError::SigningFailed("invalid public key encoding".into()))?;
-            let point_ct = AffinePoint::from_encoded_point(&encoded);
-            if bool::from(point_ct.is_none()) {
-                return Err(MpcError::SigningFailed("invalid public key point".into()));
-            }
-            let point = point_ct.unwrap();
-            point.to_encoded_point(true).as_bytes()[1..33].to_vec()
+        if self.party_index > other_party_index {
+            // Server: process MtA request and compute s
+            self.server_compute_signature()
         } else {
-            // Fallback - shouldn't happen in real flow
-            vec![0u8; 32]
+            // Device: receive s from server
+            self.device_receive_signature()
+        }
+    }
+
+    /// Server-side: compute Enc(s) using Paillier homomorphism and send to device.
+    fn server_compute_signature(&mut self) -> Result<EcdsaSignature> {
+        let (encrypted_share_bytes, encrypted_k_inv_bytes, partial_s_bytes, rp_share, rp_k_inv, mod_proof) =
+            self.round2_messages.iter()
+            .find_map(|m| {
+                if let SignRound2Message::MtARequest {
+                    encrypted_share, encrypted_k_inv, partial_s,
+                    range_proof_share, range_proof_k_inv, modulus_proof, ..
+                } = m {
+                    Some((
+                        encrypted_share.clone(), encrypted_k_inv.clone(),
+                        partial_s.clone(), range_proof_share.clone(), range_proof_k_inv.clone(),
+                        modulus_proof.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| MpcError::SigningFailed("no MtA request from device".into()))?;
+
+        // Parse device's Paillier pk + Enc(k_0^{-1}*x'_0)
+        if encrypted_share_bytes.len() < 4 {
+            return Err(MpcError::SigningFailed("MtA payload too short".into()));
+        }
+        let pk_len = u32::from_le_bytes(encrypted_share_bytes[..4].try_into().unwrap()) as usize;
+        if encrypted_share_bytes.len() < 4 + pk_len {
+            return Err(MpcError::SigningFailed("MtA payload truncated".into()));
+        }
+        let device_pk: PaillierPublicKey = serde_json::from_slice(&encrypted_share_bytes[4..4 + pk_len])
+            .map_err(|e| MpcError::SigningFailed(format!("invalid device Paillier pk: {}", e)))?;
+        let c_k_inv_x: PaillierCiphertext = serde_json::from_slice(&encrypted_share_bytes[4 + pk_len..])
+            .map_err(|e| MpcError::SigningFailed(format!("invalid ciphertext: {}", e)))?;
+
+        // Verify Paillier modulus proof (N = p*q with safe primes)
+        if !mod_proof.verify() {
+            return Err(MpcError::SigningFailed("Paillier modulus proof failed: N may not be well-formed".into()));
+        }
+
+        // Parse Enc(k_0^{-1})
+        let c_k_inv: PaillierCiphertext = serde_json::from_slice(&encrypted_k_inv_bytes)
+            .map_err(|e| MpcError::SigningFailed(format!("invalid k_inv ciphertext: {}", e)))?;
+
+        // Verify range proofs
+        if !rp_share.verify(&device_pk, &c_k_inv_x, b"MtA-share") {
+            return Err(MpcError::SigningFailed("range proof for encrypted_share failed".into()));
+        }
+        if !rp_k_inv.verify(&device_pk, &c_k_inv, b"MtA-k-inv") {
+            return Err(MpcError::SigningFailed("range proof for encrypted_k_inv failed".into()));
+        }
+
+        // Parse partial_s = k_0^{-1} * m
+        let mut ps_bytes = [0u8; 32];
+        ps_bytes.copy_from_slice(&partial_s_bytes[..32]);
+        let partial_s_ct = Scalar::from_repr(ps_bytes.into());
+        if bool::from(partial_s_ct.is_none()) {
+            return Err(MpcError::SigningFailed("invalid partial_s".into()));
+        }
+        let partial_s = partial_s_ct.unwrap();
+
+        // Server's own values
+        let share = self.my_share.as_ref()
+            .ok_or_else(|| MpcError::SigningFailed("no key share".into()))?;
+        let share_bytes: [u8; 32] = share.secret_share.as_bytes()[..32].try_into()
+            .map_err(|_| MpcError::SigningFailed("invalid share length".into()))?;
+        let x_1_ct = Scalar::from_repr(share_bytes.into());
+        if bool::from(x_1_ct.is_none()) {
+            return Err(MpcError::SigningFailed("invalid secret share".into()));
+        }
+        let x_1 = x_1_ct.unwrap();
+
+        let lagrange = self.compute_lagrange_coefficient()?;
+        let x_prime_1 = x_1 * lagrange;
+
+        let r = self.r_scalar.ok_or_else(||
+            MpcError::SigningFailed("r not computed".into()))?;
+        let my_k = self.my_k.ok_or_else(||
+            MpcError::SigningFailed("k_1 not set".into()))?;
+        let k_1_inv = my_k.invert().unwrap_or(Scalar::ONE);
+
+        // Compute Enc(s) using three terms:
+        //   s = k_0^{-1}*k_1^{-1}*m + k_0^{-1}*k_1^{-1}*r*x'_0 + k_0^{-1}*k_1^{-1}*r*x'_1
+        // term1 = k_1^{-1} * partial_s  (plaintext, since partial_s = k_0^{-1}*m)
+        // term2 = (k_1^{-1}*r) ⊙ Enc(k_0^{-1}*x'_0)
+        // term3 = (k_1^{-1}*r*x'_1) ⊙ Enc(k_0^{-1})
+
+        // term1: plaintext
+        let k1_inv_partial_s = k_1_inv * partial_s;
+        let k1_inv_partial_s_bytes: [u8; 32] = k1_inv_partial_s.to_bytes().into();
+        let k1_inv_partial_s_int = scalar_to_biguint(&k1_inv_partial_s_bytes);
+
+        // term2: homomorphic
+        let k1_inv_r = k_1_inv * r;
+        let k1_inv_r_bytes: [u8; 32] = k1_inv_r.to_bytes().into();
+        let k1_inv_r_int = scalar_to_biguint(&k1_inv_r_bytes);
+        let c_term2 = device_pk.scalar_mul(&c_k_inv_x, &k1_inv_r_int);
+
+        // term3: homomorphic — THIS is the fix (previously used plaintext k_1^{-1}*r*x'_1)
+        let k1_inv_r_x1 = k_1_inv * r * x_prime_1;
+        let k1_inv_r_x1_bytes: [u8; 32] = k1_inv_r_x1.to_bytes().into();
+        let k1_inv_r_x1_int = scalar_to_biguint(&k1_inv_r_x1_bytes);
+        let c_term3 = device_pk.scalar_mul(&c_k_inv, &k1_inv_r_x1_int);
+
+        // Enc(s) = Enc(term2) ⊕ Enc(term3) ⊕ Enc(term1)
+        let c_term2_plus_3 = device_pk.add(&c_term2, &c_term3);
+        let c_s = device_pk.add_plaintext(&c_term2_plus_3, &k1_inv_partial_s_int);
+
+        // Send Enc(s) to device for decryption
+        let c_s_bytes = serde_json::to_vec(&c_s)
+            .map_err(|e| MpcError::SigningFailed(format!("ciphertext serialization failed: {}", e)))?;
+
+        let server_msg = SignRound2Message::ServerSignature {
+            session_id: self.config.session_id.clone(),
+            party_index: self.party_index,
+            s: c_s_bytes,
+        };
+        self.round2_messages.push(server_msg);
+
+        // Server returns placeholder — device decrypts the real signature
+        let r_bytes: [u8; 32] = r.to_bytes().into();
+        let aggregate_r = self.aggregate_r_point
+            .ok_or_else(|| MpcError::SigningFailed("aggregate R not set".into()))?;
+        let v = self.compute_recovery_id(&aggregate_r, &Scalar::ONE)?;
+        let placeholder = EcdsaSignature { r: r_bytes, s: [0u8; 32], v };
+        self.state = SignState::Round1Done;
+        Ok(placeholder)
+    }
+
+    /// Device-side: receive server's response and extract final signature.
+    /// Server sends Enc(s) which device decrypts with its Paillier secret key.
+    fn device_receive_signature(&mut self) -> Result<EcdsaSignature> {
+        let q = secp256k1_order();
+
+        let server_s_bytes = self.round2_messages.iter()
+            .find_map(|m| {
+                if let SignRound2Message::ServerSignature { s, .. } = m {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| MpcError::SigningFailed("no server signature".into()))?;
+
+        let r = self.r_scalar.ok_or_else(||
+            MpcError::SigningFailed("r not computed".into()))?;
+        let r_bytes: [u8; 32] = r.to_bytes().into();
+
+        let aggregate_r = self.aggregate_r_point
+            .ok_or_else(|| MpcError::SigningFailed("aggregate R not set".into()))?;
+
+        // Decrypt Enc(s) using our Paillier secret key
+        let paillier = self.paillier_keypair.as_ref()
+            .ok_or_else(|| MpcError::SigningFailed("Paillier keypair not available".into()))?;
+
+        let c_s: PaillierCiphertext = serde_json::from_slice(&server_s_bytes)
+            .map_err(|e| MpcError::SigningFailed(format!("invalid ciphertext from server: {}", e)))?;
+
+        let s_big = paillier.secret.decrypt(&paillier.public, &c_s);
+
+        // Reduce mod q and handle potential negative wrapping
+        let n = &paillier.public.n;
+        let half_n = n / BigUint::from(2u64);
+        let s_mod_q = if s_big > half_n {
+            let neg_val = (n - &s_big) % &q;
+            if neg_val.is_zero() {
+                BigUint::from(0u64)
+            } else {
+                &q - &neg_val
+            }
+        } else {
+            s_big % &q
         };
 
-        let mut r_array = [0u8; 32];
-        if r_value.len() == 32 {
-            r_array.copy_from_slice(&r_value);
+        let s_scalar_bytes = biguint_to_scalar_bytes(&s_mod_q, &q);
+        let s_ct = Scalar::from_repr(s_scalar_bytes.into());
+        if bool::from(s_ct.is_none()) {
+            return Err(MpcError::SigningFailed("invalid decrypted s".into()));
         }
+        let s = s_ct.unwrap();
 
-        // Normalize s (ECDSA specifies s should be in low half of curve order)
-        let s_normalized = if s_sum.is_high().into() { -s_sum } else { s_sum };
+        // Normalize s to low-S form
+        let s_normalized = if s.is_high().into() { -s } else { s };
+        let s_final_bytes: [u8; 32] = s_normalized.to_bytes().into();
 
-        let s_array: [u8; 32] = s_normalized.to_bytes().into();
-
-        // Compute recovery id v
-        // For simplicity, we'll use 27 (even y-coordinate)
-        // In production, this would be computed precisely
-        let v = 27;
+        let v = self.compute_recovery_id(&aggregate_r, &s_normalized)?;
 
         let signature = EcdsaSignature {
-            r: r_array,
-            s: s_array,
+            r: r_bytes,
+            s: s_final_bytes,
             v,
         };
 
@@ -430,6 +762,43 @@ impl SignSession {
         };
 
         Ok(signature)
+    }
+
+    /// Compute ECDSA recovery ID (v) from R point and s value
+    fn compute_recovery_id(&self, r_point: &AffinePoint, _s: &Scalar) -> Result<u8> {
+        // Get uncompressed point encoding
+        let encoded = r_point.to_encoded_point(false);
+        let uncompressed_bytes = encoded.as_bytes();
+
+        if uncompressed_bytes.len() != 65 {
+            return Err(MpcError::SigningFailed("invalid point encoding".into()));
+        }
+
+        // Extract y coordinate (last 32 bytes)
+        let y_bytes = &uncompressed_bytes[33..65];
+        let y_is_odd = (y_bytes[31] & 1) == 1;
+
+        // Extract x coordinate (r value)
+        let r_bytes = &uncompressed_bytes[1..33];
+
+        // Check if r >= n (x overflow)
+        // secp256k1 curve order n
+        const N_BYTES: [u8; 32] = [
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xeb, 0xaa, 0xed, 0xce, 0x6a, 0xf4, 0x8a, 0x03,
+            0xbb, 0xfd, 0x25, 0xe8, 0xcd, 0x03, 0x64, 0x14,
+        ];
+
+        // Convert slice to array for comparison
+        let mut r_array = [0u8; 32];
+        r_array.copy_from_slice(r_bytes);
+        let x_overflow = if r_array >= N_BYTES { 1u8 } else { 0u8 };
+
+        // Standard Ethereum recovery ID format
+        // Bit 0: y parity, Bit 1: x overflow
+        let recovery_id = (x_overflow << 1) | (y_is_odd as u8);
+        Ok(27 + recovery_id)
     }
 
     /// Local/simulated signing (for testing only, reconstructs full key).
@@ -528,6 +897,18 @@ impl SignSession {
         }
     }
 
+    /// Get the server's outbound `ServerSignature` message (Enc(s) ciphertext).
+    /// Called by the backend after `process_round2` on server side.
+    pub fn get_server_response(&self) -> Option<Vec<u8>> {
+        self.round2_messages.iter().find_map(|m| {
+            if let SignRound2Message::ServerSignature { .. } = m {
+                bincode::serialize(m).ok()
+            } else {
+                None
+            }
+        })
+    }
+
     /// Get number of received signature shares.
     pub fn received_share_count(&self) -> usize {
         self.round2_messages.len()
@@ -536,6 +917,19 @@ impl SignSession {
     /// Check if protocol is ready for finalization.
     pub fn has_threshold_shares(&self) -> bool {
         self.round2_messages.len() >= self.config.threshold as usize
+    }
+}
+
+fn gen_coprime_to(n: &BigUint) -> BigUint {
+    use num_bigint::RandBigInt;
+    use num_integer::Integer;
+    use num_traits::One;
+    let mut rng = rand::thread_rng();
+    loop {
+        let r = rng.gen_biguint_below(n);
+        if r > BigUint::from(0u64) && r.gcd(n) == BigUint::one() {
+            return r;
+        }
     }
 }
 
@@ -641,5 +1035,159 @@ mod tests {
             [0u8; 32],
         );
         assert!(session.finalize().is_err());
+    }
+
+    #[test]
+    fn test_distributed_sign_2_parties() {
+        use sha3::Digest;
+
+        let shares = dkg_shares();
+        let hash: [u8; 32] = sha3::Keccak256::digest(b"distributed test").into();
+
+        let config0 = SessionConfig {
+            session_id: "dist-sign-001".into(),
+            threshold: 2,
+            total_parties: 3,
+            party_index: 0,
+        };
+        let config1 = SessionConfig {
+            session_id: "dist-sign-001".into(),
+            threshold: 2,
+            total_parties: 3,
+            party_index: 1,
+        };
+
+        let mut session0 = SignSession::new_distributed(config0, shares[0].clone(), hash);
+        let mut session1 = SignSession::new_distributed(config1, shares[1].clone(), hash);
+
+        // Round 1: exchange ephemeral public keys
+        let r1_msg0 = session0.generate_round1().unwrap();
+        let r1_msg1 = session1.generate_round1().unwrap();
+        session0.process_round1(vec![r1_msg1]).unwrap();
+        session1.process_round1(vec![r1_msg0]).unwrap();
+
+        // Round 2: Device sends MtA request (Paillier-encrypted)
+        let r2_msg0 = session0.generate_round2().unwrap();
+
+        // Server processes MtA request, computes Enc(s) homomorphically
+        let _sig_server = session1.process_round2(vec![r2_msg0]).unwrap();
+
+        // Server's response is the last ServerSignature in its round2_messages
+        let server_response_msg = session1.round2_messages.iter()
+            .find_map(|m| {
+                if let SignRound2Message::ServerSignature { session_id, party_index, s } = m {
+                    Some(SignRound2Message::ServerSignature {
+                        session_id: session_id.clone(),
+                        party_index: *party_index,
+                        s: s.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .expect("server should have produced ServerSignature");
+
+        let payload = bincode::serialize(&server_response_msg).unwrap();
+        let server_response = ProtocolMessage {
+            session_id: "dist-sign-001".into(),
+            from: 1,
+            to: 0,
+            round: 2,
+            payload,
+        };
+
+        // Device decrypts Enc(s) using its Paillier secret key
+        let sig_device = session0.process_round2(vec![server_response]).unwrap();
+
+        // Verify the signature
+        assert!(
+            sig_device.verify(&hash, &shares[0].public_key).unwrap(),
+            "distributed signature verification failed"
+        );
+    }
+
+    #[test]
+    fn test_distributed_sign_all_2of3_combos() {
+        use sha3::Digest;
+
+        let shares = dkg_shares();
+        let hash: [u8; 32] = sha3::Keccak256::digest(b"combo distributed").into();
+
+        let combos: Vec<(u16, u16)> = vec![
+            (0, 1),
+            (0, 2),
+            (1, 2),
+        ];
+
+        for (party_a, party_b) in combos {
+            let config_a = SessionConfig {
+                session_id: format!("combo-{}-{}", party_a, party_b),
+                threshold: 2,
+                total_parties: 3,
+                party_index: party_a,
+            };
+            let config_b = SessionConfig {
+                session_id: format!("combo-{}-{}", party_a, party_b),
+                threshold: 2,
+                total_parties: 3,
+                party_index: party_b,
+            };
+
+            let mut session_a = SignSession::new_distributed(
+                config_a, shares[party_a as usize].clone(), hash,
+            );
+            let mut session_b = SignSession::new_distributed(
+                config_b, shares[party_b as usize].clone(), hash,
+            );
+
+            // Round 1
+            let r1_a = session_a.generate_round1().unwrap();
+            let r1_b = session_b.generate_round1().unwrap();
+            session_a.process_round1(vec![r1_b]).unwrap();
+            session_b.process_round1(vec![r1_a]).unwrap();
+
+            // Round 2: lower-indexed party is always "device"
+            let (device_session, server_session) = if party_a < party_b {
+                (&mut session_a, &mut session_b)
+            } else {
+                (&mut session_b, &mut session_a)
+            };
+
+            let r2_device = device_session.generate_round2().unwrap();
+            let _sig_server = server_session.process_round2(vec![r2_device]).unwrap();
+
+            // Extract server's response
+            let server_response_msg = server_session.round2_messages.iter()
+                .find_map(|m| {
+                    if let SignRound2Message::ServerSignature { session_id, party_index, s } = m {
+                        Some(SignRound2Message::ServerSignature {
+                            session_id: session_id.clone(),
+                            party_index: *party_index,
+                            s: s.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .expect("server should have produced ServerSignature");
+
+            let payload = bincode::serialize(&server_response_msg).unwrap();
+            let server_idx = if party_a < party_b { party_b } else { party_a };
+            let device_idx = if party_a < party_b { party_a } else { party_b };
+            let server_response = ProtocolMessage {
+                session_id: format!("combo-{}-{}", party_a, party_b),
+                from: server_idx,
+                to: device_idx,
+                round: 2,
+                payload,
+            };
+
+            let sig_device = device_session.process_round2(vec![server_response]).unwrap();
+
+            assert!(
+                sig_device.verify(&hash, &shares[0].public_key).unwrap(),
+                "signature verification failed for combo ({}, {})", party_a, party_b
+            );
+        }
     }
 }

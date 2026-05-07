@@ -1,0 +1,3 @@
+rust_input: crate::api
+rust_root: ../crates/ffi-mobile/
+dart_output: lib/bridge/frb_generated.dart

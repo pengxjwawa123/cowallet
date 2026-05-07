@@ -103,6 +103,32 @@ class IosSecureEnclaveChannel {
       throw SeException('Failed to delete secret: $e');
     }
   }
+
+  /// Store encrypted device shard using hardware-backed encryption
+  /// The shard is encrypted with a Secure Enclave key before storage
+  static Future<void> storeEncryptedShard(List<int> shardBytes) async {
+    try {
+      await secureStorage.invokeMethod(
+        'storeEncryptedShard',
+        {'data': shardBytes},
+      );
+    } catch (e) {
+      throw SeException('Failed to store encrypted shard: $e');
+    }
+  }
+
+  /// Load and decrypt device shard using hardware-backed decryption
+  /// Returns null if no shard is stored
+  static Future<List<int>?> loadEncryptedShard() async {
+    try {
+      final result = await secureStorage.invokeMethod<List<dynamic>>(
+        'loadEncryptedShard',
+      );
+      return result?.cast<int>();
+    } catch (e) {
+      throw SeException('Failed to load encrypted shard: $e');
+    }
+  }
 }
 
 /// Exception for Secure Enclave operations

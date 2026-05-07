@@ -7,18 +7,24 @@ class MpcApi {
   /// [sessionType] 会话类型，如 "keygen", "sign"
   /// [parties] 参与方ID列表
   /// [threshold] 门限值，默认为2
+  /// [walletId] 可选，关联的钱包ID（签名会话时指定）
   static Future<Result<Map<String, dynamic>>> createSession({
     required String sessionType,
     required List<int> parties,
     int threshold = 2,
+    String? walletId,
   }) async {
+    final Map<String, dynamic> body = {
+      "session_type": sessionType,
+      "parties": parties,
+      "threshold": threshold,
+    };
+    if (walletId != null) {
+      body["wallet_id"] = walletId;
+    }
     return await DioClient.post(
       "/mpc/session",
-      data: {
-        "session_type": sessionType,
-        "parties": parties,
-        "threshold": threshold,
-      },
+      data: body,
     );
   }
 
@@ -60,10 +66,48 @@ class MpcApi {
     return Result.success(result.isSuccess);
   }
 
-  /// 接收MPC消息
+  /// 接收MPC消息（按party过滤，支持增量轮询）
   /// [sessionId] 会话ID
-  /// 返回按轮次排序的消息列表
-  static Future<Result<List<dynamic>>> receiveMessages(String sessionId) async {
-    return await DioClient.get("/mpc/session/$sessionId/msg");
+  /// [party] 接收方party编号（只拉取发给该party的消息）
+  /// [afterId] 只返回id大于此值的消息（增量轮询）
+  static Future<Result<List<dynamic>>> receiveMessages(
+    String sessionId, {
+    required int party,
+    int? afterId,
+  }) async {
+    String path = "/mpc/session/$sessionId/msg?party=$party";
+    if (afterId != null) {
+      path += "&after_id=$afterId";
+    }
+    return await DioClient.get(path);
+  }
+
+  /// 获取预签名状态
+  /// GET /api/v1/mpc/presign/status?wallet_id={id}
+  /// [walletId] 钱包ID，查询该钱包可用的预签名数量和状态
+  static Future<Result<Map<String, dynamic>>> getPresignStatus(
+    String walletId,
+  ) async {
+    return await DioClient.get(
+      "/mpc/presign/status",
+      params: {"wallet_id": walletId},
+    );
+  }
+
+  /// 批量生成预签名
+  /// POST /api/v1/mpc/presign/generate
+  /// [walletId] 钱包ID
+  /// [count] 要生成的预签名数量
+  static Future<Result<Map<String, dynamic>>> generatePresignatures({
+    required String walletId,
+    required int count,
+  }) async {
+    return await DioClient.post(
+      "/mpc/presign/generate",
+      data: {
+        "wallet_id": walletId,
+        "count": count,
+      },
+    );
   }
 }

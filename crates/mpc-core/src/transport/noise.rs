@@ -57,7 +57,7 @@ impl NoiseChannel {
     ///
     /// Returns (channel, first_handshake_message) to send to the responder.
     pub fn initiate() -> Result<(Self, Vec<u8>)> {
-        let mut builder = Self::builder();
+        let builder = Self::builder();
         let keypair = builder
             .generate_keypair()
             .map_err(|e| MpcError::Transport(format!("failed to generate keypair: {}", e)))?;
@@ -86,7 +86,7 @@ impl NoiseChannel {
     ///
     /// Receives the initiator's first message, returns (channel, response_message).
     pub fn respond(initiator_msg: &[u8]) -> Result<(Self, Vec<u8>)> {
-        let mut builder = Self::builder();
+        let builder = Self::builder();
         let keypair = builder
             .generate_keypair()
             .map_err(|e| MpcError::Transport(format!("failed to generate keypair: {}", e)))?;

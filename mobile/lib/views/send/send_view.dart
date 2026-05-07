@@ -151,13 +151,26 @@ class _SendViewState extends State<SendView> {
 
     setState(() => _sending = true);
     try {
-      final txHash = await Services.tx.signAndSend(
-        to: to,
-        value: _parseAmount(amountText),
-        gasLimit: _gasEstimate?.gasLimit,
-        maxFeePerGas: _gasEstimate?.maxFeePerGas,
-        maxPriorityFeePerGas: _gasEstimate?.maxPriorityFeePerGas,
-      );
+      String txHash;
+      if (_selectedToken == 'ETH') {
+        txHash = await Services.tx.signAndSend(
+          to: to,
+          value: _parseAmount(amountText),
+          gasLimit: _gasEstimate?.gasLimit,
+          maxFeePerGas: _gasEstimate?.maxFeePerGas,
+          maxPriorityFeePerGas: _gasEstimate?.maxPriorityFeePerGas,
+        );
+      } else {
+        final tokenContract = Services.chain.tokenContract(_selectedToken);
+        txHash = await Services.tx.sendErc20(
+          to: to,
+          tokenContract: tokenContract,
+          amount: _parseAmount(amountText),
+          gasLimit: _gasEstimate?.gasLimit,
+          maxFeePerGas: _gasEstimate?.maxFeePerGas,
+          maxPriorityFeePerGas: _gasEstimate?.maxPriorityFeePerGas,
+        );
+      }
 
       await Services.txHistory.add(TxRecord(
         txHash: txHash,

@@ -5,9 +5,140 @@ import '../../widgets/section_label.dart';
 import '../../widgets/cw_chip.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
+import '../../api/mpc_api.dart';
 
-class WalletView extends StatelessWidget {
+class WalletView extends StatefulWidget {
   const WalletView({super.key});
+
+  @override
+  State<WalletView> createState() => _WalletViewState();
+}
+
+class _WalletViewState extends State<WalletView> {
+  int _presignCount = 0;
+  bool _loadingPresignStatus = false;
+  bool _generatingPresigns = false;
+  int _selectedCount = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPresignStatus();
+  }
+
+  Future<void> _loadPresignStatus() async {
+    setState(() => _loadingPresignStatus = true);
+
+    try {
+      final walletAddress = await Services.mpcWallet.getAddress();
+      final result = await MpcApi.getPresignStatus(walletAddress);
+
+      if (result.isSuccess && result.data != null) {
+        final count = result.data!['available_count'] as int? ?? 0;
+        if (mounted) {
+          setState(() {
+            _presignCount = count;
+            _loadingPresignStatus = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _loadingPresignStatus = false);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadingPresignStatus = false);
+      }
+    }
+  }
+
+  Future<void> _generatePresignatures() async {
+    if (_generatingPresigns) return;
+
+    setState(() => _generatingPresigns = true);
+
+    try {
+      final walletAddress = await Services.mpcWallet.getAddress();
+      final generated = await Services.mpcWallet.runPresign(
+        walletId: walletAddress,
+        count: _selectedCount,
+      );
+
+      if (mounted) {
+        setState(() => _generatingPresigns = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${S.generationSuccess} ($generated/${_selectedCount})'),
+            backgroundColor: CwColors.success,
+          ),
+        );
+
+        await _loadPresignStatus();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _generatingPresigns = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${S.generationFailed}: $e'),
+            backgroundColor: CwColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showGenerateDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(S.generatePresignatures),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(S.presignaturesSub, style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(S.selectCount, style: const TextStyle(fontSize: 14)),
+                const SizedBox(width: 12),
+                DropdownButton<int>(
+                  value: _selectedCount,
+                  items: List.generate(10, (i) => i + 1)
+                      .map((n) => DropdownMenuItem(value: n, child: Text('$n')))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => _selectedCount = value);
+                      Navigator.pop(context);
+                      _showGenerateDialog();
+                    }
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(S.cancel),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _generatePresignatures();
+            },
+            child: Text(S.generate),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +210,10 @@ class WalletView extends StatelessWidget {
               // ── Section: 在赚利息的钱 ──
               SectionLabel(title: S.earning),
               _earningCard(context, tt),
+
+              // ── Section: 预签名 ──
+              SectionLabel(title: S.presignatures),
+              _presignatureCard(context, tt),
 
               const SizedBox(height: 32),
             ],
@@ -468,6 +603,107 @@ class WalletView extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Presignature card ───────────────────────────────────────────────────
+
+  Widget _presignatureCard(BuildContext context, TextTheme tt) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: CwColors.bgCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: CwColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      S.presignaturesAvailable,
+                      style: const TextStyle(
+                        fontFamily: 'NotoSerifSC',
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: CwColors.ink1,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      S.presignaturesSub,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: CwColors.ink3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _loadingPresignStatus
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _presignCount > 3
+                            ? CwColors.successSoft
+                            : CwColors.warnSoft,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '$_presignCount',
+                        style: TextStyle(
+                          fontFamily: 'JetBrainsMono',
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: _presignCount > 3
+                              ? CwColors.success
+                              : CwColors.warn,
+                        ),
+                      ),
+                    ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // Generate button
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _generatingPresigns ? null : _showGenerateDialog,
+              icon: _generatingPresigns
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_circle_outline, size: 18),
+              label: Text(
+                _generatingPresigns ? S.generating : S.generatePresignatures,
+                style: const TextStyle(fontSize: 13),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: CwColors.accent,
+                side: const BorderSide(color: CwColors.accent),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
             ),
           ),
         ],

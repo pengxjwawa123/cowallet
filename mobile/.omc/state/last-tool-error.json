@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd /Users/jingle/cat/cowallet/backend && docker compose ps 2>&1\",\"description\":\"Check docker services status\"}",
-  "error": "Exit code 127\n(eval):1: command not found: docker",
-  "timestamp": "2026-05-05T03:44:15.845Z",
-  "retry_count": 1
+  "tool_input_preview": "{\"command\":\"head -50 /Users/jingle/cat/cowallet/mobile/lib/bridge/api.dart\",\"description\":\"Check generated API dart file\"}",
+  "error": "Exit code 1\nhead: /Users/jingle/cat/cowallet/mobile/lib/bridge/api.dart: No such file or directory",
+  "timestamp": "2026-05-07T02:38:10.889Z",
+  "retry_count": 2
 }

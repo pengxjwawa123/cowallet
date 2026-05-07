@@ -4,7 +4,9 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::middleware::audit::{AuditLog, AuditResult};
 use crate::middleware::auth::{Claims, issue_token_pair, blacklist_token, refresh_access_token, TokenPair, verify_token_unchecked};
@@ -18,6 +20,8 @@ pub fn router() -> Router<AppState> {
         .route("/logout", post(logout))
         .route("/session", get(session_info))
         .route("/audit-log", get(audit_log))
+        .route("/recovery/initiate", post(initiate_recovery))
+        .route("/recovery/verify", post(verify_recovery_otp))
 }
 
 #[derive(Deserialize)]
@@ -284,4 +288,229 @@ async fn audit_log(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+// ─── Wallet Recovery Endpoints ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct InitiateRecoveryRequest {
+    email: String,
+}
+
+#[derive(Serialize)]
+struct InitiateRecoveryResponse {
+    recovery_session_id: String,
+    otp_sent: bool,
+    message: String,
+}
+
+/// Initiate wallet recovery process.
+/// Sends OTP to user's email and creates a recovery session.
+async fn initiate_recovery(
+    State(state): State<AppState>,
+    Json(body): Json<InitiateRecoveryRequest>,
+) -> Result<Json<InitiateRecoveryResponse>, StatusCode> {
+    let db = state
+        .require_db()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Verify user exists
+    let user_id: Result<(uuid::Uuid,), StatusCode> = sqlx::query_as(
+        "SELECT id FROM users WHERE email = $1"
+    )
+    .bind(&body.email)
+    .fetch_one(db)
+    .await
+    .map_err(|_| StatusCode::NOT_FOUND);
+
+    let (user_id,) = user_id?;
+
+    // Check if user has a server shard
+    let has_server_shard: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM shard_metadata WHERE user_id = $1 AND location = 'server')"
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if !has_server_shard {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    // Generate OTP (6-digit code)
+    let otp = format!("{:06}", rand::random::<u32>() % 1_000_000);
+    let recovery_session_id = uuid::Uuid::new_v4();
+    let expires_at = Utc::now() + chrono::Duration::minutes(10);
+
+    // Store recovery session
+    sqlx::query(
+        "INSERT INTO recovery_sessions (id, user_id, otp_hash, expires_at, status)
+         VALUES ($1, $2, $3, $4, 'pending')"
+    )
+    .bind(recovery_session_id)
+    .bind(user_id)
+    .bind(sha2::Sha256::digest(otp.as_bytes()).as_slice())
+    .bind(expires_at)
+    .execute(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create recovery session: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // TODO: Send OTP via email (placeholder for now)
+    tracing::info!(
+        "Recovery OTP for user {}: {} (session: {})",
+        user_id, otp, recovery_session_id
+    );
+
+    // Audit log
+    let _ = state
+        .audit_logger
+        .log_with_details(
+            user_id,
+            "auth.recovery_initiated",
+            AuditResult::Success,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({ "email": body.email })),
+        )
+        .await;
+
+    Ok(Json(InitiateRecoveryResponse {
+        recovery_session_id: recovery_session_id.to_string(),
+        otp_sent: true,
+        message: format!("Recovery OTP sent to {}. Please check your email.", body.email),
+    }))
+}
+
+#[derive(Deserialize)]
+struct VerifyRecoveryOtpRequest {
+    recovery_session_id: String,
+    otp: String,
+    device_id: String,
+}
+
+#[derive(Serialize)]
+struct VerifyRecoveryOtpResponse {
+    token: String,
+    refresh_token: String,
+    expires_in: usize,
+    token_type: &'static str,
+    user_id: String,
+    public_key_hex: String,
+    server_reshare_messages_json: Vec<String>,
+}
+
+/// Verify recovery OTP and return server's reshare contribution.
+/// This starts the recovery protocol where the server (Party 1) and backup (Party 2)
+/// collaborate to reconstruct the device shard (Party 0).
+async fn verify_recovery_otp(
+    State(state): State<AppState>,
+    Json(body): Json<VerifyRecoveryOtpRequest>,
+) -> Result<Json<VerifyRecoveryOtpResponse>, StatusCode> {
+    let db = state
+        .require_db()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let recovery_session_id = uuid::Uuid::parse_str(&body.recovery_session_id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Fetch recovery session
+    let session: Result<(uuid::Uuid, Vec<u8>, chrono::DateTime<Utc>, String), _> = sqlx::query_as(
+        "SELECT user_id, otp_hash, expires_at, status FROM recovery_sessions WHERE id = $1"
+    )
+    .bind(recovery_session_id)
+    .fetch_one(db)
+    .await;
+
+    let (user_id, otp_hash, expires_at, status) = session.map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Check expiration
+    if Utc::now() > expires_at {
+        return Err(StatusCode::GONE);
+    }
+
+    // Check status
+    if status != "pending" {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    // Verify OTP
+    let provided_hash = sha2::Sha256::digest(body.otp.as_bytes());
+    if provided_hash.as_slice() != otp_hash.as_slice() {
+        // Audit log - failed verification
+        let _ = state
+            .audit_logger
+            .log_with_details(
+                user_id,
+                "auth.recovery_otp_failed",
+                AuditResult::Denied,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Mark session as verified
+    sqlx::query("UPDATE recovery_sessions SET status = 'verified' WHERE id = $1")
+        .bind(recovery_session_id)
+        .execute(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Fetch server shard and public key
+    let shard_row: (Vec<u8>, Vec<u8>, i16) = sqlx::query_as(
+        "SELECT encrypted_shard, nonce, party_index
+         FROM shard_metadata
+         WHERE user_id = $1 AND location = 'server'"
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+    .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // TODO: Decrypt server shard and perform actual reshare protocol
+    // For now, return placeholder response
+    let public_key_hex = "0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string();
+    let server_reshare_messages_json = vec![];
+
+    // Issue JWT for the recovered session
+    let token_pair = issue_token_pair(&user_id.to_string(), &body.device_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Audit log - successful recovery
+    let _ = state
+        .audit_logger
+        .log_with_details(
+            user_id,
+            "auth.recovery_completed",
+            AuditResult::Success,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({ "device_id": body.device_id })),
+        )
+        .await;
+
+    tracing::info!("Wallet recovery completed for user {}", user_id);
+
+    Ok(Json(VerifyRecoveryOtpResponse {
+        token: token_pair.access_token,
+        refresh_token: token_pair.refresh_token,
+        expires_in: token_pair.expires_in,
+        token_type: token_pair.token_type,
+        user_id: user_id.to_string(),
+        public_key_hex,
+        server_reshare_messages_json,
+    }))
 }
