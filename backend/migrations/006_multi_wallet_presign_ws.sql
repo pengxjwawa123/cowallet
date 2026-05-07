@@ -22,8 +22,8 @@ CREATE UNIQUE INDEX idx_wallets_user_pubkey ON wallets(user_id, public_key);
 
 -- Add wallet_id to shard_metadata (nullable for migration, then backfill)
 ALTER TABLE shard_metadata ADD COLUMN IF NOT EXISTS wallet_id UUID REFERENCES wallets(id);
-DROP INDEX IF EXISTS shard_metadata_user_id_location_key;
 ALTER TABLE shard_metadata DROP CONSTRAINT IF EXISTS shard_metadata_user_id_location_key;
+DROP INDEX IF EXISTS shard_metadata_user_id_location_key;
 CREATE UNIQUE INDEX idx_shard_unique_wallet_location
     ON shard_metadata(user_id, wallet_id, location) WHERE wallet_id IS NOT NULL;
 
