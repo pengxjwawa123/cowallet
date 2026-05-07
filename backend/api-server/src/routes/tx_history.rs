@@ -12,7 +12,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/history", get(get_history))
-        .route("/:hash", get(get_transaction))
+        .route("/{hash}", get(get_transaction))
 }
 
 #[derive(Deserialize)]
