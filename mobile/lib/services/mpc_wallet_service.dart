@@ -55,7 +55,10 @@ class MpcWalletService implements WalletService {
       ));
 
       final round1Json = await MpcBridge.dkgGenerateRound1(localSessionId);
-      final round1Payload = utf8.encode(round1Json);
+      // Server expects the raw payload bytes from the ProtocolMessage, not the full JSON.
+      // Extract the "payload" field (array of ints) from the JSON.
+      final round1Msg = jsonDecode(round1Json) as Map<String, dynamic>;
+      final round1Payload = List<int>.from(round1Msg['payload'] as List);
 
       // Send Round 1 via WebSocket
       ws.sendRaw(toParty: _serverParty, round: 1, payload: round1Payload);
@@ -66,16 +69,18 @@ class MpcWalletService implements WalletService {
       // Wait for server's Round 1 + Round 2 via WebSocket stream
       final serverMessages = await _waitForMessages(ws, expectedCount: 2);
 
+      // Server returns raw payload bytes; wrap them into ProtocolMessage JSON for the FFI.
       final serverRound1Msgs = serverMessages
           .where((m) => m.round == 1)
-          .map((m) => utf8.decode(m.payload))
+          .map((m) => _wrapAsProtocolMessage(sessionId, m))
           .toList();
 
       await MpcBridge.dkgProcessRound1(localSessionId, serverRound1Msgs);
 
       final round2Msgs = await MpcBridge.dkgGenerateRound2(localSessionId);
       for (final msgJson in round2Msgs) {
-        final round2Payload = utf8.encode(msgJson);
+        final msg = jsonDecode(msgJson) as Map<String, dynamic>;
+        final round2Payload = List<int>.from(msg['payload'] as List);
         ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
       }
 
@@ -85,7 +90,7 @@ class MpcWalletService implements WalletService {
       // Process server's Round 2
       final serverRound2Msgs = serverMessages
           .where((m) => m.round == 2 && m.fromParty == _serverParty)
-          .map((m) => utf8.decode(m.payload))
+          .map((m) => _wrapAsProtocolMessage(sessionId, m))
           .toList();
 
       if (serverRound2Msgs.isNotEmpty) {
@@ -481,4 +486,16 @@ class MpcWalletService implements WalletService {
 
   /// 获取当前会话ID
   String? get currentSessionId => _currentSessionId;
+
+  /// Wrap raw server payload bytes into a ProtocolMessage JSON string
+  /// that the Rust FFI expects.
+  String _wrapAsProtocolMessage(String sessionId, MpcMessage msg) {
+    return jsonEncode({
+      'session_id': sessionId,
+      'from': msg.fromParty,
+      'to': msg.toParty,
+      'round': msg.round,
+      'payload': msg.payload,
+    });
+  }
 }

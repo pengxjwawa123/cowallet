@@ -1360,11 +1360,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FfiSignRound1 dco_decode_ffi_sign_round_1(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return FfiSignRound1(
-      payload: dco_decode_list_prim_u_8_strict(arr[0]),
-      msgHash: dco_decode_list_prim_u_8_strict(arr[1]),
+      sessionId: dco_decode_String(arr[0]),
+      payload: dco_decode_list_prim_u_8_strict(arr[1]),
+      msgHash: dco_decode_list_prim_u_8_strict(arr[2]),
     );
   }
 
@@ -1572,9 +1573,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   FfiSignRound1 sse_decode_ffi_sign_round_1(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_sessionId = sse_decode_String(deserializer);
     var var_payload = sse_decode_list_prim_u_8_strict(deserializer);
     var var_msgHash = sse_decode_list_prim_u_8_strict(deserializer);
-    return FfiSignRound1(payload: var_payload, msgHash: var_msgHash);
+    return FfiSignRound1(
+      sessionId: var_sessionId,
+      payload: var_payload,
+      msgHash: var_msgHash,
+    );
   }
 
   @protected
@@ -1789,6 +1795,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     SseSerializer serializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.sessionId, serializer);
     sse_encode_list_prim_u_8_strict(self.payload, serializer);
     sse_encode_list_prim_u_8_strict(self.msgHash, serializer);
   }

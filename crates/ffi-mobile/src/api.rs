@@ -292,6 +292,8 @@ pub fn dkg_derive_backup_share(session_id: String, backup_party_index: u16) -> R
 // ---------------------------------------------------------------------------
 
 pub struct FfiSignRound1 {
+    /// Session ID for routing subsequent rounds
+    pub session_id: String,
     /// Serialized Round 1 payload (bincode of SignRound1Message) to send to server
     pub payload: Vec<u8>,
     /// The message hash included for the server
@@ -334,6 +336,7 @@ pub fn sign_generate_round1(msg_hash: Vec<u8>) -> Result<FfiSignRound1, String> 
     state::create_sign_session(session_id, session);
 
     Ok(FfiSignRound1 {
+        session_id: round1_msg.session_id.clone(),
         payload: round1_msg.payload,
         msg_hash,
     })

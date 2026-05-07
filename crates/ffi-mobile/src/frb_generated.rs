@@ -1306,9 +1306,11 @@ impl SseDecode for crate::api::FfiSignResult {
 impl SseDecode for crate::api::FfiSignRound1 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_sessionId = <String>::sse_decode(deserializer);
         let mut var_payload = <Vec<u8>>::sse_decode(deserializer);
         let mut var_msgHash = <Vec<u8>>::sse_decode(deserializer);
         return crate::api::FfiSignRound1 {
+            session_id: var_sessionId,
             payload: var_payload,
             msg_hash: var_msgHash,
         };
@@ -1678,6 +1680,7 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::FfiSignResult> for crate::api
 impl flutter_rust_bridge::IntoDart for crate::api::FfiSignRound1 {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
+            self.session_id.into_into_dart().into_dart(),
             self.payload.into_into_dart().into_dart(),
             self.msg_hash.into_into_dart().into_dart(),
         ]
@@ -1831,6 +1834,7 @@ impl SseEncode for crate::api::FfiSignResult {
 impl SseEncode for crate::api::FfiSignRound1 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.session_id, serializer);
         <Vec<u8>>::sse_encode(self.payload, serializer);
         <Vec<u8>>::sse_encode(self.msg_hash, serializer);
     }

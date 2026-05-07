@@ -1,3 +1,4 @@
+import '../bridge/frb_generated/frb_generated.dart';
 import '../platform/biometrics.dart';
 import '../platform/biometrics_impl.dart';
 import '../platform/cloud_backup.dart';
@@ -31,6 +32,7 @@ class Services {
   static final mpcApi = MpcApi();
 
   static Future<void> init() async {
+    await RustLib.init();
     storage = FlutterSecureStorageService();
     biometrics = LocalAuthBiometricService();
     backup = BackupShardService(PlatformCloudBackup());

@@ -492,22 +492,30 @@ class FfiSignResult {
 }
 
 class FfiSignRound1 {
+  /// Session ID for routing subsequent rounds
+  final String sessionId;
+
   /// Serialized Round 1 payload (bincode of SignRound1Message) to send to server
   final Uint8List payload;
 
   /// The message hash included for the server
   final Uint8List msgHash;
 
-  const FfiSignRound1({required this.payload, required this.msgHash});
+  const FfiSignRound1({
+    required this.sessionId,
+    required this.payload,
+    required this.msgHash,
+  });
 
   @override
-  int get hashCode => payload.hashCode ^ msgHash.hashCode;
+  int get hashCode => sessionId.hashCode ^ payload.hashCode ^ msgHash.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is FfiSignRound1 &&
           runtimeType == other.runtimeType &&
+          sessionId == other.sessionId &&
           payload == other.payload &&
           msgHash == other.msgHash;
 }
