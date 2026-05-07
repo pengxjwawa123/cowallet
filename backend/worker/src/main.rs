@@ -167,7 +167,7 @@ async fn reshare_scheduler_task(db: PgPool) {
 
         let interval_str = format!("{} days", reshare_interval_days);
 
-        let wallets = sqlx::query_as::<_, (String, String)>(&format!(
+        let wallets = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(&format!(
             "SELECT w.id, w.user_id FROM wallets w \
              WHERE w.status = 'active' \
              AND (w.last_reshare IS NULL OR w.last_reshare < NOW() - interval '{}')",
@@ -186,15 +186,15 @@ async fn reshare_scheduler_task(db: PgPool) {
                 tracing::info!("{} wallet(s) need reshare", rows.len());
 
                 for (wallet_id, user_id) in rows {
-                    let session_id = uuid::Uuid::new_v4().to_string();
+                    let session_id = uuid::Uuid::new_v4();
 
                     let result = sqlx::query(
                         "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round, wallet_id) \
                          VALUES ($1, $2, 'reshare', ARRAY[0,1], 2, 'pending', 0, $3)"
                     )
-                    .bind(&session_id)
-                    .bind(&user_id)
-                    .bind(&wallet_id)
+                    .bind(session_id)
+                    .bind(user_id)
+                    .bind(wallet_id)
                     .execute(&db)
                     .await;
 
@@ -234,7 +234,7 @@ async fn reshare_completion_task(db: PgPool) {
     loop {
         interval.tick().await;
 
-        let sessions = sqlx::query_as::<_, (String, String)>(
+        let sessions = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
             "SELECT id, wallet_id FROM mpc_sessions \
              WHERE session_type = 'reshare' \
              AND status = 'completed' \
@@ -257,7 +257,7 @@ async fn reshare_completion_task(db: PgPool) {
                     let update_result = sqlx::query(
                         "UPDATE wallets SET last_reshare = NOW(), reshare_count = reshare_count + 1 WHERE id = $1",
                     )
-                    .bind(&wallet_id)
+                    .bind(wallet_id)
                     .execute(&db)
                     .await;
 
@@ -283,7 +283,7 @@ async fn reshare_completion_task(db: PgPool) {
                     if let Err(e) = sqlx::query(
                         "UPDATE mpc_sessions SET status = 'archived' WHERE id = $1",
                     )
-                    .bind(&session_id)
+                    .bind(session_id)
                     .execute(&db)
                     .await
                     {
