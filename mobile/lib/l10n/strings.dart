@@ -29,8 +29,8 @@ class S {
     '就像给你家请了个管家——你说"帮我转 100 块给小明",它就去做;你不会说也没关系,它有按钮。',
     'Like hiring a butler for your money — say "send \$100 to Sarah" and it does it. Don\'t feel like talking? Buttons work too.',
   );
-  static String get heroFeat1h => _p('只有你能动你的钱', 'Only you can move your money');
-  static String get heroFeat1s => _p('我们也进不来', 'Not even us');
+  static String get heroFeat1h => _p('动钱需要两把钥匙', 'Two keys to move money');
+  static String get heroFeat1s => _p('三份钥匙分开存，任何单方都动不了', 'Three keys stored apart — no single party can act alone');
   static String get heroFeat2h => _p('100+ 个金融网络', '100+ financial networks');
   static String get heroFeat2s => _p('全世界通用', 'Works worldwide');
   static String get heroFeat3h => _p('AI 帮你跑腿', 'AI does the errands');
@@ -43,7 +43,7 @@ class S {
   static String get startH1 => _p('这是你的第一个钱包吗?', 'Is this your first wallet?');
   static String get startSub => _p('两分钟就能开好。选一个最适合你的方式。', 'Takes two minutes. Pick what fits you.');
   static String get pickCreateTitle => _p('我是新用户,帮我开一个', "I'm new — set one up for me");
-  static String get pickCreateDesc => _p('最简单。我们帮你把钥匙安全保管在三个地方。不用背一长串词。', 'Easiest. We split the key safely across three places. No long phrases to memorize.');
+  static String get pickCreateDesc => _p('最简单。钥匙分成三份存在不同地方，动钱需要两份。不用背一长串词。', 'Easiest. Key split into 3 pieces stored separately — 2 needed to move money. No phrases to memorize.');
   static String get pickCreateTag => _p('推荐', 'Best');
   static String get pickImportTitle => _p('我已经有一个钱包', 'I have a wallet already');
   static String get pickImportDesc => _p('用那 12 或 24 个单词的"找回密码"把它搬进来。', 'Bring it in using those 12 or 24 recovery words.');
@@ -52,10 +52,10 @@ class S {
 
   // Onboarding — Creating
   static String get creatingH1 => _p('正在帮你把钥匙分成三份', 'Splitting your key into three pieces');
-  static String get creatingSub => _p('就像一份保险,任何一份丢了,剩下两份还能开门。完整的钥匙从不出现过。', 'Like an insurance policy — if one piece is lost, the other two still open the door. The whole key never exists in one place.');
-  static String get cl1 => _p('这台手机里存一份', 'One piece on this phone');
-  static String get cl2 => _p('云端保险柜存一份', 'One piece in the cloud safe');
-  static String get cl3 => _p('找回凭证存在你这儿(稍后设置)', 'Recovery piece in your hands (set up later)');
+  static String get creatingSub => _p('动你的钱需要任意两份钥匙。三份分开存放，丢了一份还能恢复。完整的钥匙从不出现在任何地方。', 'Moving your money requires any 2 of 3 keys. Stored separately — lose one, the other two still work. The full key never exists in one place.');
+  static String get cl1 => _p('第 1 份：存在这台手机里', '1st key: stored on this phone');
+  static String get cl2 => _p('第 2 份：存在服务器保险柜', '2nd key: stored in server vault');
+  static String get cl3 => _p('第 3 份：由你自己保管', '3rd key: kept by you');
   static String get createError => _p('钱包创建失败,请重试。', 'Wallet creation failed. Please try again.');
   static String get retry => _p('重试', 'Retry');
 
@@ -72,11 +72,19 @@ class S {
   static String get importSubmit => _p('导入我的钱包', 'Import my wallet');
 
   // Onboarding — Bio
-  static String get bioH1 => _p('每次花钱用人脸确认', 'Confirm with your face');
-  static String get bioSub => _p('就像手机解锁一样。你的脸不会离开这台手机。', 'Just like unlocking your phone. Your face never leaves this device.');
-  static String get bioActivate => _p('打开人脸识别', 'Turn on Face ID');
+  static String get bioH1 => _p('开启生物识别', 'Enable biometric authentication');
+  static String get bioSub => _p('就像手机解锁一样，用指纹或面容保护你的钱包。生物信息不会离开这台手机。', 'Just like unlocking your phone. Protect your wallet with fingerprint or face. Biometric data never leaves this device.');
+  static String get bioActivate => _p('开启生物识别', 'Turn on biometrics');
   static String get bioSkip => _p('改用密码', 'Use a passcode instead');
-  static String get bioDone => _p('Face ID 已开启', 'Face ID ready');
+  static String get bioDone => _p('生物识别已开启', 'Biometrics ready');
+
+  // Onboarding — PIN
+  static String get pinH1 => _p('设置钱包密码', 'Set wallet passcode');
+  static String get pinSub => _p('6 位数字密码，每次交易时需要输入。', '6-digit passcode, required for every transaction.');
+  static String get pinConfirmH1 => _p('再输入一次', 'Confirm passcode');
+  static String get pinConfirmSub => _p('请再输入一遍以确认。', 'Enter the same passcode again to confirm.');
+  static String get pinMismatch => _p('两次输入不一致，请重新设置', 'Passcodes don\'t match. Try again.');
+  static String get pinDone => _p('密码已设置', 'Passcode set');
 
   // Onboarding — Name
   static String get nameH1 => _p('我该怎么叫你?', 'What should I call you?');
@@ -85,22 +93,21 @@ class S {
   static String get nameHint => _p('存在你手机里,不会上传。', 'Stays on your phone. Never uploaded.');
   static String get continueBtn => _p('下一步', 'Continue');
 
-  // Onboarding — Backup
-  static String get backupH1 => _p('备份助记词', 'Backup recovery phrase');
-  static String get backupSub => _p('请写下以下12个单词并安全保存。这是您恢复钱包的唯一方式。', 'Write down these 12 words and keep them safe. This is the only way to recover your wallet.');
-  static String get backupImportant => _p('重要提示', 'Important');
-  static String get backupWarnBody => _p('不要截图、不要拍照、不要上传到云端。cowallet不会保存您的助记词。', 'Do not screenshot, photograph, or upload to the cloud. cowallet never stores your recovery phrase.');
-  static String get backupCopy => _p('复制到剪贴板', 'Copy to clipboard');
-  static String get backupConfirmed => _p('我已安全备份', 'I have safely backed up');
+  // Onboarding — Backup (3rd shard)
+  static String get backupH1 => _p('保管你的第 3 份钥匙', 'Store your 3rd key');
+  static String get backupSub => _p('这是属于你的那份钥匙。动你的钱需要任意两份——手机丢了，用这份 + 服务器就能恢复。', 'This is your personal key. Moving money needs any 2 of 3 — if you lose your phone, this one + server recovers everything.');
   static String get backupSkip => _p('稍后备份 (不推荐)', 'Backup later (not recommended)');
-
-  // Onboarding — Verify Backup
-  static String get verifyH1 => _p('验证助记词', 'Verify recovery phrase');
-  static String get verifySub => _p('请按顺序选择第3、第6、第9、第12个单词', 'Tap the 3rd, 6th, 9th, and 12th words in order');
-  static String get verifySelectLabel => _p('选择单词:', 'Select words:');
-  static String get verifySubmit => _p('确认验证', 'Confirm verification');
-  static String get verifyWrongOrder => _p('助记词顺序不正确,请重新选择', 'Wrong order — please try again');
-  static String get mnemonicCopied => _p('助记词已复制到剪贴板', 'Recovery phrase copied to clipboard');
+  static String get backupCloudTitle => _p('iCloud / Google Cloud', 'iCloud / Google Cloud');
+  static String get backupCloudDesc => _p('加密存储，跨设备自动同步', 'Encrypted, auto-synced across devices');
+  static String get backupFileTitle => _p('导出到文件', 'Export to file');
+  static String get backupFileDesc => _p('手动保存加密备份文件', 'Save encrypted backup file manually');
+  static String get backupSaved => _p('备份完成', 'Backup saved');
+  static String get backupSaving => _p('正在保存...', 'Saving...');
+  static String get backupErrCloudUnavailable => _p('云备份在此设备上不可用', 'Cloud backup is not available on this device');
+  static String get backupErrCloudStoreFailed => _p('云备份保存失败，请重试', 'Cloud backup failed, please try again');
+  static String get backupErrFileWriteFailed => _p('文件保存失败，请检查存储权限', 'File save failed, please check storage permissions');
+  static String get backupErrShardNotAvailable => _p('备份数据不可用，请重新创建钱包', 'Backup data not available, please recreate wallet');
+  static String backupFileSaved(String path) => _p('已保存到: $path', 'Saved to: $path');
 
   // Onboarding — Ready
   static String get readyH1 => _p('都搞定了。', 'All set.');
@@ -111,7 +118,7 @@ class S {
   static String get ready1s => _p('给你试试手,不花你一分钱', 'Try it out, nothing from your pocket');
   static String get ready2h => _p('试着对它说话', 'Try talking to it');
   static String get ready2s => _p('"我的钱都放哪了" "最近有什么花销"', '"Show me my money" "How much did I spend this month?"');
-  static String get ready3h => _p('7 天内设置找回凭证', 'Set up your recovery within 7 days');
+  static String get ready3h => _p('定期检查第 3 份钥匙还在', 'Verify your 3rd key periodically');
   static String get ready3s => _p('防止换手机或丢手机', 'In case you lose your phone');
   static String get readyGo => _p('好,开始用', "OK, let's go");
 
@@ -135,7 +142,7 @@ class S {
   static String get skip => _p('跳过', 'Skip');
 
   // Home
-  static String get homeStatus => _p('一切正常 · 三份钥匙都在 · 今天还没可疑动作', 'All good · all three key pieces safe · no odd activity today');
+  static String get homeStatus => _p('一切正常 · 三份钥匙各就各位 · 今天还没可疑动作', 'All good · all three keys in place · no odd activity today');
   static String get homeGreetMorning => _p('早上好,', 'Good morning,');
   static String get homeSlogan => _p('会听懂人话的钱包 —— 你说一句,它就能帮你办。', "A wallet that speaks your language — say what you need, it'll do it.");
   static String get yourTotal => _p('你的总资产', 'Your total');
@@ -259,12 +266,12 @@ class S {
   // Settings
   static String get settings => _p('设置', 'Settings');
   static String get security => _p('安全', 'Security');
-  static String get keysCheckup => _p('三份钥匙体检', 'Three-piece key checkup');
-  static String get keysCheckupSub => _p('动你的钱,要三份钥匙都点头', 'All three must agree to move your money');
+  static String get keysCheckup => _p('三份钥匙体检', 'Three-key checkup');
+  static String get keysCheckupSub => _p('动你的钱需要任意两份钥匙', 'Any 2 of 3 keys needed to move your money');
   static String get allSafe => _p('都在', 'safe');
   static String get onPhone => _p('手机里', 'On phone');
   static String get inCloud => _p('云端', 'In cloud');
-  static String get recovery => _p('找回码', 'Recovery');
+  static String get recovery => _p('第 3 份钥匙', '3rd Key');
   static String get emergencyFreeze => _p('紧急冻结', 'Emergency freeze');
   static String get emergencyFreezeSub => _p('一键停止所有助手、暂停所有交易', 'Stops all agents, pauses all transactions');
   static String get emergencyContact => _p('紧急联系人', 'Emergency contact');
@@ -294,43 +301,61 @@ class S {
   static String get signoff2 => _p('会听懂人话的钱包', 'A wallet that listens');
 
   // Keys
-  static String get keysH1a => _p('三份钥匙', 'Three pieces,');
-  static String get keysH1b => _p('都点头才能', 'all must agree to');
-  static String get keysH1em => _p('动钱', 'move');
-  static String get keysSub => _p('没人能单独动你的钱 —— 连 cowallet 公司都进不来。', "Nobody can move your money alone — not even cowallet.");
-  static String get keyPhone => _p('手机里那份', 'On this phone');
-  static String get keyPhoneWhere => _p('在你手机的安全区里', "In your phone's secure enclave");
+  static String get keysH1a => _p('三份钥匙', 'Three keys,');
+  static String get keysH1b => _p('两份即可', 'any two to');
+  static String get keysH1em => _p('动钱', 'move money');
+  static String get keysSub => _p('没人能单独动你的钱 —— 连 cowallet 公司都进不来。丢了一份，剩下两份照样恢复。', "Nobody can move your money alone — not even cowallet. Lose one key, the other two still recover everything.");
+  static String get keyPhone => _p('第 1 份 · 手机', '1st key · Phone');
+  static String get keyPhoneWhere => _p('存在手机安全芯片里 (Secure Enclave / StrongBox)', "In your phone's secure chip (Secure Enclave / StrongBox)");
   static String get keyPhoneMeta => _p('✓ 完整 · 12 分钟前刚用过', '✓ Intact · used 12 min ago');
-  static String get keyCloud => _p('云端那份', 'In the cloud');
-  static String get keyCloudWhere => _p('Anchorage 托管 · 美国合规机构', 'Anchorage · US-regulated custodian');
+  static String get keyCloud => _p('第 2 份 · 服务器', '2nd key · Server');
+  static String get keyCloudWhere => _p('cowallet 服务器 · HSM 保护', 'cowallet server · HSM protected');
   static String get keyCloudMeta => _p('✓ 心跳 2 分钟前 · 加密完整', '✓ Heartbeat 2 min ago · encrypted');
-  static String get keyRecovery => _p('找回码那份', 'Recovery piece');
-  static String get keyRecoveryWhere => _p('在你那儿(或没设)', 'In your hands (or unset)');
+  static String get keyRecovery => _p('第 3 份 · 你保管', '3rd key · Yours');
+  static String get keyRecoveryWhere => _p('由你存在 iCloud / Google Drive 或本地文件', 'Stored by you in iCloud / Google Drive or local file');
   static String get keyRecoveryTag => _p('该测了', 'test it');
   static String get keyRecoveryMeta => _p('⚠ 90 天没确认过它还在', '⚠ Not verified in 90 days');
   static String get keyRecoveryAction => _p('现在花 30 秒测一下', 'Test it now (30 seconds)');
+
+  // Key health status
+  static String get justNow => _p('刚刚', 'just now');
+  static String minutesAgo(int n) => _p('$n 分钟前', '$n min ago');
+  static String hoursAgo(int n) => _p('$n 小时前', '$n hours ago');
+  static String daysAgo(int n) => _p('$n 天前', '$n days ago');
+  static String get keyIntact => _p('完整', 'Intact');
+  static String keyLastUsed(String time) => _p('上次使用 $time', 'last used $time');
+  static String keyHeartbeat(String time) => _p('心跳 $time · 加密完整', 'heartbeat $time · encrypted');
+  static String keyVerified(String time) => _p('已验证 $time', 'verified $time');
+  static String get keyNotVerified => _p('尚未验证', 'Not yet verified');
+  static String keyNotVerifiedDays(int n) => _p('$n 天没确认过它还在', 'Not verified in $n days');
+  static String get keyUnavailable => _p('不可用', 'Unavailable');
+  static String get keyServerUnreachable => _p('服务器无法连接', 'Server unreachable');
+  static String get keyServerWarning => _p('服务器响应异常', 'Server response abnormal');
+  static String get backupTestSuccess => _p('第 3 份钥匙验证通过', '3rd key verified successfully');
+  static String get backupTestFailed => _p('第 3 份钥匙验证失败，请检查备份', '3rd key verification failed, please check your backup');
+
   static String get keysExplainLabel => _p('这是怎么回事?', 'How does this work?');
   static String get keysExplainBody => _p(
-    '想象家门有三把锁 —— 你身上一把,信任的帮手(云端)一把,保险柜里一把(找回码)。开门必须凑齐两把以上。就算 cowallet 公司被黑,他们也只拿到一把,开不了你的门。',
-    "Imagine three locks on your door. You hold one. A trusted helper (cloud) holds one. A safe holds one (recovery). Opening needs at least two. Even if cowallet gets hacked, attackers have only one — your door stays shut.",
+    '想象家门有三把锁 —— 手机里一把、服务器一把、你自己保管一把。开门只需要任意两把。就算 cowallet 服务器被黑，攻击者也只拿到一把，开不了你的门。丢了手机？用你保管的 + 服务器就能恢复。',
+    "Imagine three locks on your door — one on your phone, one on the server, one kept by you. Opening only needs any two. Even if cowallet's server gets hacked, attackers only have one — your door stays shut. Lost your phone? Your backup + server recovers everything.",
   );
   static String get keysTechLabel => _p('技术细节 · 给懂行的', 'Tech detail · for pros');
   static String get keysTechBody => _p(
-    '门限签名 (TSS) · 设备端用 Secure Enclave,云端由 Anchorage Digital 托管(SOC2/ISO27001)。任一分片不产生完整私钥。',
-    "Threshold signatures (TSS). Device share in Secure Enclave; cloud share at Anchorage Digital (SOC2/ISO27001). No share reconstructs the full private key.",
+    '2-of-3 门限签名 (DKLS23 TSS) · 设备端用 Secure Enclave / StrongBox，服务端 HSM 保护。任意两方可签名，单一分片无法还原完整私钥。',
+    "2-of-3 threshold signatures (DKLS23 TSS). Device share in Secure Enclave / StrongBox; server share protected by HSM. Any two parties can sign; no single share reconstructs the full private key.",
   );
 
   // Key Security (Reshare)
   static String get keySecurity => _p('密钥安全', 'Key Security');
-  static String get rotateKeyShares => _p('轮转密钥分片', 'Rotate Key Shares');
-  static String get rotateKeySharesSub => _p('刷新密钥分片，旧分片失效，地址不变', 'Refresh key shares, old shares invalidated, address unchanged');
+  static String get rotateKeyShares => _p('轮转三份钥匙', 'Rotate Keys');
+  static String get rotateKeySharesSub => _p('刷新三份钥匙，旧的失效，钱包地址不变', 'Refresh all three keys, old ones invalidated, wallet address unchanged');
   static String get lastRotation => _p('上次轮转', 'Last rotation');
   static String get never => _p('从未', 'Never');
   static String get autoRotate => _p('每 30 天自动轮转', 'Auto-rotate every 30 days');
-  static String get autoRotateSub => _p('定期刷新分片以提高安全性', 'Periodically refresh shares for better security');
+  static String get autoRotateSub => _p('定期刷新三份钥匙以提高安全性', 'Periodically refresh all three keys for better security');
   static String get rotating => _p('轮转中...', 'Rotating...');
-  static String get rotationSuccess => _p('密钥轮转成功', 'Key rotation successful');
-  static String get rotationFailed => _p('密钥轮转失败', 'Key rotation failed');
+  static String get rotationSuccess => _p('三份钥匙已刷新', 'All three keys refreshed');
+  static String get rotationFailed => _p('钥匙轮转失败', 'Key rotation failed');
 
   // Presignatures
   static String get presignatures => _p('预签名', 'Presignatures');

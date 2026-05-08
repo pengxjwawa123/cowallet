@@ -75,6 +75,17 @@ Future<Uint8List> dkgDeriveBackupShare({
   backupPartyIndex: backupPartyIndex,
 );
 
+/// Combine two backup share contributions into the final backup shard.
+/// Adds device_share + server_share modulo the secp256k1 curve order.
+/// Both inputs must be exactly 32 bytes.
+Future<Uint8List> combineBackupShares({
+  required List<int> deviceShare,
+  required List<int> serverShare,
+}) => RustLib.instance.api.crateApiCombineBackupShares(
+  deviceShare: deviceShare,
+  serverShare: serverShare,
+);
+
 /// Initialize a distributed signing session and generate Round 1 (R_0 = k_0*G).
 /// Returns the payload to send to the server.
 Future<FfiSignRound1> signGenerateRound1({required List<int> msgHash}) =>

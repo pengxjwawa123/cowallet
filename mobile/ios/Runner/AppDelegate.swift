@@ -13,7 +13,8 @@ import UIKit
     
     MpcSecureEnclaveHandler.register(with: self)
     MpcSecureStorageHandler.register(with: self)
-    
+    CloudBackupHandler.register(with: self)
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -24,5 +25,6 @@ import UIKit
     let binaryMessenger = engineBridge.pluginRegistry
     MpcSecureEnclaveHandler.register(with: binaryMessenger)
     MpcSecureStorageHandler.register(with: binaryMessenger)
+    CloudBackupHandler.register(with: binaryMessenger)
   }
 }

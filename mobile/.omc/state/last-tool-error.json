@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"adb shell am start -n com.cowallet.mpc/.MainActivity 2>&1\",\"description\":\"Launch the app on device\"}",
-  "error": "Exit code 1\nStarting: Intent { cmp=com.cowallet.mpc/.MainActivity }\nError type 3\nError: Activity class {com.cowallet.mpc/com.cowallet.mpc.MainActivity} does not exist.",
-  "timestamp": "2026-05-07T11:26:16.712Z",
+  "tool_input_preview": "{\"command\":\"find /Users/jingle/cat/cowallet/mobile -type f \\\\( -name \\\"*.swift\\\" -o -name \\\"*.kt\\\" \\\\) | xargs grep -l \\\"CloudBackup\\\\|iCloud\\\\|Backup\\\" 2>/dev/null\"}",
+  "error": "Exit code 1",
+  "timestamp": "2026-05-08T02:31:28.259Z",
   "retry_count": 1
 }

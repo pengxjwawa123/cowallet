@@ -9,19 +9,15 @@ import '../services/locator.dart';
 import '../api/auth_api.dart';
 import '../services/mpc_wallet_service.dart';
 import '../services/mpc_session_manager.dart';
-import '../services/mpc_session_store.dart';
 import '../platform/se_manager.dart';
 import '../platform/sb_manager.dart';
 import '../utils/device_id.dart';
 import '../bridge/mpc_bridge.dart';
-import '../services/recovery_service.dart';
 import '../services/backup_shard_service.dart';
-import '../platform/cloud_backup.dart';
 import '../utils/secure_storage.dart';
-import 'package:convert/convert.dart';
 
 /// The 10 stages of the cowallet onboarding, matching the H5 prototype.
-enum _Stage { hero, start, creating, importing, bio, name, backup, verifyBackup, ready, persona }
+enum _Stage { hero, start, creating, importing, bio, pin, name, backup, ready, persona }
 
 class OnboardingFlow extends StatefulWidget {
   const OnboardingFlow({super.key});
@@ -58,12 +54,16 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   // --- Persona stage state ---
   String? _selectedPersona;
 
+  // --- PIN stage state ---
+  String _pinInput = '';
+  String? _pinFirst; // first entry, waiting for confirm
+  bool _pinMismatch = false;
+  bool _pinDone = false;
+
   // --- Backup stage state ---
-  List<String> _recoveryMnemonic = [];
-  List<String> _verifyWords = [];
-  List<String> _selectedVerifyWords = [];
   bool _backupSkipped = false;
-  bool _backupInCloud = false;
+  bool _backupSaving = false;
+  bool _backupDone = false;
 
   // Keep track of navigation history for back button
   final List<_Stage> _history = [];
@@ -120,7 +120,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     _isResuming = false;
 
     // Check for resumable session first
-    final mpcService = MpcWalletService();
+    final mpcService = Services.mpcWallet;
     final sessionManager = MpcSessionManager(mpcService);
 
     final canResume = await sessionManager.canResume();
@@ -141,7 +141,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       if (generatedAddress != null) {
         CowalletApp.of(context).setWalletAddress(generatedAddress!);
         Future.delayed(const Duration(milliseconds: 400), () {
-          if (mounted) _goTo(_Stage.bio);
+          if (mounted) _goTo(_Stage.backup);
         });
       }
     }
@@ -328,7 +328,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     }
   }
 
-  void _skipBio() => _goTo(_Stage.name);
+  void _skipBio() => _goTo(_Stage.pin);
 
   // ---- Name ----
   void _submitName() {
@@ -336,173 +336,58 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     if (name.isNotEmpty) {
       CowalletApp.of(context).setUserName(name);
     }
-    _goTo(_Stage.backup);
+    _goTo(_Stage.ready);
   }
 
-  // ---- Backup Mnemonic ----
-  Future<void> _startBackup() async {
-    // Generate real BIP-39 mnemonic from backup shard bytes
+  // ---- Backup: store 3rd shard ----
+  Future<void> _saveBackup({required bool useCloud}) async {
+    setState(() => _backupSaving = true);
     try {
-      // Get the last DKG session ID from MpcSessionStore
-      final lastSession = await MpcSessionStore.loadSession();
-      if (lastSession == null) {
-        throw Exception('No DKG session found');
+      final walletService = Services.wallet as MpcWalletService;
+      final backupBytes = walletService.lastBackupShard;
+
+      if (backupBytes == null || backupBytes.length != 32) {
+        throw BackupException(BackupError.shardNotAvailable);
       }
 
-      // Derive the actual 32-byte backup shard from DKG
-      final backupBytes = await MpcBridge.dkgDeriveBackupShare(lastSession.sessionId);
-
-      // Convert to 24-word BIP-39-style mnemonic (256 bits = 24 words)
-      setState(() {
-        _recoveryMnemonic = _bytesToMnemonic(backupBytes);
-      });
-    } catch (e) {
-      print('[OnboardingBackup] Failed to derive backup shard: $e');
-      // Fallback to dummy words if derivation fails
-      setState(() {
-        _recoveryMnemonic = _generateDummyMnemonic();
-      });
-    }
-  }
-
-  List<String> _bytesToMnemonic(List<int> bytes) {
-    // BIP-39 English wordlist (2048 words, subset for demonstration)
-    const wordList = [
-      'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
-      'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
-      'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual',
-      'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
-      'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
-      'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album',
-      'alcohol', 'alert', 'alien', 'all', 'alley', 'allow', 'almost', 'alone',
-      'alpha', 'already', 'also', 'alter', 'always', 'amateur', 'amazing', 'among',
-      'amount', 'amused', 'analyst', 'anchor', 'ancient', 'anger', 'angle', 'angry',
-      'animal', 'ankle', 'announce', 'annual', 'another', 'answer', 'antenna', 'antique',
-      'anxiety', 'any', 'apart', 'apology', 'appear', 'apple', 'approve', 'april',
-      'arch', 'arctic', 'area', 'arena', 'argue', 'arm', 'armed', 'armor',
-      'army', 'around', 'arrange', 'arrest', 'arrive', 'arrow', 'art', 'artefact',
-      'artist', 'artwork', 'ask', 'aspect', 'assault', 'asset', 'assist', 'assume',
-      'asthma', 'athlete', 'atom', 'attack', 'attend', 'attitude', 'attract', 'auction',
-      'audit', 'august', 'aunt', 'author', 'auto', 'autumn', 'average', 'avocado',
-      'avoid', 'awake', 'aware', 'away', 'awesome', 'awful', 'awkward', 'axis',
-      'baby', 'bachelor', 'bacon', 'badge', 'bag', 'balance', 'balcony', 'ball',
-      'bamboo', 'banana', 'banner', 'bar', 'barely', 'bargain', 'barrel', 'base',
-      'basic', 'basket', 'battle', 'beach', 'bean', 'beauty', 'because', 'become',
-      'beef', 'before', 'begin', 'behave', 'behind', 'believe', 'below', 'belt',
-      'bench', 'benefit', 'best', 'betray', 'better', 'between', 'beyond', 'bicycle',
-      'bid', 'bike', 'bind', 'biology', 'bird', 'birth', 'bitter', 'black',
-      'blade', 'blame', 'blanket', 'blast', 'bleak', 'bless', 'blind', 'blood',
-      'blossom', 'blouse', 'blue', 'blur', 'blush', 'board', 'boat', 'body',
-      'boil', 'bomb', 'bone', 'bonus', 'book', 'boost', 'border', 'boring',
-      'borrow', 'boss', 'bottom', 'bounce', 'box', 'boy', 'bracket', 'brain',
-      'brand', 'brass', 'brave', 'bread', 'breeze', 'brick', 'bridge', 'brief',
-      'bright', 'bring', 'brisk', 'broccoli', 'broken', 'bronze', 'broom', 'brother',
-      'brown', 'brush', 'bubble', 'buddy', 'budget', 'buffalo', 'build', 'bulb',
-      'bulk', 'bullet', 'bundle', 'bunker', 'burden', 'burger', 'burst', 'bus',
-      'business', 'busy', 'butter', 'buyer', 'buzz', 'cabbage', 'cabin', 'cable',
-    ];
-
-    // Ensure we have exactly 32 bytes
-    if (bytes.length != 32) {
-      print('[Mnemonic] Warning: expected 32 bytes, got ${bytes.length}');
-    }
-
-    // Convert bytes to 11-bit indices (BIP-39 encoding)
-    final words = <String>[];
-    int bitBuffer = 0;
-    int bitsInBuffer = 0;
-
-    for (final byte in bytes) {
-      bitBuffer = (bitBuffer << 8) | byte;
-      bitsInBuffer += 8;
-
-      while (bitsInBuffer >= 11) {
-        bitsInBuffer -= 11;
-        final index = (bitBuffer >> bitsInBuffer) & 0x7FF; // Extract 11 bits
-        words.add(wordList[index % wordList.length]); // Use modulo for safety
-
-        if (words.length == 24) break;
-      }
-      if (words.length == 24) break;
-    }
-
-    // Pad if needed
-    while (words.length < 24) {
-      words.add(wordList[0]);
-    }
-
-    return words;
-  }
-
-  List<String> _generateDummyMnemonic() {
-    // Fallback dummy words if backup derivation fails
-    const wordList = [
-      'alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot',
-      'golf', 'hotel', 'india', 'juliett', 'kilo', 'lima',
-      'mike', 'november', 'oscar', 'papa', 'quebec', 'romeo',
-      'sierra', 'tango', 'uniform', 'victor', 'whiskey', 'xray',
-    ];
-
-    final words = <String>[];
-    for (var i = 0; i < 24; i++) {
-      words.add(wordList[i % wordList.length]);
-    }
-    return words;
-  }
-
-  void _copyMnemonic() {
-    Clipboard.setData(ClipboardData(text: _recoveryMnemonic.join(' ')));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(S.mnemonicCopied),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
-  Future<void> _saveToCloud() async {
-    try {
-      // Get the last DKG session ID from MpcSessionStore
-      final lastSession = await MpcSessionStore.loadSession();
-      if (lastSession == null) {
-        throw Exception('No DKG session found');
-      }
-
-      // Derive backup shard bytes
-      final backupBytes = await MpcBridge.dkgDeriveBackupShare(lastSession.sessionId);
-
-      // Save to cloud using BackupShardService
-      final cloudBackup = PlatformCloudBackup();
-      final backupService = BackupShardService(cloudBackup);
-
-      final result = await backupService.storeBackupShard(backupBytes);
+      final result = await walletService.storeBackupShard(backupBytes, useCloud: useCloud);
 
       if (!mounted) return;
 
-      if (result.method == BackupMethod.cloud) {
-        setState(() => _backupInCloud = true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Backup saved to cloud successfully'),
-            backgroundColor: CwColors.success,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      } else {
-        // File backup fallback
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Backup saved to file: ${result.filePath}'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      print('[OnboardingBackup] Failed to save to cloud: $e');
-      if (!mounted) return;
+      setState(() {
+        _backupSaving = false;
+        _backupDone = true;
+      });
+
+      final msg = result.method == BackupMethod.cloud
+          ? S.backupSaved
+          : S.backupFileSaved(result.filePath ?? '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Cloud backup failed: $e'),
+          content: Text(msg),
+          backgroundColor: CwColors.success,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) _goTo(_Stage.bio);
+      });
+    } catch (e, st) {
+      print('[OnboardingBackup] Error: $e');
+      print('[OnboardingBackup] StackTrace: $st');
+      if (!mounted) return;
+      setState(() => _backupSaving = false);
+      final errMsg = switch (e) {
+        BackupException(error: BackupError.cloudUnavailable) => S.backupErrCloudUnavailable,
+        BackupException(error: BackupError.cloudStoreFailed) => S.backupErrCloudStoreFailed,
+        BackupException(error: BackupError.fileWriteFailed) => S.backupErrFileWriteFailed,
+        BackupException(error: BackupError.shardNotAvailable) => S.backupErrShardNotAvailable,
+        _ => S.backupErrCloudStoreFailed,
+      };
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errMsg),
           backgroundColor: CwColors.danger,
           duration: const Duration(seconds: 3),
         ),
@@ -510,59 +395,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     }
   }
 
-  void _confirmBackup() {
-    // Prepare verification - show 4 random words in shuffled order
-    final shuffled = List<String>.from(_recoveryMnemonic)..shuffle();
-    _verifyWords = shuffled.take(4).toList();
-    _selectedVerifyWords = [];
-    _goTo(_Stage.verifyBackup);
-  }
-
   void _skipBackup() {
     setState(() => _backupSkipped = true);
-    _goTo(_Stage.ready);
-  }
-
-  // ---- Verify Backup ----
-  void _toggleVerifyWord(String word) {
-    setState(() {
-      if (_selectedVerifyWords.contains(word)) {
-        _selectedVerifyWords.remove(word);
-      } else {
-        _selectedVerifyWords.add(word);
-      }
-    });
-  }
-
-  bool _isVerifyCorrect() {
-    // Check if selected words are in the correct order (positions 3, 6, 9, 12)
-    final checkPositions = [2, 5, 8, 11]; // 0-indexed
-    for (var i = 0; i < checkPositions.length && i < _selectedVerifyWords.length; i++) {
-      if (_selectedVerifyWords[i] != _recoveryMnemonic[checkPositions[i]]) {
-        return false;
-      }
-    }
-    return _selectedVerifyWords.length == 4;
-  }
-
-  void _submitVerification() {
-    if (_isVerifyCorrect()) {
-      // Clear mnemonic from memory after successful backup
-      _recoveryMnemonic.clear();
-      _verifyWords.clear();
-      _selectedVerifyWords.clear();
-      _goTo(_Stage.ready);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(S.verifyWrongOrder),
-          backgroundColor: CwColors.danger,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      // Reset selection
-      setState(() => _selectedVerifyWords.clear());
-    }
+    _goTo(_Stage.bio);
   }
 
   // ---- Importing ----
@@ -570,7 +405,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     if (_wordCount != 12 && _wordCount != 24) return;
 
     try {
-      // Convert mnemonic words back to bytes (reverse of _bytesToMnemonic)
+      // Convert mnemonic words back to bytes
       final words = _importCtrl.text.trim().split(RegExp(r'\s+'));
       final backupBytes = _mnemonicToBytes(words);
 
@@ -597,7 +432,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   }
 
   List<int> _mnemonicToBytes(List<String> words) {
-    // Reverse of _bytesToMnemonic: convert words back to bytes
+    // Convert words back to bytes
     // Simplified implementation - in production use full BIP-39 decoding
     final bytes = <int>[];
 
@@ -636,7 +471,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
 
     // Persist onboarding metadata
     await SecureStorage.save('onboarding_completed_at', DateTime.now().toIso8601String());
-    await SecureStorage.save('backup_status', _backupSkipped ? 'skipped' : (_backupInCloud ? 'cloud' : 'manual'));
+    await SecureStorage.save('backup_status', _backupSkipped ? 'skipped' : (_backupDone ? 'saved' : 'pending'));
     await SecureStorage.save('mpc_address', addr);
 
     if (addr.isNotEmpty) {
@@ -672,12 +507,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         return _importingStage();
       case _Stage.bio:
         return _bioStage();
+      case _Stage.pin:
+        return _pinStage();
       case _Stage.name:
         return _nameStage();
       case _Stage.backup:
         return _backupStage();
-      case _Stage.verifyBackup:
-        return _verifyBackupStage();
       case _Stage.ready:
         return _readyStage();
       case _Stage.persona:
@@ -1260,14 +1095,12 @@ class _OnboardingFlowState extends State<OnboardingFlow>
             child: Column(
               children: [
                 const SizedBox(height: 40),
-                // Face ID icon in animated ring
                 SizedBox(
                   width: 120,
                   height: 120,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // Animated ring
                       AnimatedBuilder(
                         animation: _bioRingCtrl,
                         builder: (_, _) {
@@ -1292,9 +1125,8 @@ class _OnboardingFlowState extends State<OnboardingFlow>
                           );
                         },
                       ),
-                      // Icon
                       Icon(
-                        _bioDone ? Icons.check_circle : Icons.face,
+                        _bioDone ? Icons.check_circle : Icons.fingerprint,
                         size: 56,
                         color: _bioDone ? CwColors.success : CwColors.accent,
                       ),
@@ -1321,6 +1153,156 @@ class _OnboardingFlowState extends State<OnboardingFlow>
           ),
         ],
       ),
+    );
+  }
+
+  // ===================== STAGE 5b: PIN =====================
+
+  void _onPinDigit(String digit) {
+    if (_pinInput.length >= 6) return;
+    setState(() {
+      _pinInput += digit;
+      _pinMismatch = false;
+    });
+    if (_pinInput.length == 6) {
+      _onPinComplete(_pinInput);
+    }
+  }
+
+  void _onPinBackspace() {
+    if (_pinInput.isEmpty) return;
+    setState(() {
+      _pinInput = _pinInput.substring(0, _pinInput.length - 1);
+      _pinMismatch = false;
+    });
+  }
+
+  Future<void> _onPinComplete(String pin) async {
+    if (_pinFirst == null) {
+      setState(() {
+        _pinFirst = pin;
+        _pinInput = '';
+      });
+    } else {
+      if (pin == _pinFirst) {
+        await SecureStorage.save('wallet_pin', pin);
+        setState(() => _pinDone = true);
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (mounted) _goTo(_Stage.name);
+        });
+      } else {
+        setState(() {
+          _pinMismatch = true;
+          _pinInput = '';
+          _pinFirst = null;
+        });
+      }
+    }
+  }
+
+  Widget _pinStage() {
+    final isConfirm = _pinFirst != null && !_pinDone;
+    return SingleChildScrollView(
+      key: const ValueKey('pin'),
+      child: Column(
+        children: [
+          _topBar(step: 2, total: 3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              children: [
+                const SizedBox(height: 40),
+                Icon(
+                  _pinDone ? Icons.check_circle : Icons.lock_outline,
+                  size: 56,
+                  color: _pinDone ? CwColors.success : CwColors.accent,
+                ),
+                const SizedBox(height: 32),
+                _heading(_pinDone ? S.pinDone : (isConfirm ? S.pinConfirmH1 : S.pinH1)),
+                const SizedBox(height: 8),
+                _subtitle(isConfirm ? S.pinConfirmSub : S.pinSub),
+                const SizedBox(height: 32),
+                if (_pinMismatch)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      S.pinMismatch,
+                      style: TextStyle(color: CwColors.danger, fontSize: 14),
+                    ),
+                  ),
+                if (!_pinDone) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(6, (i) {
+                      final filled = i < _pinInput.length;
+                      return Container(
+                        width: 16,
+                        height: 16,
+                        margin: const EdgeInsets.symmetric(horizontal: 8),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: filled ? CwColors.accent : Colors.transparent,
+                          border: Border.all(
+                            color: filled ? CwColors.accent : CwColors.ink4,
+                            width: 2,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 40),
+                  _buildNumPad(),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNumPad() {
+    return Column(
+      children: [
+        for (final row in [['1','2','3'], ['4','5','6'], ['7','8','9'], ['','0','⌫']])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: row.map((key) {
+                if (key.isEmpty) return const SizedBox(width: 72, height: 56);
+                return GestureDetector(
+                  onTap: () {
+                    if (key == '⌫') {
+                      _onPinBackspace();
+                    } else {
+                      _onPinDigit(key);
+                    }
+                  },
+                  child: Container(
+                    width: 72,
+                    height: 56,
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: CwColors.bgCard,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: CwColors.line),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      key,
+                      style: TextStyle(
+                        fontSize: key == '⌫' ? 20 : 24,
+                        fontWeight: FontWeight.w500,
+                        color: CwColors.ink1,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1393,182 +1375,69 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     );
   }
 
-  // ===================== STAGE 7: BACKUP =====================
+  // ===================== STAGE 7: BACKUP (store 3rd shard) =====================
 
   Widget _backupStage() {
-    // Lazy generate mnemonic when first entering this stage
-    if (_recoveryMnemonic.isEmpty) {
-      Future.microtask(() => _startBackup());
-    }
-
     return SingleChildScrollView(
       key: const ValueKey('backup'),
       child: Column(
         children: [
-          _topBar(showBack: true, step: 2, total: 3),
+          _topBar(step: 1, total: 3),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 28),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 12),
-                Center(child: _heading(S.backupH1)),
+                const SizedBox(height: 24),
+                Icon(Icons.shield_outlined, size: 64, color: CwColors.accent),
+                const SizedBox(height: 24),
+                _heading(S.backupH1),
                 const SizedBox(height: 8),
-                Center(
-                  child: _subtitle(S.backupSub),
-                ),
-                const SizedBox(height: 20),
-                // Warning box
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: CwColors.warnSoft,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: CwColors.warn.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.warning_amber_rounded,
-                          size: 20, color: CwColors.warn),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(S.backupImportant,
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: CwColors.warn)),
-                            const SizedBox(height: 4),
-                            Text(S.backupWarnBody,
-                                style: TextStyle(
-                                    fontSize: 12, color: CwColors.ink2)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // Mnemonic grid
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: CwColors.bgCard,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: CwColors.line),
-                  ),
-                  child: Column(
-                    children: [
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 3.5,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 8,
-                        ),
-                        itemCount: _recoveryMnemonic.length,
-                        itemBuilder: (context, i) {
-                          return Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            decoration: BoxDecoration(
-                              color: CwColors.accentSoft.withValues(alpha: 0.3),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                Text(
-                                  '${i + 1}',
-                                  style: TextStyle(
-                                    fontFamily: 'JetBrainsMono',
-                                    fontSize: 12,
-                                    color: CwColors.ink3,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _recoveryMnemonic[i],
-                                    style: TextStyle(
-                                      fontFamily: 'JetBrainsMono',
-                                      fontSize: 13,
-                                      color: CwColors.ink1,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      // Copy button
-                      TextButton.icon(
-                        onPressed: _copyMnemonic,
-                        icon: Icon(Icons.copy, size: 16, color: CwColors.accent),
-                        label: Text(
-                          S.backupCopy,
-                          style: TextStyle(fontSize: 13, color: CwColors.accent),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Cloud backup button
-                if (!_backupInCloud)
+                _subtitle(S.backupSub),
+                const SizedBox(height: 32),
+                if (_backupDone) ...[
                   Container(
                     width: double.infinity,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: CwColors.line),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: TextButton.icon(
-                      onPressed: _saveToCloud,
-                      icon: Icon(Icons.cloud_upload, size: 18, color: CwColors.accent),
-                      label: Text(
-                        'Save to iCloud / Google Cloud',
-                        style: TextStyle(fontSize: 14, color: CwColors.accent),
-                      ),
-                    ),
-                  )
-                else
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: CwColors.success.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
                       border: Border.all(color: CwColors.success.withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.check_circle, size: 18, color: CwColors.success),
-                        const SizedBox(width: 8),
+                        Icon(Icons.check_circle, size: 20, color: CwColors.success),
+                        const SizedBox(width: 10),
                         Text(
-                          'Backed up to cloud',
-                          style: TextStyle(fontSize: 14, color: CwColors.success, fontWeight: FontWeight.w600),
+                          S.backupSaved,
+                          style: TextStyle(fontSize: 15, color: CwColors.success, fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
                   ),
-                const SizedBox(height: 24),
-                _primaryButton(S.backupConfirmed, _confirmBackup),
-                const SizedBox(height: 12),
-                Center(
-                  child: _secondaryLink(S.backupSkip, _skipBackup),
-                ),
+                ] else if (_backupSaving) ...[
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(S.backupSaving, style: TextStyle(color: CwColors.ink3)),
+                ] else ...[
+                  _backupOptionCard(
+                    icon: Icons.cloud_upload_outlined,
+                    title: S.backupCloudTitle,
+                    desc: S.backupCloudDesc,
+                    onTap: () => _saveBackup(useCloud: true),
+                  ),
+                  const SizedBox(height: 12),
+                  _backupOptionCard(
+                    icon: Icons.save_alt_outlined,
+                    title: S.backupFileTitle,
+                    desc: S.backupFileDesc,
+                    onTap: () => _saveBackup(useCloud: false),
+                  ),
+                  const SizedBox(height: 24),
+                  Center(
+                    child: _secondaryLink(S.backupSkip, _skipBackup),
+                  ),
+                ],
                 const SizedBox(height: 24),
               ],
             ),
@@ -1578,119 +1447,52 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     );
   }
 
-  // ===================== STAGE 8: VERIFY BACKUP =====================
-
-  Widget _verifyBackupStage() {
-    return SingleChildScrollView(
-      key: const ValueKey('verifyBackup'),
-      child: Column(
-        children: [
-          _topBar(showBack: true, step: 2, total: 3),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 12),
-                Center(child: _heading(S.verifyH1)),
-                const SizedBox(height: 8),
-                Center(
-                  child: _subtitle(S.verifySub),
-                ),
-                const SizedBox(height: 24),
-                // Selected words display
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: CwColors.bgCard,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: CwColors.line),
-                  ),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: List.generate(4, (i) {
-                      final hasSelection = i < _selectedVerifyWords.length;
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: hasSelection
-                              ? CwColors.accentSoft
-                              : CwColors.bgPaper,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: hasSelection ? CwColors.accent : CwColors.line,
-                            width: hasSelection ? 1.5 : 1,
-                          ),
-                        ),
-                        child: Text(
-                          hasSelection ? _selectedVerifyWords[i] : '${i + 1}',
-                          style: TextStyle(
-                            fontFamily: 'JetBrainsMono',
-                            fontSize: 13,
-                            color: hasSelection ? CwColors.accent : CwColors.ink3,
-                            fontWeight: hasSelection ? FontWeight.w600 : FontWeight.w400,
-                          ),
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                // Word options
-                Text(
-                  S.verifySelectLabel,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: CwColors.ink2,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _verifyWords.map((word) {
-                    final isSelected = _selectedVerifyWords.contains(word);
-                    return GestureDetector(
-                      onTap: () => _toggleVerifyWord(word),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: isSelected ? CwColors.accent : CwColors.bgCard,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: isSelected ? CwColors.accent : CwColors.line,
-                            width: isSelected ? 1.5 : 1,
-                          ),
-                        ),
-                        child: Text(
-                          word,
-                          style: TextStyle(
-                            fontFamily: 'JetBrainsMono',
-                            fontSize: 13,
-                            color: isSelected ? Colors.white : CwColors.ink1,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 32),
-                _primaryButton(
-                  S.verifySubmit,
-                  _selectedVerifyWords.length == 4 ? _submitVerification : null,
-                ),
-                const SizedBox(height: 24),
-              ],
+  Widget _backupOptionCard({
+    required IconData icon,
+    required String title,
+    required String desc,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: CwColors.bgCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: CwColors.line),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: CwColors.accentSoft,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, size: 22, color: CwColors.accent),
             ),
-          ),
-        ],
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: CwColors.ink1)),
+                  const SizedBox(height: 2),
+                  Text(desc,
+                      style: TextStyle(fontSize: 13, color: CwColors.ink3)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: CwColors.ink4),
+          ],
+        ),
       ),
     );
   }

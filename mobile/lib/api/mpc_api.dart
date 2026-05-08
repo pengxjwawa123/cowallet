@@ -111,6 +111,12 @@ class MpcApi {
     );
   }
 
+  /// 查询服务器端分片状态（心跳）
+  /// GET /api/v1/shards/status
+  static Future<Result<Map<String, dynamic>>> getServerShardStatus() async {
+    return await DioClient.get("/shards/status");
+  }
+
   /// 获取服务器的备份分片贡献
   /// GET /api/v1/mpc/session/{id}/backup-contribution
   /// [sessionId] DKG会话ID
@@ -124,9 +130,9 @@ class MpcApi {
       if (result.data is List) {
         return Result.success(List<int>.from(result.data as List));
       }
-      return Result.error('Invalid backup contribution format');
+      return Result.error('Invalid backup contribution format', 400);
     }
 
-    return Result.error(result.errorMessage ?? 'Failed to fetch backup contribution');
+    return Result.error(result.errorMessage ?? 'Failed to fetch backup contribution', result.errorCode ?? 500);
   }
 }

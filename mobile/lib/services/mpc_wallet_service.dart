@@ -17,6 +17,7 @@ import 'mpc_session_store.dart';
 class MpcWalletService implements WalletService {
   String? _currentSessionId;
   BackupResult? _lastBackupResult;
+  List<int>? _lastBackupShard;
   static const int _deviceParty = 0;
   static const int _serverParty = 1;
   static const int _backupParty = 2;
@@ -142,8 +143,11 @@ class MpcWalletService implements WalletService {
 
       final walletInfo = await MpcBridge.dkgFinalize(localSessionId);
 
+      // Derive backup shard (device + server combined) and keep in memory.
+      // The UI will prompt the user to choose a storage method.
       try {
-        await _storeBackupShard(localSessionId);
+        _lastBackupShard = await _deriveBackupShard(localSessionId);
+        print('[MpcWalletService] Backup shard derived successfully (${_lastBackupShard!.length} bytes)');
       } catch (e) {
         print('[MpcWalletService] Backup shard derivation skipped: $e');
       }
@@ -393,12 +397,9 @@ class MpcWalletService implements WalletService {
   }
 
   /// 提取并存储备份分片
-  /// 实现流程：
-  /// 1. 计算设备的备份贡献 f_device(3)
-  /// 2. 从服务器获取 f_server(3)
-  /// 3. 相加两个标量 mod secp256k1_order
-  /// 4. 存储最终的备份分片
-  Future<void> _storeBackupShard(String localSessionId) async {
+  /// 计算完整备份分片 (f_device(3) + f_server(3))
+  /// 返回 32 字节标量，不自动存储。UI 层负责让用户选择存储方式。
+  Future<List<int>> _deriveBackupShard(String localSessionId) async {
     // Step 1: Compute device's contribution to backup shard (f_device(3))
     final deviceContribution = await MpcBridge.dkgDeriveBackupShare(
       localSessionId,
@@ -412,7 +413,6 @@ class MpcWalletService implements WalletService {
     }
 
     // Step 2: Fetch server's contribution (f_server(3)) from API
-    // The remote session ID was saved earlier during DKG
     if (_currentSessionId == null) {
       throw MpcException('No active session ID for fetching server backup contribution');
     }
@@ -443,11 +443,19 @@ class MpcWalletService implements WalletService {
       );
     }
 
-    // Step 4: Store the final backup shard
-    final backupService = BackupShardService(PlatformCloudBackup());
-    _lastBackupResult = await backupService.storeBackupShard(combinedBackupShard);
+    return combinedBackupShard;
+  }
 
-    print('[MpcWalletService] Backup shard successfully derived and stored');
+  /// 获取 DKG 后计算好的备份分片（内存中，未存储）
+  /// UI 层应调用此方法获取数据，然后让用户选择存储方式
+  List<int>? get lastBackupShard => _lastBackupShard;
+
+  /// 用户选择存储方式后调用此方法
+  Future<BackupResult> storeBackupShard(List<int> shardBytes, {required bool useCloud}) async {
+    final backupService = BackupShardService(PlatformCloudBackup());
+    _lastBackupResult = await backupService.storeBackupShard(shardBytes, useCloud: useCloud);
+    _lastBackupShard = null;
+    return _lastBackupResult!;
   }
 
   /// 获取上次 DKG 的备份结果

@@ -19,18 +19,28 @@ class BackupShardService {
 
   /// Store the backup shard. Returns the backup method used.
   /// If cloud is unavailable, returns a file path for the user to save.
-  Future<BackupResult> storeBackupShard(List<int> shardBytes) async {
+  Future<BackupResult> storeBackupShard(List<int> shardBytes, {required bool useCloud}) async {
     final shardHex = hex.encode(shardBytes);
     final payload = _buildBackupPayload(shardHex);
 
-    if (await _cloud.isAvailable()) {
-      await _cloud.store(_backupKey, payload);
+    if (useCloud) {
+      if (!await _cloud.isAvailable()) {
+        throw BackupException(BackupError.cloudUnavailable);
+      }
+      try {
+        await _cloud.store(_backupKey, payload);
+      } catch (_) {
+        throw BackupException(BackupError.cloudStoreFailed);
+      }
       return BackupResult(method: BackupMethod.cloud);
     }
 
-    // Cloud unavailable — write to a file for user to export
-    final filePath = await _writeBackupFile(payload);
-    return BackupResult(method: BackupMethod.file, filePath: filePath);
+    try {
+      final filePath = await _writeBackupFile(payload);
+      return BackupResult(method: BackupMethod.file, filePath: filePath);
+    } catch (_) {
+      throw BackupException(BackupError.fileWriteFailed);
+    }
   }
 
   /// Retrieve the backup shard from cloud storage.
@@ -85,7 +95,15 @@ class BackupShardService {
   }
 
   Future<String> _writeBackupFile(String payload) async {
-    final dir = await getApplicationDocumentsDirectory();
+    Directory dir;
+    if (Platform.isAndroid) {
+      dir = Directory('/storage/emulated/0/Download');
+      if (!await dir.exists()) {
+        dir = await getApplicationDocumentsDirectory();
+      }
+    } else {
+      dir = await getApplicationDocumentsDirectory();
+    }
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final file = File('${dir.path}/cowallet_backup_$timestamp.json');
     await file.writeAsString(payload);
@@ -100,4 +118,14 @@ class BackupResult {
   final String? filePath;
 
   BackupResult({required this.method, this.filePath});
+}
+
+enum BackupError { cloudUnavailable, cloudStoreFailed, fileWriteFailed, shardNotAvailable }
+
+class BackupException implements Exception {
+  final BackupError error;
+  BackupException(this.error);
+
+  @override
+  String toString() => error.name;
 }

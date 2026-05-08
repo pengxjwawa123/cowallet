@@ -3,6 +3,7 @@ import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/cw_chip.dart';
 import '../../services/locator.dart';
+import '../../services/key_health_service.dart';
 
 class KeysView extends StatefulWidget {
   const KeysView({super.key});
@@ -13,11 +14,25 @@ class KeysView extends StatefulWidget {
 
 class _KeysViewState extends State<KeysView> {
   bool _isAuthenticated = false;
+  bool _testingBackup = false;
+  bool _phoneLoading = true;
+  bool _serverLoading = true;
+  bool _backupLoading = true;
+
+  final _keyHealth = KeyHealthService();
+  KeyHealth? _phoneHealth;
+  KeyHealth? _serverHealth;
+  KeyHealth? _backupHealth;
 
   @override
   void initState() {
     super.initState();
-    _checkBiometricStatus();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _checkBiometricStatus();
+    await _runHealthChecks();
   }
 
   Future<void> _checkBiometricStatus() async {
@@ -25,12 +40,28 @@ class _KeysViewState extends State<KeysView> {
     final enabled = await Services.biometrics.isEnabled();
     final hasEnrolled = await Services.biometrics.hasEnrolledBiometrics();
     if (mounted) {
-      // If biometric not available, not enabled, or no biometric enrolled,
-      // auto-show keys without requiring authentication
       if (!available || !enabled || !hasEnrolled) {
         setState(() => _isAuthenticated = true);
       }
     }
+  }
+
+  Future<void> _runHealthChecks() async {
+    setState(() {
+      _phoneLoading = true;
+      _serverLoading = true;
+      _backupLoading = true;
+    });
+
+    _keyHealth.checkPhoneKey().then((h) {
+      if (mounted) setState(() { _phoneHealth = h; _phoneLoading = false; });
+    });
+    _keyHealth.checkServerKey().then((h) {
+      if (mounted) setState(() { _serverHealth = h; _serverLoading = false; });
+    });
+    _keyHealth.checkBackupKey().then((h) {
+      if (mounted) setState(() { _backupHealth = h; _backupLoading = false; });
+    });
   }
 
   Future<bool> _authenticate() async {
@@ -46,217 +77,273 @@ class _KeysViewState extends State<KeysView> {
     return authenticated;
   }
 
+  Future<void> _testBackupKey() async {
+    setState(() => _testingBackup = true);
+    final success = await _keyHealth.testBackupKey();
+    if (mounted) {
+      setState(() => _testingBackup = false);
+      if (success) {
+        _backupHealth = KeyHealth(
+          status: KeyStatus.ok,
+          lastChecked: DateTime.now(),
+        );
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(S.backupTestSuccess),
+            backgroundColor: CwColors.success,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(S.backupTestFailed),
+            backgroundColor: CwColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  String _formatTimeAgo(DateTime? time) {
+    if (time == null) return '—';
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return S.justNow;
+    if (diff.inMinutes < 60) return S.minutesAgo(diff.inMinutes);
+    if (diff.inHours < 24) return S.hoursAgo(diff.inHours);
+    return S.daysAgo(diff.inDays);
+  }
+
+  String _phoneMetaText() {
+    if (_phoneHealth == null) return '...';
+    if (_phoneHealth!.status == KeyStatus.error) return '✗ ${_phoneHealth!.error ?? S.keyUnavailable}';
+    final lastUsed = _phoneHealth!.lastUsed;
+    if (lastUsed != null) return '✓ ${S.keyIntact} · ${S.keyLastUsed(_formatTimeAgo(lastUsed))}';
+    return '✓ ${S.keyIntact}';
+  }
+
+  String _serverMetaText() {
+    if (_serverHealth == null) return '...';
+    if (_serverHealth!.status == KeyStatus.error) return '✗ ${S.keyServerUnreachable}';
+    if (_serverHealth!.status == KeyStatus.warning) return '⚠ ${_serverHealth!.error ?? S.keyServerWarning}';
+    final checked = _serverHealth!.lastChecked;
+    return '✓ ${S.keyHeartbeat(_formatTimeAgo(checked))}';
+  }
+
+  String _backupMetaText() {
+    if (_backupHealth == null) return '...';
+    if (_backupHealth!.status == KeyStatus.ok) {
+      return '✓ ${S.keyVerified(_formatTimeAgo(_backupHealth!.lastChecked))}';
+    }
+    if (_backupHealth!.status == KeyStatus.unknown) return '⚠ ${S.keyNotVerified}';
+    if (_backupHealth!.lastChecked != null) {
+      final days = DateTime.now().difference(_backupHealth!.lastChecked!).inDays;
+      if (days > 90) return '⚠ ${S.keyNotVerifiedDays(days)}';
+      return '✓ ${S.keyVerified(_formatTimeAgo(_backupHealth!.lastChecked))}';
+    }
+    return '⚠ ${S.keyNotVerified}';
+  }
+
+  KeyStatus _overallBackupStatus() {
+    if (_backupHealth == null) return KeyStatus.unknown;
+    if (_backupHealth!.status == KeyStatus.ok) return KeyStatus.ok;
+    if (_backupHealth!.lastChecked != null) {
+      final days = DateTime.now().difference(_backupHealth!.lastChecked!).inDays;
+      if (days > 90) return KeyStatus.warning;
+      return KeyStatus.ok;
+    }
+    return _backupHealth!.status;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         leading: const BackButton(),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
-        children: [
-          // ── Hero ──
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: '${S.keysH1a}\n',
-                  style: const TextStyle(
-                    fontFamily: 'NotoSerifSC',
-                    fontSize: 26,
-                    fontWeight: FontWeight.w600,
-                    color: CwColors.ink1,
-                    letterSpacing: -0.52,
-                    height: 1.3,
+      body: RefreshIndicator(
+        onRefresh: _runHealthChecks,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
+          children: [
+            // Hero
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '${S.keysH1a}\n',
+                    style: const TextStyle(
+                      fontFamily: 'NotoSerifSC',
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      color: CwColors.ink1,
+                      letterSpacing: -0.52,
+                      height: 1.3,
+                    ),
                   ),
-                ),
-                TextSpan(
-                  text: '${S.keysH1b}\n',
-                  style: const TextStyle(
-                    fontFamily: 'NotoSerifSC',
-                    fontSize: 26,
-                    fontWeight: FontWeight.w600,
-                    color: CwColors.ink1,
-                    letterSpacing: -0.52,
-                    height: 1.3,
+                  TextSpan(
+                    text: S.keysH1b,
+                    style: const TextStyle(
+                      fontFamily: 'NotoSerifSC',
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      color: CwColors.ink1,
+                      letterSpacing: -0.52,
+                      height: 1.3,
+                    ),
                   ),
-                ),
-                TextSpan(
-                  text: S.keysH1em,
-                  style: const TextStyle(
-                    fontFamily: 'Fraunces',
-                    fontSize: 26,
-                    fontWeight: FontWeight.w600,
-                    fontStyle: FontStyle.italic,
-                    color: CwColors.accent,
-                    letterSpacing: -0.52,
-                    height: 1.3,
+                  TextSpan(
+                    text: S.keysH1em,
+                    style: const TextStyle(
+                      fontFamily: 'Fraunces',
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      fontStyle: FontStyle.italic,
+                      color: CwColors.accent,
+                      letterSpacing: -0.52,
+                      height: 1.3,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
+            const SizedBox(height: 8),
+            Text(
+              S.keysSub,
+              style: const TextStyle(fontSize: 13, color: CwColors.ink3, height: 1.5),
+            ),
+            const SizedBox(height: 20),
 
-          // ── Subtitle ──
-          Text(
-            S.keysSub,
-            style: const TextStyle(
-              fontSize: 13,
-              color: CwColors.ink3,
-              height: 1.5,
+            // Key 1: Phone
+            _keyCard(
+              icon: Icons.phone_iphone,
+              status: _phoneHealth?.status ?? KeyStatus.unknown,
+              title: S.keyPhone,
+              where: S.keyPhoneWhere,
+              meta: _isAuthenticated ? _phoneMetaText() : '••••••••',
+              loading: _phoneLoading,
             ),
-          ),
-          const SizedBox(height: 20),
+            const SizedBox(height: 10),
 
-          // ── 3 Key cards ──
-          _keyCard(
-            context,
-            icon: Icons.phone_iphone,
-            iconColor: CwColors.success,
-            iconBg: CwColors.successSoft,
-            bgColor: CwColors.successSoft,
-            borderColor: const Color(0xFFC9D7BC),
-            title: S.keyPhone,
-            where: S.keyPhoneWhere,
-            chipLabel: 'OK',
-            chipVariant: ChipVariant.green,
-            meta: _isAuthenticated ? S.keyPhoneMeta : '••••••••',
-            requireAuth: true,
-          ),
-          const SizedBox(height: 10),
-          _keyCard(
-            context,
-            icon: Icons.dns_outlined,
-            iconColor: CwColors.success,
-            iconBg: CwColors.successSoft,
-            bgColor: CwColors.successSoft,
-            borderColor: const Color(0xFFC9D7BC),
-            title: S.keyCloud,
-            where: S.keyCloudWhere,
-            chipLabel: 'OK',
-            chipVariant: ChipVariant.green,
-            meta: _isAuthenticated ? S.keyCloudMeta : '••••••••',
-            requireAuth: true,
-          ),
-          const SizedBox(height: 10),
-          _keyCard(
-            context,
-            icon: Icons.lock_outline,
-            iconColor: CwColors.warn,
-            iconBg: CwColors.warnSoft,
-            bgColor: CwColors.warnSoft,
-            borderColor: const Color(0xFFE4D2A8),
-            title: S.keyRecovery,
-            where: S.keyRecoveryWhere,
-            chipLabel: S.keyRecoveryTag,
-            chipVariant: ChipVariant.amber,
-            meta: _isAuthenticated ? S.keyRecoveryMeta : '••••••••',
-            actionLabel: S.keyRecoveryAction,
-            requireAuth: true,
-          ),
-          const SizedBox(height: 24),
-
-          // ── Explainer card ──
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: CwColors.bgSubtle,
-              borderRadius: BorderRadius.circular(14),
+            // Key 2: Server
+            _keyCard(
+              icon: Icons.dns_outlined,
+              status: _serverHealth?.status ?? KeyStatus.unknown,
+              title: S.keyCloud,
+              where: S.keyCloudWhere,
+              meta: _isAuthenticated ? _serverMetaText() : '••••••••',
+              loading: _serverLoading,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  S.keysExplainLabel,
-                  style: const TextStyle(
-                    fontFamily: 'NotoSerifSC',
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                    color: CwColors.ink1,
+            const SizedBox(height: 10),
+
+            // Key 3: Backup
+            _keyCard(
+              icon: Icons.lock_outline,
+              status: _overallBackupStatus(),
+              title: S.keyRecovery,
+              where: S.keyRecoveryWhere,
+              meta: _isAuthenticated ? _backupMetaText() : '••••••••',
+              actionLabel: _overallBackupStatus() != KeyStatus.ok ? S.keyRecoveryAction : null,
+              onAction: _testBackupKey,
+              actionLoading: _testingBackup,
+              loading: _backupLoading,
+            ),
+            const SizedBox(height: 24),
+
+            // Explainer card
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: CwColors.bgSubtle,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    S.keysExplainLabel,
+                    style: const TextStyle(
+                      fontFamily: 'NotoSerifSC',
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      color: CwColors.ink1,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  S.keysExplainBody,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: CwColors.ink3,
-                    height: 1.6,
+                  const SizedBox(height: 6),
+                  Text(
+                    S.keysExplainBody,
+                    style: const TextStyle(fontSize: 12, color: CwColors.ink3, height: 1.6),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
 
-          // ── Tech detail card ──
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: CwColors.bgCard,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: CwColors.line),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      S.keysTechLabel,
-                      style: const TextStyle(
-                        fontFamily: 'NotoSerifSC',
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        color: CwColors.ink1,
+            // Tech detail card
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: CwColors.bgCard,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: CwColors.line),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        S.keysTechLabel,
+                        style: const TextStyle(
+                          fontFamily: 'NotoSerifSC',
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: CwColors.ink1,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    const CwChip(
-                      label: 'MPC 2-of-3',
-                      variant: ChipVariant.info,
-                      fontSize: 10,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  S.keysTechBody,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: CwColors.ink3,
-                    height: 1.6,
+                      const SizedBox(width: 8),
+                      const CwChip(
+                        label: 'MPC 2-of-3',
+                        variant: ChipVariant.info,
+                        fontSize: 10,
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 6),
+                  Text(
+                    S.keysTechBody,
+                    style: const TextStyle(fontSize: 12, color: CwColors.ink3, height: 1.6),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  // ── Key card ──
-  Widget _keyCard(
-    BuildContext context, {
+  Widget _keyCard({
     required IconData icon,
-    required Color iconColor,
-    required Color iconBg,
-    required Color bgColor,
-    required Color borderColor,
+    required KeyStatus status,
     required String title,
     required String where,
-    required String chipLabel,
-    required ChipVariant chipVariant,
     required String meta,
     String? actionLabel,
-    bool requireAuth = false,
+    VoidCallback? onAction,
+    bool actionLoading = false,
+    bool loading = false,
   }) {
+    final isOk = status == KeyStatus.ok && !loading;
+    final isWarn = status == KeyStatus.warning && !loading;
+    final statusColor = loading ? CwColors.ink4 : (isOk ? CwColors.success : (isWarn ? CwColors.warn : CwColors.danger));
+    final bgColor = loading ? CwColors.bgCard : (isOk ? CwColors.successSoft : (isWarn ? CwColors.warnSoft : const Color(0xFFFDE8E8)));
+    final borderColor = loading ? CwColors.line : (isOk ? const Color(0xFFC9D7BC) : (isWarn ? const Color(0xFFE4D2A8) : const Color(0xFFE8BFBF)));
+    final chipLabel = isOk ? 'OK' : (isWarn ? S.keyRecoveryTag : '!');
+    final chipVariant = isOk ? ChipVariant.green : (isWarn ? ChipVariant.amber : ChipVariant.amber);
+
     return GestureDetector(
-      onTap: requireAuth && !_isAuthenticated
-          ? () => _authenticate()
-          : null,
+      onTap: !_isAuthenticated ? () => _authenticate() : null,
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -270,18 +357,16 @@ class _KeysViewState extends State<KeysView> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Icon
                 Container(
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: iconBg,
+                    color: bgColor,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(icon, size: 20, color: iconColor),
+                  child: Icon(icon, size: 20, color: statusColor),
                 ),
                 const SizedBox(width: 12),
-                // Title + where
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -296,59 +381,57 @@ class _KeysViewState extends State<KeysView> {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        where,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: CwColors.ink3,
-                        ),
-                      ),
+                      Text(where, style: const TextStyle(fontSize: 11, color: CwColors.ink3)),
                     ],
                   ),
                 ),
-                // Chip
-                CwChip(
-                  label: chipLabel,
-                  variant: chipVariant,
-                  showDot: true,
-                ),
+                if (loading)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: CwColors.ink4),
+                  )
+                else
+                  CwChip(label: chipLabel, variant: chipVariant, showDot: true),
               ],
             ),
             const SizedBox(height: 8),
-            // Meta
             Padding(
               padding: const EdgeInsets.only(left: 52),
-              child: Text(
-                meta,
-                style: const TextStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 10,
-                  color: CwColors.ink3,
-                ),
-              ),
+              child: loading
+                  ? Container(
+                      height: 10,
+                      width: 80,
+                      decoration: BoxDecoration(
+                        color: CwColors.line,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    )
+                  : Text(
+                      meta,
+                      style: const TextStyle(
+                        fontFamily: 'JetBrainsMono',
+                        fontSize: 10,
+                        color: CwColors.ink3,
+                      ),
+                    ),
             ),
-            // Action button (recovery card only)
-            if (actionLabel != null) ...[
+            if (actionLabel != null && _isAuthenticated && !loading) ...[
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: _isAuthenticated
-                      ? () {}
-                      : () => _authenticate(),
+                  onPressed: actionLoading ? null : onAction,
                   style: FilledButton.styleFrom(
                     backgroundColor: CwColors.accent,
                     foregroundColor: Colors.white,
                     minimumSize: const Size.fromHeight(40),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
-                  child: Text(_isAuthenticated ? actionLabel : S.biometricAuthReason),
+                  child: actionLoading
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Text(actionLabel),
                 ),
               ),
             ],

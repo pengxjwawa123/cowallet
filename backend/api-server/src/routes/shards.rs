@@ -5,6 +5,7 @@ use axum::{
     routing::{get, post},
     Extension,
 };
+use chrono;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use uuid::Uuid;
@@ -17,6 +18,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/shard", post(upload_shard))
         .route("/shard/{location}", get(get_shard))
+        .route("/status", get(shard_status))
 }
 
 #[derive(Deserialize)]
@@ -38,6 +40,63 @@ pub struct GetShardResponse {
     party_index: i16,
     shard_hex: String,
     status: String,
+}
+
+#[derive(Serialize)]
+pub struct ShardStatusItem {
+    location: String,
+    party_index: i16,
+    status: String,
+    last_used: Option<String>,
+    last_verified: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ShardStatusResponse {
+    shards: Vec<ShardStatusItem>,
+    server_time: String,
+}
+
+/// Get status of all key shards for the authenticated user
+async fn shard_status(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<ShardStatusResponse>, StatusCode> {
+    let db = state
+        .require_db()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let rows: Vec<(String, i16, String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT location, party_index, status, last_used, last_verified
+         FROM shard_metadata
+         WHERE user_id = $1
+         ORDER BY party_index"
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch shard status: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let shards = rows.into_iter().map(|(location, party_index, status, last_used, last_verified)| {
+        ShardStatusItem {
+            location,
+            party_index,
+            status,
+            last_used: last_used.map(|t| t.to_rfc3339()),
+            last_verified: last_verified.map(|t| t.to_rfc3339()),
+        }
+    }).collect();
+
+    Ok(Json(ShardStatusResponse {
+        shards,
+        server_time: chrono::Utc::now().to_rfc3339(),
+    }))
 }
 
 /// Upload an encrypted key shard
