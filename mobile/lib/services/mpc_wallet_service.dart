@@ -393,14 +393,61 @@ class MpcWalletService implements WalletService {
   }
 
   /// 提取并存储备份分片
+  /// 实现流程：
+  /// 1. 计算设备的备份贡献 f_device(3)
+  /// 2. 从服务器获取 f_server(3)
+  /// 3. 相加两个标量 mod secp256k1_order
+  /// 4. 存储最终的备份分片
   Future<void> _storeBackupShard(String localSessionId) async {
-    final backupBytes = await MpcBridge.dkgDeriveBackupShare(
+    // Step 1: Compute device's contribution to backup shard (f_device(3))
+    final deviceContribution = await MpcBridge.dkgDeriveBackupShare(
       localSessionId,
       backupPartyIndex: _backupParty,
     );
 
+    if (deviceContribution.length != 32) {
+      throw MpcException(
+        'Invalid device backup contribution length: ${deviceContribution.length} bytes (expected 32)'
+      );
+    }
+
+    // Step 2: Fetch server's contribution (f_server(3)) from API
+    // The remote session ID was saved earlier during DKG
+    if (_currentSessionId == null) {
+      throw MpcException('No active session ID for fetching server backup contribution');
+    }
+
+    final serverResult = await MpcApi.getBackupContribution(_currentSessionId!);
+    if (!serverResult.isSuccess || serverResult.data == null) {
+      throw MpcException(
+        'Failed to fetch server backup contribution: ${serverResult.errorMessage}'
+      );
+    }
+
+    final serverContribution = serverResult.data!;
+    if (serverContribution.length != 32) {
+      throw MpcException(
+        'Invalid server backup contribution length: ${serverContribution.length} bytes (expected 32)'
+      );
+    }
+
+    // Step 3: Combine both contributions via modular scalar addition
+    final combinedBackupShard = await MpcBridge.combineBackupShares(
+      deviceShare: deviceContribution,
+      serverShare: serverContribution,
+    );
+
+    if (combinedBackupShard.length != 32) {
+      throw MpcException(
+        'Invalid combined backup shard length: ${combinedBackupShard.length} bytes (expected 32)'
+      );
+    }
+
+    // Step 4: Store the final backup shard
     final backupService = BackupShardService(PlatformCloudBackup());
-    _lastBackupResult = await backupService.storeBackupShard(backupBytes);
+    _lastBackupResult = await backupService.storeBackupShard(combinedBackupShard);
+
+    print('[MpcWalletService] Backup shard successfully derived and stored');
   }
 
   /// 获取上次 DKG 的备份结果

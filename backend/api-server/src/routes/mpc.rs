@@ -19,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/session/{id}", delete(abort_session))
         .route("/session/{id}/msg", post(send_message))
         .route("/session/{id}/msg", get(recv_messages))
+        .route("/session/{id}/backup-contribution", get(get_backup_contribution))
         .route("/presign/status", get(presign_status))
         .route("/presign/generate", post(presign_generate))
 }
@@ -379,6 +380,81 @@ pub async fn recv_messages(
         verified: m.5,
         created_at: m.6.to_rfc3339(),
     }).collect()))
+}
+
+/// Get the server's backup contribution for a completed DKG session.
+/// Returns the 32-byte f_server(3) scalar for the client to combine with f_device(3).
+/// This is a single-use endpoint: the contribution is removed after fetching.
+pub async fn get_backup_contribution(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(session_id): Path<uuid::Uuid>,
+) -> Result<Json<Vec<u8>>, StatusCode> {
+    let user_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Verify the session exists and belongs to this user
+    let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let session_user: Option<(uuid::Uuid, String)> = sqlx::query_as(
+        "SELECT user_id, status FROM mpc_sessions WHERE id = $1"
+    )
+    .bind(session_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to query session: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    match session_user {
+        Some((session_user_id, status)) => {
+            if session_user_id != user_id {
+                tracing::warn!(
+                    "User {} attempted to access backup contribution for session {} owned by {}",
+                    user_id, session_id, session_user_id
+                );
+                return Err(StatusCode::FORBIDDEN);
+            }
+
+            // Only allow fetching for completed DKG sessions
+            if status != "completed" {
+                tracing::warn!(
+                    "Backup contribution requested for session {} with status '{}'",
+                    session_id, status
+                );
+                return Err(StatusCode::CONFLICT);
+            }
+        }
+        None => {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    }
+
+    // Fetch the backup contribution from the MPC participant
+    if let Some(participant) = &state.mpc_participant {
+        if let Some(contribution) = participant.fetch_backup_contribution(session_id, user_id) {
+            if contribution.len() != 32 {
+                tracing::error!(
+                    "Invalid backup contribution length for session {}: {} bytes",
+                    session_id, contribution.len()
+                );
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+
+            tracing::info!(
+                "User {} fetched backup contribution for session {}",
+                user_id, session_id
+            );
+            return Ok(Json(contribution));
+        }
+    }
+
+    // Contribution not available (either never computed, already fetched, or expired)
+    tracing::debug!(
+        "Backup contribution not available for session {} (user {})",
+        session_id, user_id
+    );
+    Err(StatusCode::NOT_FOUND)
 }
 
 // ─── Presignature Management Endpoints ───────────────────────────────────────

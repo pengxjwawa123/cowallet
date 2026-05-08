@@ -110,4 +110,23 @@ class MpcApi {
       },
     );
   }
+
+  /// 获取服务器的备份分片贡献
+  /// GET /api/v1/mpc/session/{id}/backup-contribution
+  /// [sessionId] DKG会话ID
+  /// 返回服务器的 f_server(3) 32字节标量，用于与设备的贡献相加
+  /// 注意：这是一次性接口，获取后服务器会删除该贡献
+  static Future<Result<List<int>>> getBackupContribution(String sessionId) async {
+    final result = await DioClient.get("/mpc/session/$sessionId/backup-contribution");
+
+    if (result.isSuccess && result.data != null) {
+      // The server returns raw bytes as a JSON array
+      if (result.data is List) {
+        return Result.success(List<int>.from(result.data as List));
+      }
+      return Result.error('Invalid backup contribution format');
+    }
+
+    return Result.error(result.errorMessage ?? 'Failed to fetch backup contribution');
+  }
 }

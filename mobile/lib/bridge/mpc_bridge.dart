@@ -331,6 +331,32 @@ class MpcBridge {
       throw MpcException('Failed to check recovery backup: $e');
     }
   }
+
+  /// ===== Backup Shard Combination =====
+
+  /// Combine device and server backup share contributions into the final backup shard.
+  /// Performs modular addition: backup_shard = device_share + server_share (mod secp256k1_order).
+  /// Both inputs must be exactly 32 bytes.
+  static Future<List<int>> combineBackupShares({
+    required List<int> deviceShare,
+    required List<int> serverShare,
+  }) async {
+    if (deviceShare.length != 32) {
+      throw MpcException('deviceShare must be 32 bytes, got ${deviceShare.length}');
+    }
+    if (serverShare.length != 32) {
+      throw MpcException('serverShare must be 32 bytes, got ${serverShare.length}');
+    }
+
+    try {
+      return await frb.combineBackupShares(
+        deviceShare: Uint8List.fromList(deviceShare),
+        serverShare: Uint8List.fromList(serverShare),
+      );
+    } catch (e) {
+      throw MpcException('Failed to combine backup shares: $e');
+    }
+  }
 }
 
 /// Result from distributed sign Round 1

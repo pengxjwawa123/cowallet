@@ -39,6 +39,9 @@ pub struct MpcParticipant {
     session_meta: Arc<DashMap<Uuid, ActiveSession>>,
     /// Cached presignature data per session (reserved during init_sign_session).
     reserved_presignatures: Arc<DashMap<Uuid, PresignatureData>>,
+    /// Server's backup shard contributions (f_server(3) for each session).
+    /// Ephemeral storage: client fetches within seconds of DKG completion.
+    backup_contributions: Arc<DashMap<Uuid, Vec<u8>>>,
     /// Optional presign manager for pre-computing signing material.
     presign_manager: Option<Arc<PresignManager>>,
     shutdown: Arc<Notify>,
@@ -55,6 +58,7 @@ impl MpcParticipant {
             reshare_sessions: Arc::new(DashMap::new()),
             session_meta: Arc::new(DashMap::new()),
             reserved_presignatures: Arc::new(DashMap::new()),
+            backup_contributions: Arc::new(DashMap::new()),
             presign_manager: None,
             shutdown: Arc::new(Notify::new()),
         }
@@ -296,6 +300,21 @@ impl MpcParticipant {
                 // Client sent their Round 2 (share evaluations)
                 let key_share = dkg.process_round2(vec![incoming])
                     .map_err(|e| format!("process_round2 failed: {}", e))?;
+
+                // Compute server's backup contribution: f_server(3) for backup party index 2
+                // CRITICAL: Compute BEFORE removing the DKG session
+                let backup_contribution = dkg.derive_backup_share(2) // party index 2
+                    .map(|share| share.secret_share.as_bytes().to_vec())
+                    .unwrap_or_default();
+
+                // Store backup contribution in ephemeral in-memory cache for client to fetch
+                if !backup_contribution.is_empty() {
+                    self.backup_contributions.insert(session_id, backup_contribution);
+                    tracing::debug!(
+                        "Stored backup contribution for session {} (32 bytes)",
+                        session_id
+                    );
+                }
 
                 // Compute eth_address from the KeyShare's public key
                 let eth_addr = key_share.eth_address();
@@ -684,6 +703,27 @@ impl MpcParticipant {
             self.reserved_presignatures.remove(&id);
             tracing::debug!("Cleaned up expired server session {}", id);
         }
+    }
+
+    /// Fetch the server's backup contribution for a completed DKG session.
+    /// Returns None if not found. The contribution is removed after fetching (single-use).
+    pub fn fetch_backup_contribution(&self, session_id: Uuid, requesting_user_id: Uuid) -> Option<Vec<u8>> {
+        // Verify the session belongs to the requesting user
+        if let Some(meta) = self.session_meta.get(&session_id) {
+            if meta.user_id != requesting_user_id {
+                tracing::warn!(
+                    "User {} attempted to fetch backup contribution for session {} owned by user {}",
+                    requesting_user_id, session_id, meta.user_id
+                );
+                return None;
+            }
+        } else {
+            tracing::debug!("Session {} metadata not found (may have been cleaned up)", session_id);
+            // Still try to fetch if available (session may have completed and been cleaned up)
+        }
+
+        // Remove and return the contribution (single-use fetch)
+        self.backup_contributions.remove(&session_id).map(|(_, v)| v)
     }
 
     /// Graceful shutdown.

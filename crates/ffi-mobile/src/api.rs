@@ -287,6 +287,38 @@ pub fn dkg_derive_backup_share(session_id: String, backup_party_index: u16) -> R
     Ok(backup_share.secret_share.as_bytes().to_vec())
 }
 
+/// Combine two backup share contributions into the final backup shard.
+/// Adds device_share + server_share modulo the secp256k1 curve order.
+/// Both inputs must be exactly 32 bytes.
+pub fn combine_backup_shares(device_share: Vec<u8>, server_share: Vec<u8>) -> Result<Vec<u8>, String> {
+    use k256::elliptic_curve::PrimeField;
+    use k256::Scalar;
+
+    if device_share.len() != 32 {
+        return Err(format!("device_share must be 32 bytes, got {}", device_share.len()));
+    }
+    if server_share.len() != 32 {
+        return Err(format!("server_share must be 32 bytes, got {}", server_share.len()));
+    }
+
+    // Parse device contribution
+    let mut device_bytes = [0u8; 32];
+    device_bytes.copy_from_slice(&device_share);
+    let device_scalar = Option::<Scalar>::from(Scalar::from_repr(device_bytes.into()))
+        .ok_or_else(|| "invalid device_share: not a valid secp256k1 scalar".to_string())?;
+
+    // Parse server contribution
+    let mut server_bytes = [0u8; 32];
+    server_bytes.copy_from_slice(&server_share);
+    let server_scalar = Option::<Scalar>::from(Scalar::from_repr(server_bytes.into()))
+        .ok_or_else(|| "invalid server_share: not a valid secp256k1 scalar".to_string())?;
+
+    // Add modulo curve order: backup_share = device_share + server_share (mod n)
+    let combined_scalar = device_scalar + server_scalar;
+
+    Ok(combined_scalar.to_bytes().to_vec())
+}
+
 // ---------------------------------------------------------------------------
 // Distributed Signing — 2-party ECDSA without key reconstruction
 // ---------------------------------------------------------------------------
