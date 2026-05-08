@@ -83,14 +83,14 @@ class MpcApi {
   }
 
   /// 获取预签名状态
-  /// GET /api/v1/mpc/presign/status?wallet_id={id}
-  /// [walletId] 钱包ID，查询该钱包可用的预签名数量和状态
+  /// GET /api/v1/mpc/presign/status?address={0x...}
+  /// [address] 钱包地址
   static Future<Result<Map<String, dynamic>>> getPresignStatus(
-    String walletId,
+    String address,
   ) async {
     return await DioClient.get(
       "/mpc/presign/status",
-      params: {"wallet_id": walletId},
+      params: {"address": address},
     );
   }
 

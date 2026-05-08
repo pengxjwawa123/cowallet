@@ -98,7 +98,7 @@ class KeyHealthService {
         );
       }
 
-      final data = await _cloudBackup.retrieve('backup_shard');
+      final data = await _cloudBackup.retrieve('cowallet_backup_shard');
       if (data != null && data.isNotEmpty) {
         return KeyHealth(
           status: KeyStatus.ok,
@@ -124,7 +124,7 @@ class KeyHealthService {
       final cloudAvailable = await _cloudBackup.isAvailable();
       if (!cloudAvailable) return false;
 
-      final data = await _cloudBackup.retrieve('backup_shard');
+      final data = await _cloudBackup.retrieve('cowallet_backup_shard');
       if (data == null || data.isEmpty) return false;
 
       // Mark as verified

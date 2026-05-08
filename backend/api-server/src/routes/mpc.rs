@@ -461,7 +461,8 @@ pub async fn get_backup_contribution(
 
 #[derive(Deserialize)]
 pub(crate) struct PresignStatusQuery {
-    wallet_id: uuid::Uuid,
+    wallet_id: Option<uuid::Uuid>,
+    address: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -470,7 +471,7 @@ pub(crate) struct PresignStatusResponse {
     wallet_id: String,
 }
 
-/// GET /presign/status?wallet_id={id}
+/// GET /presign/status?wallet_id={uuid} or ?address={0x...}
 /// Returns the number of available presignatures for the given wallet.
 pub async fn presign_status(
     State(state): State<AppState>,
@@ -481,8 +482,27 @@ pub async fn presign_status(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
+    let wallet_id = if let Some(id) = query.wallet_id {
+        id
+    } else if let Some(addr) = &query.address {
+        let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let row: Option<(uuid::Uuid,)> = sqlx::query_as(
+            "SELECT id FROM wallets WHERE address = $1"
+        )
+        .bind(addr)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| {
+            tracing::error!("presign_status wallet lookup error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        row.ok_or(StatusCode::NOT_FOUND)?.0
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+
     let available = presign_mgr
-        .get_available_count(query.wallet_id)
+        .get_available_count(wallet_id)
         .await
         .map_err(|e| {
             tracing::error!("presign_status error: {}", e);
@@ -491,7 +511,7 @@ pub async fn presign_status(
 
     Ok(Json(PresignStatusResponse {
         available,
-        wallet_id: query.wallet_id.to_string(),
+        wallet_id: wallet_id.to_string(),
     }))
 }
 
