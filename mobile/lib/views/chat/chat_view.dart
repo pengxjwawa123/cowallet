@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
@@ -5,7 +6,6 @@ import '../../widgets/cw_orb.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../api/ai_api.dart';
-import '../../models/ai_response.dart';
 import 'widgets/balance_widget.dart';
 import 'widgets/receive_widget.dart';
 import 'widgets/send_confirm_widget.dart';
@@ -21,7 +21,7 @@ enum WidgetType { balance, receive, sendConfirm, txResult }
 
 class ChatMsg {
   final ChatMsgKind kind;
-  final String text;
+  String text;
   final WidgetType? widgetType;
   final Map<String, dynamic> widgetData;
   final String? toolCallId;
@@ -71,14 +71,17 @@ class _ChatViewState extends State<ChatView> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final _messages = <ChatMsg>[];
-  final _history = <Map<String, dynamic>>[];
   final _focusNode = FocusNode();
+
+  String? _sessionId;
+  StreamSubscription? _streamSub;
 
   @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
+    _streamSub?.cancel();
     super.dispose();
   }
 
@@ -97,105 +100,159 @@ class _ChatViewState extends State<ChatView> {
     });
   }
 
-  // -- send logic ------------------------------------------------------------
+  /// Start a new topic
+  void startNewSession() {
+    setState(() {
+      _sessionId = null;
+      _messages.clear();
+    });
+  }
 
-  void _send([String? override]) async {
+  /// Load a specific session
+  Future<void> loadSession(String sessionId) async {
+    final result = await AiApi.getSessionMessages(sessionId: sessionId);
+    if (!mounted) return;
+
+    if (result.isSuccess && result.data != null) {
+      setState(() {
+        _sessionId = sessionId;
+        _messages.clear();
+        for (final msg in result.data!) {
+          final role = msg['role'] as String? ?? '';
+          final content = msg['content'] as String? ?? '';
+          if (role == 'user') {
+            _messages.add(ChatMsg(kind: ChatMsgKind.user, text: content));
+          } else if (role == 'assistant' && content.isNotEmpty) {
+            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: content));
+          }
+        }
+      });
+    }
+  }
+
+  // -- send logic (streaming) -----------------------------------------------
+
+  void _send([String? override]) {
     final text = (override ?? _controller.text).trim();
     if (text.isEmpty) return;
 
     setState(() {
       _messages.add(ChatMsg(kind: ChatMsgKind.user, text: text));
       _controller.clear();
-      _messages.add(ChatMsg(kind: ChatMsgKind.thinking));
+      // Add AI message placeholder for streaming
+      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
     });
     _scrollToBottom();
 
-    _history.add({"role": "user", "content": text});
+    final aiMsgIndex = _messages.length - 1;
+    final walletAddr = CowalletApp.of(context).walletAddress;
 
-    final address = CowalletApp.of(context).walletAddress;
-    final result = await AiApi.chat(
+    final stream = AiApi.chatStream(
       message: text,
-      history: _history,
-      walletAddress: address.isNotEmpty ? address : null,
+      sessionId: _sessionId,
+      userId: walletAddr.isNotEmpty ? walletAddr : null,
     );
 
-    if (!mounted) return;
+    _streamSub?.cancel();
+    _streamSub = stream.listen(
+      (event) {
+        if (!mounted) return;
 
-    setState(() {
-      _messages.removeWhere((m) => m.kind == ChatMsgKind.thinking);
-    });
+        switch (event.event) {
+          case 'session':
+            _sessionId = event.data['session_id'] as String?;
+            break;
 
-    if (result.isSuccess && result.data != null) {
-      final response = result.data!;
-      _handleAiResponse(response);
-      _history.add({"role": "assistant", "content": response.message});
-    } else {
-      setState(() {
-        _messages.add(ChatMsg(
-          kind: ChatMsgKind.ai,
-          text: result.errorMessage ?? '请求失败，请稍后重试',
-        ));
-      });
-    }
-    _scrollToBottom();
-  }
+          case 'token':
+            final tokenText = event.data['text'] as String? ?? '';
+            setState(() {
+              _messages[aiMsgIndex].text += tokenText;
+            });
+            _scrollToBottom();
+            break;
 
-  void _handleAiResponse(AiChatResponse response) {
-    // Add AI text message
-    if (response.message.isNotEmpty) {
-      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: response.message));
-    }
+          case 'tool_call':
+            final name = event.data['name'] as String? ?? '';
+            final id = event.data['id'] as String? ?? '';
+            final params = event.data['parameters'] as Map<String, dynamic>? ?? {};
 
-    // Render inline widgets for READ tool results
-    for (final toolResult in response.toolResults) {
-      if (response.needsConfirmation.contains(toolResult.toolId)) continue;
-      if (!toolResult.success) continue;
+            if (name == 'send_transaction') {
+              setState(() {
+                _messages.add(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.sendConfirm,
+                  widgetData: {
+                    'to_address': params['to_address'] ?? '',
+                    'amount': params['value'] ?? '0',
+                    'token': params['token_address'] != null ? 'Token' : 'ETH',
+                    'token_address': params['token_address'],
+                  },
+                  toolCallId: id,
+                ));
+              });
+              _scrollToBottom();
+            }
+            break;
 
-      switch (toolResult.toolName) {
-        case 'get_balance':
-          _messages.add(ChatMsg(
-            kind: ChatMsgKind.widget,
-            widgetType: WidgetType.balance,
-            widgetData: toolResult.result,
-          ));
-          break;
-        case 'get_wallet_address':
-          final addr = toolResult.result['address'] as String? ??
-              CowalletApp.of(context).walletAddress;
-          if (addr.isNotEmpty) {
-            _messages.add(ChatMsg(
-              kind: ChatMsgKind.widget,
-              widgetType: WidgetType.receive,
-              widgetData: {'address': addr},
-            ));
-          }
-          break;
-      }
-    }
+          case 'tool_result':
+            final toolName = event.data['tool_name'] as String? ?? '';
+            final success = event.data['success'] as bool? ?? false;
+            final result = event.data['result'] as Map<String, dynamic>? ?? {};
 
-    // Render WRITE tool confirmations (send_transaction)
-    for (final toolCall in response.toolCalls) {
-      if (!response.needsConfirmation.contains(toolCall.id)) continue;
+            if (!success) break;
 
-      if (toolCall.name == 'send_transaction') {
-        final params = toolCall.parameters;
-        final gasResult = response.getResultForTool('estimate_gas');
-        _messages.add(ChatMsg(
-          kind: ChatMsgKind.widget,
-          widgetType: WidgetType.sendConfirm,
-          widgetData: {
-            'to_address': params['to_address'] ?? '',
-            'amount': params['value'] ?? '0',
-            'token': params['token_address'] != null ? 'Token' : 'ETH',
-            'token_address': params['token_address'],
-            'gas_estimate': gasResult?.result['gas_estimate']?.toString(),
-          },
-          toolCallId: toolCall.id,
-        ));
-      }
-    }
+            switch (toolName) {
+              case 'get_balance':
+                setState(() {
+                  _messages.add(ChatMsg(
+                    kind: ChatMsgKind.widget,
+                    widgetType: WidgetType.balance,
+                    widgetData: result,
+                  ));
+                });
+                _scrollToBottom();
+                break;
+              case 'get_wallet_address':
+                final addr = result['address'] as String? ??
+                    CowalletApp.of(context).walletAddress;
+                if (addr.isNotEmpty) {
+                  setState(() {
+                    _messages.add(ChatMsg(
+                      kind: ChatMsgKind.widget,
+                      widgetType: WidgetType.receive,
+                      widgetData: {'address': addr},
+                    ));
+                  });
+                  _scrollToBottom();
+                }
+                break;
+            }
+            break;
 
-    setState(() {});
+          case 'done':
+            // Remove empty AI message if no text was streamed
+            setState(() {
+              if (_messages[aiMsgIndex].text.isEmpty) {
+                _messages.removeAt(aiMsgIndex);
+              }
+            });
+            break;
+
+          case 'error':
+            setState(() {
+              _messages[aiMsgIndex].text =
+                  event.data['message'] as String? ?? '请求失败，请稍后重试';
+            });
+            break;
+        }
+      },
+      onError: (e) {
+        if (!mounted) return;
+        setState(() {
+          _messages[aiMsgIndex].text = '网络错误，请稍后重试';
+        });
+      },
+    );
   }
 
   Future<void> _onSendConfirm(int index) async {
@@ -226,15 +283,9 @@ class _ChatViewState extends State<ChatView> {
             'token': params['token'],
           },
         ));
-        _messages.add(ChatMsg(
-          kind: ChatMsgKind.ai,
-          text: result.message,
-        ));
+        _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: result.message));
       } else {
-        _messages.add(ChatMsg(
-          kind: ChatMsgKind.ai,
-          text: '⚠ ${result.message}',
-        ));
+        _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ ${result.message}'));
       }
     });
     _scrollToBottom();
@@ -401,10 +452,12 @@ class _ChatViewState extends State<ChatView> {
               ],
             ),
             const SizedBox(height: 6),
-            Text(
-              msg.text,
-              style: const TextStyle(fontSize: 14, height: 1.55, color: CwColors.ink1),
-            ),
+            msg.text.isEmpty
+                ? _ThinkingDots()
+                : Text(
+                    msg.text,
+                    style: const TextStyle(fontSize: 14, height: 1.55, color: CwColors.ink1),
+                  ),
           ],
         ),
       ),

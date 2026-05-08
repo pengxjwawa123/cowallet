@@ -1,26 +1,36 @@
-use crate::services::claude::{AiClient, Message, ToolDefinition, FunctionDefinition, ToolCall as AiToolCall, extract_text, extract_tool_calls};
+use crate::services::claude::{
+    AiClient, Message, ToolDefinition, FunctionDefinition,
+    extract_text, extract_tool_calls,
+};
 use crate::services::ai_executor::{ToolContext, ToolExecutionResult};
+use crate::services::chat_store::ChatStore;
 use crate::state::AppState;
 use axum::{
     Json, Router,
-    extract::{Query, State},
-    http::StatusCode,
-    response::sse::{Event, Sse},
+    body::Body,
+    extract::State,
+    http::{StatusCode, header},
+    response::Response,
     routing::{get, post},
 };
-use futures::stream::Stream;
+use bytes::Bytes;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
-use std::time::Duration;
+use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/chat", post(chat))
-        .route("/chat/stream", get(chat_stream))
-        .route("/classify", post(classify_intent))
+        .route("/chat", post(chat_stream))
+        .route("/sessions", get(list_sessions).post(create_session))
+        .route("/sessions/{session_id}/messages", get(get_session_messages))
+        .route("/sessions/{session_id}", axum::routing::delete(delete_session))
 }
 
-/// Wallet tools in OpenAI function calling format
+// ---------------------------------------------------------------------------
+// Tool definitions
+// ---------------------------------------------------------------------------
+
 fn wallet_tools() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
@@ -31,14 +41,8 @@ fn wallet_tools() -> Vec<ToolDefinition> {
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "token": {
-                            "type": "string",
-                            "description": "Token symbol (e.g., ETH, USDC). Omit for native ETH balance."
-                        },
-                        "chain_id": {
-                            "type": "integer",
-                            "description": "Chain ID (1 for Ethereum, 8453 for Base, etc.). Default: 8453."
-                        }
+                        "token": { "type": "string", "description": "Token symbol (ETH, USDC, etc.)" },
+                        "chain_id": { "type": "integer", "description": "Chain ID. Default: 8453." }
                     },
                     "required": []
                 }),
@@ -48,22 +52,13 @@ fn wallet_tools() -> Vec<ToolDefinition> {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: "send_transaction".into(),
-                description: "Prepare a transaction for sending. Requires user biometric confirmation before execution.".into(),
+                description: "Prepare a transaction. Requires user biometric confirmation.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "to_address": {
-                            "type": "string",
-                            "description": "Recipient wallet address (0x-prefixed hex)"
-                        },
-                        "value": {
-                            "type": "string",
-                            "description": "Amount to send in wei (for ETH) or token decimals (for ERC-20)"
-                        },
-                        "token_address": {
-                            "type": "string",
-                            "description": "Optional: ERC-20 token contract address. Omit for native ETH."
-                        }
+                        "to_address": { "type": "string", "description": "Recipient address (0x-prefixed)" },
+                        "value": { "type": "string", "description": "Amount in wei or token decimals" },
+                        "token_address": { "type": "string", "description": "Optional: ERC-20 contract address" }
                     },
                     "required": ["to_address", "value"]
                 }),
@@ -73,18 +68,12 @@ fn wallet_tools() -> Vec<ToolDefinition> {
             tool_type: "function".into(),
             function: FunctionDefinition {
                 name: "get_transaction_history".into(),
-                description: "Get recent transaction history for the user's wallet".into(),
+                description: "Get recent transaction history".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of transactions to return. Default: 20."
-                        },
-                        "offset": {
-                            "type": "integer",
-                            "description": "Pagination offset. Default: 0."
-                        }
+                        "limit": { "type": "integer", "description": "Max results. Default: 20." },
+                        "offset": { "type": "integer", "description": "Pagination offset. Default: 0." }
                     },
                     "required": []
                 }),
@@ -110,128 +99,20 @@ fn wallet_tools() -> Vec<ToolDefinition> {
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "to_address": {
-                            "type": "string",
-                            "description": "Recipient wallet address"
-                        },
-                        "value": {
-                            "type": "string",
-                            "description": "Amount in wei"
-                        }
+                        "to_address": { "type": "string" },
+                        "value": { "type": "string" }
                     },
                     "required": ["to_address", "value"]
-                }),
-            },
-        },
-        ToolDefinition {
-            tool_type: "function".into(),
-            function: FunctionDefinition {
-                name: "search_yield_opportunities".into(),
-                description: "Search for DeFi yield opportunities including lending, DEX liquidity pools, liquid staking, and vault strategies.".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "chain_id": {
-                            "type": "integer",
-                            "description": "Chain ID (8453 for Base, 1 for Ethereum). Default: 8453."
-                        },
-                        "protocol_type": {
-                            "type": "string",
-                            "description": "Filter by type: 'dex', 'lending', 'liquid_staking', 'vault', 'farm'"
-                        },
-                        "min_apy": {
-                            "type": "number",
-                            "description": "Minimum APY percentage. Default: 0.0"
-                        },
-                        "token": {
-                            "type": "string",
-                            "description": "Filter by token symbol (e.g., 'ETH', 'USDC')"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum results to return. Default: 20."
-                        }
-                    },
-                    "required": []
-                }),
-            },
-        },
-        ToolDefinition {
-            tool_type: "function".into(),
-            function: FunctionDefinition {
-                name: "list_yield_protocols".into(),
-                description: "Get a list of supported DeFi yield protocols with their TVL and risk levels.".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "chain_id": {
-                            "type": "integer",
-                            "description": "Filter by chain ID. Omit to return all chains."
-                        },
-                        "protocol_type": {
-                            "type": "string",
-                            "description": "Filter by protocol type."
-                        }
-                    },
-                    "required": []
                 }),
             },
         },
     ]
 }
 
-/// A chat message in the conversation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
-}
+// ---------------------------------------------------------------------------
+// System prompt
+// ---------------------------------------------------------------------------
 
-/// Request for chat completion
-#[derive(Debug, Deserialize)]
-pub struct ChatRequest {
-    pub message: String,
-    #[serde(default)]
-    pub history: Vec<ChatMessage>,
-    #[serde(default)]
-    pub user_id: Option<String>,
-}
-
-/// Extended response with tool execution results
-#[derive(Debug, Serialize)]
-pub struct ChatWithToolsResponse {
-    pub message: String,
-    pub tool_calls: Vec<ToolCallInfo>,
-    pub tool_results: Vec<ToolExecutionResult>,
-    pub needs_confirmation: Vec<String>,
-}
-
-/// A tool call requested by the AI
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallInfo {
-    pub name: String,
-    pub parameters: serde_json::Value,
-    pub id: String,
-}
-
-/// Classification result for user intent
-#[derive(Debug, Serialize)]
-pub struct IntentClassification {
-    pub intent_type: String,
-    pub confidence: f32,
-    pub entities: serde_json::Value,
-    pub suggested_action: Option<String>,
-}
-
-/// Query parameters for SSE streaming
-#[derive(Debug, Deserialize)]
-pub struct StreamQuery {
-    pub message: String,
-    #[serde(default)]
-    pub user_id: Option<String>,
-}
-
-/// System prompt defining the AI assistant behavior
 const SYSTEM_PROMPT: &str = r#"你是 CoWallet，一个 AI 驱动的 MPC 加密货币钱包助手。
 
 核心原则：
@@ -246,7 +127,6 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，一个 AI 驱动的 MPC 加密�
 - 准备交易（需要用户确认才签名）
 - 查看交易历史
 - 展示收款地址
-- 搜索 DeFi 收益机会
 
 回复风格：
 - 简洁友好，专业但不生硬
@@ -261,308 +141,497 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，一个 AI 驱动的 MPC 加密�
 - 提醒用户区块链交易不可逆
 - 提醒用户仔细核对收款地址"#;
 
-/// Simple local intent classifier (fallback when AI not available)
-fn classify_intent_locally(message: &str) -> IntentClassification {
-    let msg_lower = message.to_lowercase();
+// ---------------------------------------------------------------------------
+// Request / Response types
+// ---------------------------------------------------------------------------
 
-    if msg_lower.contains("gas") || msg_lower.contains("fee") || msg_lower.contains("cost")
-        || msg_lower.contains("手续费") || msg_lower.contains("gas费")
-    {
-        return IntentClassification {
-            intent_type: "estimate_gas".into(),
-            confidence: 0.70,
-            entities: serde_json::json!({}),
-            suggested_action: Some("Estimate gas cost".into()),
-        };
-    }
-
-    if msg_lower.contains("balance") || msg_lower.contains("how much") || msg_lower.contains("worth")
-        || msg_lower.contains("余额") || msg_lower.contains("多少钱")
-    {
-        return IntentClassification {
-            intent_type: "get_balance".into(),
-            confidence: 0.85,
-            entities: serde_json::json!({}),
-            suggested_action: Some("Check wallet balance".into()),
-        };
-    }
-
-    if msg_lower.contains("send") || msg_lower.contains("transfer") || msg_lower.contains("pay")
-        || msg_lower.contains("转账") || msg_lower.contains("发送") || msg_lower.contains("转")
-    {
-        return IntentClassification {
-            intent_type: "send_transaction".into(),
-            confidence: 0.80,
-            entities: serde_json::json!({}),
-            suggested_action: Some("Prepare transaction".into()),
-        };
-    }
-
-    if msg_lower.contains("history") || msg_lower.contains("transactions") || msg_lower.contains("recent")
-        || msg_lower.contains("记录") || msg_lower.contains("交易")
-    {
-        return IntentClassification {
-            intent_type: "get_transaction_history".into(),
-            confidence: 0.75,
-            entities: serde_json::json!({}),
-            suggested_action: Some("Show transaction history".into()),
-        };
-    }
-
-    if msg_lower.contains("address") || msg_lower.contains("收款") || msg_lower.contains("地址")
-        || msg_lower.contains("qr") || msg_lower.contains("二维码")
-    {
-        return IntentClassification {
-            intent_type: "get_wallet_address".into(),
-            confidence: 0.78,
-            entities: serde_json::json!({}),
-            suggested_action: Some("Show wallet address".into()),
-        };
-    }
-
-    IntentClassification {
-        intent_type: "general_chat".into(),
-        confidence: 0.50,
-        entities: serde_json::json!({}),
-        suggested_action: None,
-    }
+#[derive(Debug, Deserialize)]
+pub struct ChatRequest {
+    pub message: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
-/// Non-streaming chat endpoint with DeepSeek API + tool execution
-async fn chat(
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallInfo {
+    pub name: String,
+    pub parameters: serde_json::Value,
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionQuery {
+    pub user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSessionRequest {
+    pub user_id: String,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionInfo {
+    pub id: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ---------------------------------------------------------------------------
+// SSE streaming chat — POST /ai/chat
+//
+// SSE events:
+//   event: session     data: {"session_id":"..."}
+//   event: token       data: {"text":"..."}
+//   event: tool_call   data: {"id":"...","name":"...","parameters":{}}
+//   event: tool_result data: {"tool_id":"...","tool_name":"...","success":true,"result":{}}
+//   event: done        data: {"needs_confirmation":["..."]}
+//   event: error       data: {"message":"..."}
+// ---------------------------------------------------------------------------
+
+async fn chat_stream(
     State(state): State<AppState>,
     Json(req): Json<ChatRequest>,
-) -> Result<Json<ChatWithToolsResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Response {
     let user_message = req.message.clone();
-    let tools = wallet_tools();
 
-    let ai = match &state.claude {
-        Some(c) => c,
-        None => {
-            tracing::warn!("AI client not configured, falling back to local classifier");
-            return Ok(Json(fallback_response(&user_message)));
-        }
-    };
+    let user_uuid = req.user_id.as_deref()
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .unwrap_or_else(Uuid::nil);
 
-    // Build messages: system + history + user message
-    let mut messages: Vec<Message> = vec![
-        Message {
-            role: "system".into(),
-            content: Some(SYSTEM_PROMPT.into()),
-            tool_calls: None,
-            tool_call_id: None,
-        },
-    ];
+    let session_id = req.session_id.as_deref()
+        .and_then(|s| Uuid::parse_str(s).ok());
 
-    for msg in &req.history {
-        messages.push(Message {
-            role: msg.role.clone(),
-            content: Some(msg.content.clone()),
-            tool_calls: None,
-            tool_call_id: None,
-        });
-    }
-
-    messages.push(Message {
-        role: "user".into(),
-        content: Some(user_message.clone()),
-        tool_calls: None,
-        tool_call_id: None,
-    });
-
-    // First call — get response or tool calls
-    let response = match ai.chat(&messages, &tools, None).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("AI API failed: {}, falling back to local classifier", e);
-            return Ok(Json(fallback_response(&user_message)));
-        }
-    };
-
-    let initial_text = extract_text(&response);
-    let tool_calls = extract_tool_calls(&response);
-
-    // No tools called — return direct response
-    if tool_calls.is_empty() {
-        return Ok(Json(ChatWithToolsResponse {
-            message: initial_text,
-            tool_calls: vec![],
-            tool_results: vec![],
-            needs_confirmation: vec![],
-        }));
-    }
-
-    // Build response tool calls info
-    let response_tool_calls: Vec<ToolCallInfo> = tool_calls
-        .iter()
-        .map(|(id, name, params)| ToolCallInfo {
-            id: id.clone(),
-            name: name.clone(),
-            parameters: params.clone(),
-        })
-        .collect();
-
-    // Execute tools
-    let tool_ctx = ToolContext {
-        app_state: state.clone(),
-        user_id: req.user_id.clone(),
-    };
-
-    let mut tool_results = Vec::new();
-    let mut needs_confirmation = Vec::new();
-
-    for (tool_id, name, params) in &tool_calls {
-        tracing::info!("Executing tool: {} id={}", name, tool_id);
-        let result = tool_ctx.execute_tool(name, tool_id, params.clone()).await;
-
-        if name == "send_transaction" && result.success {
-            needs_confirmation.push(tool_id.clone());
-        }
-
-        tool_results.push(result);
-    }
-
-    // Add assistant message with tool_calls to conversation
-    let choice = &response.choices[0];
-    messages.push(Message {
-        role: "assistant".into(),
-        content: choice.message.content.clone(),
-        tool_calls: choice.message.tool_calls.clone(),
-        tool_call_id: None,
-    });
-
-    // Add tool results as tool messages
-    for result in &tool_results {
-        let content = if result.success {
-            serde_json::to_string(&result.result).unwrap_or_else(|_| "{}".into())
+    // Resolve session
+    let db_session_id = if let Some(db) = &state.db {
+        if let Some(sid) = session_id {
+            sid
         } else {
-            format!("Error: {}", result.error.as_deref().unwrap_or("unknown error"))
+            ChatStore::get_or_create_session(db, user_uuid).await
+                .map(|s| s.id)
+                .unwrap_or_else(|_| Uuid::new_v4())
+        }
+    } else {
+        Uuid::new_v4()
+    };
+
+    // Persist user message
+    if let Some(db) = &state.db {
+        let _ = ChatStore::save_message(db, db_session_id, "user", Some(&user_message), None, None).await;
+    }
+
+    // Build the SSE response as a stream
+    let stream = async_stream::stream! {
+        // Send session_id first
+        yield sse_event("session", &serde_json::json!({"session_id": db_session_id.to_string()}));
+
+        let ai = match &state.claude {
+            Some(c) => c.clone(),
+            None => {
+                yield sse_event("error", &serde_json::json!({"message": "AI 服务未配置"}));
+                yield sse_event("done", &serde_json::json!({"needs_confirmation": []}));
+                return;
+            }
         };
 
-        messages.push(Message {
-            role: "tool".into(),
-            content: Some(content),
-            tool_calls: None,
-            tool_call_id: Some(result.tool_id.clone()),
-        });
-    }
+        // Build context messages
+        let mut messages: Vec<Message> = vec![
+            Message { role: "system".into(), content: Some(SYSTEM_PROMPT.into()), tool_calls: None, tool_call_id: None },
+        ];
 
-    // Second call — get final response incorporating tool results
-    let final_response = match ai.chat(&messages, &tools, None).await {
-        Ok(r) => extract_text(&r),
-        Err(e) => {
-            tracing::warn!("AI API failed after tool execution: {}", e);
-            "获取到了信息，但格式化回复时出错。请查看下方的工具执行结果。".into()
+        // Load history from DB
+        if let Some(db) = &state.db {
+            if let Ok(rows) = ChatStore::load_messages(db, db_session_id, 20).await {
+                for row in rows {
+                    if row.role == "user" && row.content.as_deref() == Some(user_message.as_str()) {
+                        continue;
+                    }
+                    messages.push(Message {
+                        role: row.role,
+                        content: row.content,
+                        tool_calls: None,
+                        tool_call_id: row.tool_call_id,
+                    });
+                }
+            }
         }
+
+        messages.push(Message {
+            role: "user".into(),
+            content: Some(user_message.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        let tools = wallet_tools();
+
+        // Stream first response from DeepSeek
+        let stream_resp = ai.stream_chat(&messages, &tools, None).await;
+        let raw_response = match stream_resp {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::error!("AI stream failed: {}", e);
+                yield sse_event("error", &serde_json::json!({"message": format!("AI 请求失败: {}", e)}));
+                yield sse_event("done", &serde_json::json!({"needs_confirmation": []}));
+                return;
+            }
+        };
+
+        // Parse SSE from upstream DeepSeek
+        let mut full_content = String::new();
+        let mut tool_calls_acc: Vec<AccToolCall> = Vec::new();
+        let mut byte_stream = raw_response.bytes_stream();
+
+        let mut buffer = String::new();
+
+        while let Some(chunk) = byte_stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(_) => break,
+            };
+            let text = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&text);
+
+            // Process complete SSE lines
+            while let Some(pos) = buffer.find("\n\n") {
+                let event_block = buffer[..pos].to_string();
+                buffer = buffer[pos+2..].to_string();
+
+                for line in event_block.lines() {
+                    if !line.starts_with("data: ") { continue; }
+                    let data = &line[6..];
+                    if data == "[DONE]" { continue; }
+
+                    if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+                            for choice in choices {
+                                let delta = match choice.get("delta") {
+                                    Some(d) => d,
+                                    None => continue,
+                                };
+
+                                // Text content
+                                if let Some(text) = delta.get("content").and_then(|t| t.as_str()) {
+                                    if !text.is_empty() {
+                                        full_content.push_str(text);
+                                        yield sse_event("token", &serde_json::json!({"text": text}));
+                                    }
+                                }
+
+                                // Tool calls (accumulated across chunks)
+                                if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                                    for tc in tcs {
+                                        let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                                        while tool_calls_acc.len() <= idx {
+                                            tool_calls_acc.push(AccToolCall::default());
+                                        }
+                                        if let Some(id) = tc.get("id").and_then(|s| s.as_str()) {
+                                            tool_calls_acc[idx].id = id.to_string();
+                                        }
+                                        if let Some(f) = tc.get("function") {
+                                            if let Some(name) = f.get("name").and_then(|s| s.as_str()) {
+                                                tool_calls_acc[idx].name = name.to_string();
+                                            }
+                                            if let Some(args) = f.get("arguments").and_then(|s| s.as_str()) {
+                                                tool_calls_acc[idx].arguments.push_str(args);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no tool calls, persist and done
+        if tool_calls_acc.is_empty() {
+            if let Some(db) = &state.db {
+                let _ = ChatStore::save_message(db, db_session_id, "assistant", Some(&full_content), None, None).await;
+            }
+            yield sse_event("done", &serde_json::json!({"needs_confirmation": []}));
+            return;
+        }
+
+        // Parse and emit tool calls
+        let mut parsed_tool_calls: Vec<ToolCallInfo> = Vec::new();
+        for tc in &tool_calls_acc {
+            let params: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or(serde_json::json!({}));
+            parsed_tool_calls.push(ToolCallInfo {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                parameters: params.clone(),
+            });
+            yield sse_event("tool_call", &serde_json::json!({
+                "id": tc.id,
+                "name": tc.name,
+                "parameters": params,
+            }));
+        }
+
+        // Execute tools
+        let tool_ctx = ToolContext {
+            app_state: state.clone(),
+            user_id: req.user_id.clone(),
+        };
+
+        let mut tool_results: Vec<ToolExecutionResult> = Vec::new();
+        let mut needs_confirmation: Vec<String> = Vec::new();
+
+        for tc in &parsed_tool_calls {
+            let result = tool_ctx.execute_tool(&tc.name, &tc.id, tc.parameters.clone()).await;
+            if tc.name == "send_transaction" && result.success {
+                needs_confirmation.push(tc.id.clone());
+            }
+            yield sse_event("tool_result", &serde_json::json!({
+                "tool_id": result.tool_id,
+                "tool_name": result.tool_name,
+                "success": result.success,
+                "result": result.result,
+                "error": result.error,
+            }));
+            tool_results.push(result);
+        }
+
+        // Build second round messages with tool results
+        // Add assistant message with tool_calls
+        let tc_for_msg: Vec<crate::services::claude::ToolCall> = tool_calls_acc.iter().map(|tc| {
+            crate::services::claude::ToolCall {
+                id: tc.id.clone(),
+                call_type: "function".into(),
+                function: crate::services::claude::FunctionCall {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                },
+            }
+        }).collect();
+
+        messages.push(Message {
+            role: "assistant".into(),
+            content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
+            tool_calls: Some(tc_for_msg),
+            tool_call_id: None,
+        });
+
+        for result in &tool_results {
+            let content = if result.success {
+                serde_json::to_string(&result.result).unwrap_or_else(|_| "{}".into())
+            } else {
+                format!("Error: {}", result.error.as_deref().unwrap_or("unknown"))
+            };
+            messages.push(Message {
+                role: "tool".into(),
+                content: Some(content),
+                tool_calls: None,
+                tool_call_id: Some(result.tool_id.clone()),
+            });
+        }
+
+        // Stream second response (after tool results)
+        let stream_resp2 = ai.stream_chat(&messages, &tools, None).await;
+        match stream_resp2 {
+            Ok(resp2) => {
+                let mut byte_stream2 = resp2.bytes_stream();
+                let mut buffer2 = String::new();
+                let mut final_content = String::new();
+
+                while let Some(chunk) = byte_stream2.next().await {
+                    let chunk = match chunk {
+                        Ok(c) => c,
+                        Err(_) => break,
+                    };
+                    let text = String::from_utf8_lossy(&chunk);
+                    buffer2.push_str(&text);
+
+                    while let Some(pos) = buffer2.find("\n\n") {
+                        let event_block = buffer2[..pos].to_string();
+                        buffer2 = buffer2[pos+2..].to_string();
+
+                        for line in event_block.lines() {
+                            if !line.starts_with("data: ") { continue; }
+                            let data = &line[6..];
+                            if data == "[DONE]" { continue; }
+
+                            if let Ok(chunk_val) = serde_json::from_str::<serde_json::Value>(data) {
+                                if let Some(choices) = chunk_val.get("choices").and_then(|c| c.as_array()) {
+                                    for choice in choices {
+                                        if let Some(text) = choice.get("delta")
+                                            .and_then(|d| d.get("content"))
+                                            .and_then(|t| t.as_str())
+                                        {
+                                            if !text.is_empty() {
+                                                final_content.push_str(text);
+                                                yield sse_event("token", &serde_json::json!({"text": text}));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Persist final assistant response
+                if let Some(db) = &state.db {
+                    let tc_json = serde_json::to_value(&parsed_tool_calls).ok();
+                    let _ = ChatStore::save_message(db, db_session_id, "assistant", Some(&final_content), tc_json.as_ref(), None).await;
+                }
+            }
+            Err(e) => {
+                tracing::error!("AI second stream failed: {}", e);
+                yield sse_event("error", &serde_json::json!({"message": "工具结果处理失败"}));
+            }
+        }
+
+        yield sse_event("done", &serde_json::json!({"needs_confirmation": needs_confirmation}));
     };
 
-    Ok(Json(ChatWithToolsResponse {
-        message: final_response,
-        tool_calls: response_tool_calls,
-        tool_results,
-        needs_confirmation,
+    let body = Body::from_stream(stream);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header("X-Accel-Buffering", "no")
+        .body(body)
+        .unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Session management
+// ---------------------------------------------------------------------------
+
+async fn create_session(
+    State(state): State<AppState>,
+    Json(req): Json<CreateSessionRequest>,
+) -> Result<Json<SessionInfo>, (StatusCode, Json<serde_json::Value>)> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "database unavailable"})))
+    })?;
+
+    let user_uuid = Uuid::parse_str(&req.user_id).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid user_id"})))
+    })?;
+
+    let session = ChatStore::create_session(db, user_uuid, req.title.as_deref()).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+    })?;
+
+    Ok(Json(SessionInfo {
+        id: session.id.to_string(),
+        title: session.title,
+        created_at: session.created_at.to_rfc3339(),
+        updated_at: session.updated_at.to_rfc3339(),
     }))
 }
 
-/// Fallback response using local classifier when AI is not available
-fn fallback_response(user_message: &str) -> ChatWithToolsResponse {
-    let classification = classify_intent_locally(user_message);
+async fn list_sessions(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<SessionQuery>,
+) -> Result<Json<Vec<SessionInfo>>, (StatusCode, Json<serde_json::Value>)> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "database unavailable"})))
+    })?;
 
-    let response_message = match classification.intent_type.as_str() {
-        "get_balance" => "正在查询余额，请稍候...",
-        "send_transaction" => "转账功能需要 AI 服务支持，请配置 DEEPSEEK_API_KEY。",
-        "get_transaction_history" => "交易记录查询需要 AI 服务支持。",
-        "get_wallet_address" => "正在获取钱包地址...",
-        _ => "我是 CoWallet AI 助手。配置 DEEPSEEK_API_KEY 后可使用完整的钱包功能。",
-    };
+    let user_uuid = Uuid::parse_str(&query.user_id).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid user_id"})))
+    })?;
 
-    ChatWithToolsResponse {
-        message: response_message.into(),
-        tool_calls: vec![],
-        tool_results: vec![],
-        needs_confirmation: vec![],
-    }
+    let sessions = ChatStore::list_sessions(db, user_uuid, 50).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+    })?;
+
+    let result: Vec<SessionInfo> = sessions.into_iter().map(|s| SessionInfo {
+        id: s.id.to_string(),
+        title: s.title,
+        created_at: s.created_at.to_rfc3339(),
+        updated_at: s.updated_at.to_rfc3339(),
+    }).collect();
+
+    Ok(Json(result))
 }
 
-/// Streaming chat endpoint using SSE
-async fn chat_stream(
-    State(_state): State<AppState>,
-    Query(query): Query<StreamQuery>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let classification = classify_intent_locally(&query.message);
+async fn get_session_messages(
+    State(state): State<AppState>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<serde_json::Value>)> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "database unavailable"})))
+    })?;
 
-    let stream = async_stream::stream! {
-        yield Ok(Event::default().event("thinking").data("Processing..."));
+    let session_uuid = Uuid::parse_str(&session_id).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid session_id"})))
+    })?;
 
-        let response = match classification.intent_type.as_str() {
-            "get_balance" => "正在查询钱包余额...",
-            "send_transaction" => "准备转账信息...",
-            _ => "我是 CoWallet AI 助手，有什么可以帮你的？",
-        };
+    let messages = ChatStore::load_messages(db, session_uuid, 100).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+    })?;
 
-        for word in response.split_whitespace() {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            yield Ok(Event::default().event("token").data(word.to_string() + " "));
-        }
+    let result: Vec<serde_json::Value> = messages.into_iter().map(|m| {
+        serde_json::json!({
+            "id": m.id.to_string(),
+            "role": m.role,
+            "content": m.content,
+            "tool_calls": m.tool_calls,
+            "created_at": m.created_at.to_rfc3339(),
+        })
+    }).collect();
 
-        yield Ok(Event::default().event("done").data(""));
-    };
-
-    Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive-text"),
-    )
+    Ok(Json(result))
 }
 
-/// Intent classification endpoint
-async fn classify_intent(Json(req): Json<ChatRequest>) -> Json<IntentClassification> {
-    Json(classify_intent_locally(&req.message))
+async fn delete_session(
+    State(state): State<AppState>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<SessionQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "database unavailable"})))
+    })?;
+
+    let session_uuid = Uuid::parse_str(&session_id).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid session_id"})))
+    })?;
+
+    let user_uuid = Uuid::parse_str(&query.user_id).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid user_id"})))
+    })?;
+
+    let deleted = ChatStore::delete_session(db, session_uuid, user_uuid).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+    })?;
+
+    Ok(Json(serde_json::json!({"deleted": deleted})))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+#[derive(Default, Clone)]
+struct AccToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+fn sse_event(event: &str, data: &serde_json::Value) -> Result<Bytes, Infallible> {
+    Ok(Bytes::from(format!("event: {}\ndata: {}\n\n", event, data)))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn test_classify_balance() {
-        let result = classify_intent_locally("What's my balance?");
-        assert_eq!(result.intent_type, "get_balance");
-    }
-
-    #[test]
-    fn test_classify_balance_zh() {
-        let result = classify_intent_locally("我的余额是多少");
-        assert_eq!(result.intent_type, "get_balance");
-    }
-
-    #[test]
-    fn test_classify_send() {
-        let result = classify_intent_locally("Send 1 ETH to 0x...");
-        assert_eq!(result.intent_type, "send_transaction");
-    }
-
-    #[test]
-    fn test_classify_send_zh() {
-        let result = classify_intent_locally("转账 0.1 ETH");
-        assert_eq!(result.intent_type, "send_transaction");
-    }
-
-    #[test]
-    fn test_classify_address() {
-        let result = classify_intent_locally("我的收款地址");
-        assert_eq!(result.intent_type, "get_wallet_address");
-    }
-
-    #[test]
-    fn test_classify_history() {
-        let result = classify_intent_locally("最近的交易记录");
-        assert_eq!(result.intent_type, "get_transaction_history");
-    }
-
-    #[test]
-    fn test_classify_general() {
-        let result = classify_intent_locally("Hello there");
-        assert_eq!(result.intent_type, "general_chat");
+    fn test_sse_event_format() {
+        let data = serde_json::json!({"text": "hello"});
+        let result = super::sse_event("token", &data).unwrap();
+        let s = std::str::from_utf8(&result).unwrap();
+        assert!(s.starts_with("event: token\n"));
+        assert!(s.contains("\"text\":\"hello\""));
+        assert!(s.ends_with("\n\n"));
     }
 }

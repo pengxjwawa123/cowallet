@@ -188,7 +188,7 @@ impl AiClient {
         messages: &[Message],
         tools: &[ToolDefinition],
         temperature: Option<f32>,
-    ) -> Result<ChatCompletionResponse, Box<dyn std::error::Error>> {
+    ) -> Result<ChatCompletionResponse, Box<dyn std::error::Error + Send + Sync>> {
         let url = format!("{}/v1/chat/completions", self.base_url);
 
         let request = ChatCompletionRequest {
@@ -223,7 +223,7 @@ impl AiClient {
         messages: &[Message],
         tools: &[ToolDefinition],
         temperature: Option<f32>,
-    ) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+    ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
         let url = format!("{}/v1/chat/completions", self.base_url);
 
         let request = ChatCompletionRequest {

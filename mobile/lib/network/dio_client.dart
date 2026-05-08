@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import '../config/api_config.dart';
@@ -150,13 +152,14 @@ class DioClient {
   static Future<Result<T>> get<T>(
     String path, {
     Map<String, dynamic>? params,
+    Map<String, dynamic>? queryParameters,
     Options? options,
     CancelToken? cancelToken,
   }) async {
     return request<T>(
       path,
       method: "GET",
-      params: params,
+      params: queryParameters ?? params,
       options: options,
       cancelToken: cancelToken,
     );
@@ -200,6 +203,7 @@ class DioClient {
     String path, {
     dynamic data,
     Map<String, dynamic>? params,
+    Map<String, dynamic>? queryParameters,
     Options? options,
     CancelToken? cancelToken,
   }) async {
@@ -207,10 +211,48 @@ class DioClient {
       path,
       method: "DELETE",
       data: data,
-      params: params,
+      params: queryParameters ?? params,
       options: options,
       cancelToken: cancelToken,
     );
+  }
+
+  /// POST request that returns an SSE stream (text/event-stream).
+  static Future<Stream<String>?> postStream(
+    String path, {
+    dynamic data,
+  }) async {
+    try {
+      String? token = await SecureStorage.getToken();
+      final dio = Dio(BaseOptions(
+        baseUrl: ApiConfig.apiBaseUrl,
+        connectTimeout: Duration(seconds: ApiConfig.connectTimeout),
+        receiveTimeout: const Duration(seconds: 120),
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+          if (token != null) "Authorization": "Bearer $token",
+        },
+        responseType: ResponseType.stream,
+      ));
+
+      final response = await dio.post(
+        path,
+        data: data,
+      );
+
+      final stream = (response.data as ResponseBody).stream;
+      return stream.transform(
+        StreamTransformer<Uint8List, String>.fromHandlers(
+          handleData: (Uint8List data, EventSink<String> sink) {
+            sink.add(String.fromCharCodes(data));
+          },
+        ),
+      );
+    } catch (e) {
+      print("❌ [DioClient] Stream request failed: $e");
+      return null;
+    }
   }
 
   /// Attempt to refresh the access token using the stored refresh token.
