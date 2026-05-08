@@ -5,6 +5,7 @@ import 'package:convert/convert.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../platform/cloud_backup.dart';
+import '../utils/secure_storage.dart';
 
 /// Manages the backup shard (Party 2) for wallet recovery.
 ///
@@ -14,6 +15,7 @@ import '../platform/cloud_backup.dart';
 class BackupShardService {
   final CloudBackupService _cloud;
   static const _backupKey = 'cowallet_backup_shard';
+  static const _methodKey = 'backup_shard_method';
 
   BackupShardService(this._cloud);
 
@@ -32,11 +34,13 @@ class BackupShardService {
       } catch (_) {
         throw BackupException(BackupError.cloudStoreFailed);
       }
+      await SecureStorage.save(_methodKey, 'cloud');
       return BackupResult(method: BackupMethod.cloud);
     }
 
     try {
       final filePath = await _writeBackupFile(payload);
+      await SecureStorage.save(_methodKey, 'file');
       return BackupResult(method: BackupMethod.file, filePath: filePath);
     } catch (_) {
       throw BackupException(BackupError.fileWriteFailed);
@@ -56,6 +60,14 @@ class BackupShardService {
   /// Parse a backup file (user provides file content).
   List<int>? parseBackupFile(String fileContent) {
     return _parseBackupPayload(fileContent);
+  }
+
+  /// Get the stored backup method (cloud or file).
+  Future<BackupMethod?> getBackupMethod() async {
+    final method = await SecureStorage.get(_methodKey);
+    if (method == 'cloud') return BackupMethod.cloud;
+    if (method == 'file') return BackupMethod.file;
+    return null;
   }
 
   /// Check if a cloud backup exists.

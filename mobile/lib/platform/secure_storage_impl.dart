@@ -2,7 +2,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'secure_storage.dart';
 
 class FlutterSecureStorageService implements SecureStorageService {
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
 
   @override
   Future<void> write(String key, String value) =>

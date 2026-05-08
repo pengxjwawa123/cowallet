@@ -6,6 +6,7 @@ import 'result.dart';
 
 class DioClient {
   static Dio? _instance;
+  static bool _isRefreshing = false;
 
   static Dio get instance {
     if (_instance == null) {
@@ -53,12 +54,32 @@ class DioClient {
           return handler.next(response);
         },
         onError: (DioException e, handler) async {
-          // 401未授权，token过期，自动清除登录信息
-          if (e.response?.statusCode == 401) {
-            print("⚠️  401 Unauthorized - clearing token");
-            await SecureStorage.clearAll();
-            // TODO: 这里接入全局路由后，自动跳转到登录页
-            // navigatorKey.currentState?.pushReplacementNamed('/login');
+          if (e.response?.statusCode == 401 && !_isRefreshing) {
+            // Skip refresh for the refresh endpoint itself
+            final path = e.requestOptions.path;
+            if (path.contains('/auth/refresh') || path.contains('/auth/register') || path.contains('/auth/login')) {
+              return handler.next(e);
+            }
+
+            _isRefreshing = true;
+            try {
+              final refreshed = await _tryRefreshToken();
+              if (refreshed) {
+                // Retry the original request with new token
+                final token = await SecureStorage.getToken();
+                final opts = e.requestOptions;
+                opts.headers["Authorization"] = "Bearer $token";
+                final response = await _instance!.fetch(opts);
+                return handler.resolve(response);
+              } else {
+                print("⚠️  Token refresh failed - clearing auth data");
+                await SecureStorage.clearAuthData();
+              }
+            } catch (_) {
+              await SecureStorage.clearAuthData();
+            } finally {
+              _isRefreshing = false;
+            }
           }
           return handler.next(e);
         },
@@ -190,6 +211,42 @@ class DioClient {
       options: options,
       cancelToken: cancelToken,
     );
+  }
+
+  /// Attempt to refresh the access token using the stored refresh token.
+  /// Uses a separate Dio instance to avoid interceptor recursion.
+  static Future<bool> _tryRefreshToken() async {
+    final refreshToken = await SecureStorage.getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+
+    try {
+      final dio = Dio(BaseOptions(
+        baseUrl: ApiConfig.apiBaseUrl,
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
+        headers: {"Content-Type": "application/json"},
+      ));
+
+      final response = await dio.post(
+        "/auth/refresh",
+        data: {"refresh_token": refreshToken},
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final newToken = response.data["token"] as String?;
+        final newRefresh = response.data["refresh_token"] as String?;
+        if (newToken != null) {
+          await SecureStorage.saveToken(newToken);
+        }
+        if (newRefresh != null) {
+          await SecureStorage.saveRefreshToken(newRefresh);
+        }
+        return newToken != null;
+      }
+    } catch (e) {
+      print("❌ Token refresh error: $e");
+    }
+    return false;
   }
 
   // 错误处理

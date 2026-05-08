@@ -7,7 +7,7 @@ use crate::middleware::rate_limit::AnyRateLimiter;
 use crate::retry::{CircuitBreaker, CircuitBreakerConfig};
 use crate::routes::price::PriceCache;
 use crate::routes::yield_::YieldCache;
-use crate::services::claude::ClaudeClient;
+use crate::services::claude::AiClient;
 use crate::services::mpc_participant::MpcParticipant;
 use crate::services::presign_manager::PresignManager;
 
@@ -18,7 +18,7 @@ pub struct AppState {
     pub price_cache: PriceCache,
     pub yield_cache: YieldCache,
     pub http: reqwest::Client,
-    pub claude: Option<ClaudeClient>,
+    pub claude: Option<AiClient>,
     pub nats: Option<async_nats::Client>,
     pub rate_limiter: AnyRateLimiter,
     pub rpc_circuit_breaker: CircuitBreaker,
@@ -87,16 +87,14 @@ impl AppState {
             }
         };
 
-        // Initialize Claude client if API key is available
-        let claude = std::env::var("ANTHROPIC_API_KEY")
-            .ok()
-            .and_then(|key| match ClaudeClient::new(key) {
-                Ok(client) => Some(client),
-                Err(e) => {
-                    tracing::warn!("Failed to initialize Claude client: {}", e);
-                    None
-                }
-            });
+        // Initialize AI client (DeepSeek)
+        let claude = match AiClient::from_env() {
+            Ok(client) => Some(client),
+            Err(e) => {
+                tracing::warn!("AI client not configured: {}", e);
+                None
+            }
+        };
 
         // Initialize MPC participant with encryption service (ENCRYPTION_KEY validated in main)
         let encryption_key = hex::decode(

@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/cw_chip.dart';
 import '../../services/locator.dart';
 import '../../services/key_health_service.dart';
+import '../../services/backup_shard_service.dart';
 
 class KeysView extends StatefulWidget {
   const KeysView({super.key});
@@ -23,6 +27,7 @@ class _KeysViewState extends State<KeysView> {
   KeyHealth? _phoneHealth;
   KeyHealth? _serverHealth;
   KeyHealth? _backupHealth;
+  BackupMethod? _backupMethod;
 
   @override
   void initState() {
@@ -53,6 +58,9 @@ class _KeysViewState extends State<KeysView> {
       _backupLoading = true;
     });
 
+    _keyHealth.getBackupMethod().then((m) {
+      if (mounted) setState(() => _backupMethod = m);
+    });
     _keyHealth.checkPhoneKey().then((h) {
       if (mounted) setState(() { _phoneHealth = h; _phoneLoading = false; });
     });
@@ -79,7 +87,14 @@ class _KeysViewState extends State<KeysView> {
 
   Future<void> _testBackupKey() async {
     setState(() => _testingBackup = true);
-    final success = await _keyHealth.testBackupKey();
+
+    bool success;
+    if (_backupMethod == BackupMethod.file) {
+      success = await _testBackupKeyWithFile();
+    } else {
+      success = await _keyHealth.testBackupKey();
+    }
+
     if (mounted) {
       setState(() => _testingBackup = false);
       if (success) {
@@ -102,6 +117,24 @@ class _KeysViewState extends State<KeysView> {
           ),
         );
       }
+    }
+  }
+
+  Future<bool> _testBackupKeyWithFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (result == null || result.files.isEmpty) return false;
+
+      final filePath = result.files.single.path;
+      if (filePath == null) return false;
+
+      final fileContent = await File(filePath).readAsString();
+      return await _keyHealth.testBackupKeyWithFile(fileContent);
+    } catch (_) {
+      return false;
     }
   }
 
@@ -241,9 +274,11 @@ class _KeysViewState extends State<KeysView> {
               icon: Icons.lock_outline,
               status: _overallBackupStatus(),
               title: S.keyRecovery,
-              where: S.keyRecoveryWhere,
+              where: _backupMethod == BackupMethod.file ? S.keyRecoveryWhereFile : S.keyRecoveryWhere,
               meta: _isAuthenticated ? _backupMetaText() : '••••••••',
-              actionLabel: _overallBackupStatus() != KeyStatus.ok ? S.keyRecoveryAction : null,
+              actionLabel: _overallBackupStatus() != KeyStatus.ok
+                  ? (_backupMethod == BackupMethod.file ? S.keyRecoveryActionFile : S.keyRecoveryAction)
+                  : null,
               onAction: _testBackupKey,
               actionLoading: _testingBackup,
               loading: _backupLoading,

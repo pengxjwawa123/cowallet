@@ -8,6 +8,7 @@ class SecureStorage {
 
   // 存储key常量
   static const String keyToken = "user_token";
+  static const String keyRefreshToken = "refresh_token";
   static const String keyUserId = "user_id";
   static const String keyWalletAddress = "wallet_address";
   static const String keyMnemonic = "wallet_mnemonic";
@@ -26,6 +27,22 @@ class SecureStorage {
   // 删除token（退出登录时用）
   static Future<void> deleteToken() async {
     await _storage.delete(key: keyToken);
+  }
+
+  // 存refresh_token
+  static Future<void> saveRefreshToken(String token) async {
+    await _storage.write(key: keyRefreshToken, value: token);
+  }
+
+  // 取refresh_token
+  static Future<String?> getRefreshToken() async {
+    return await _storage.read(key: keyRefreshToken);
+  }
+
+  // 清除认证相关数据（不影响生物识别、钱包等设置）
+  static Future<void> clearAuthData() async {
+    await _storage.delete(key: keyToken);
+    await _storage.delete(key: keyRefreshToken);
   }
 
   // 存助记词（加密存储，钱包必备）

@@ -156,10 +156,10 @@ class AndroidStrongBoxChannel {
   /// Returns null if no shard is stored
   static Future<List<int>?> loadEncryptedShard() async {
     try {
-      final result = await storageChannel.invokeMethod<List<dynamic>>(
+      final result = await storageChannel.invokeMethod<Uint8List>(
         'loadEncryptedShard',
       );
-      return result?.cast<int>();
+      return result?.toList();
     } on PlatformException catch (e) {
       throw SbException('loadEncryptedShard failed: ${e.message}');
     }

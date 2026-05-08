@@ -5,6 +5,7 @@ import 'router/app_router.dart';
 import 'state/app_state.dart';
 import 'services/locator.dart';
 import 'api/auth_api.dart';
+import 'utils/secure_storage.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,25 +39,51 @@ class _CowalletAppState extends State<CowalletApp> {
 
   Future<void> _checkWalletState() async {
     try {
-      // Check for both local wallet existence and valid backend session
       final hasLocalWallet = await Services.wallet.hasWallet();
-      final hasValidSession = await AuthApi.isLoggedIn();
+      print('[App] hasLocalWallet=$hasLocalWallet');
+      if (!hasLocalWallet) {
+        setState(() => _ready = true);
+        return;
+      }
 
-      if (hasLocalWallet && hasValidSession) {
+      // Wallet exists locally — ensure we have a valid session
+      final hasValidSession = await AuthApi.isLoggedIn();
+      if (hasValidSession) {
+        // Try to validate session; if expired, attempt refresh
+        final sessionResult = await AuthApi.getSessionInfo();
+        if (!sessionResult.isSuccess) {
+          final refreshed = await AuthApi.refreshToken();
+          if (!refreshed) {
+            await _reloginWithDeviceId();
+          }
+        }
+      } else {
+        // No token — try refresh first, then re-login with device_id
+        final refreshed = await AuthApi.refreshToken();
+        if (!refreshed) {
+          await _reloginWithDeviceId();
+        }
+      }
+
+      // Check again after potential refresh/re-login
+      final hasToken = await AuthApi.isLoggedIn();
+      if (hasToken) {
         final addr = await Services.wallet.getAddress();
         appState.setWalletAddress(addr);
         appState.completeOnboarding();
         _initialRoute = AppRouter.home;
-
-        // Try to refresh session info from backend
-        try {
-          await AuthApi.getSessionInfo();
-        } catch (_) {}
       }
     } catch (_) {
       // Fall through to onboarding
     }
     setState(() => _ready = true);
+  }
+
+  Future<void> _reloginWithDeviceId() async {
+    final deviceId = await SecureStorage.getDeviceId();
+    if (deviceId != null && deviceId.isNotEmpty) {
+      await AuthApi.login(deviceId: deviceId);
+    }
   }
 
   @override

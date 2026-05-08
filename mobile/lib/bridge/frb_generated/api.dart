@@ -189,6 +189,39 @@ Future<void> recoveryClearBackupShard() =>
 Future<bool> recoveryHasBackupShard() =>
     RustLib.instance.api.crateApiRecoveryHasBackupShard();
 
+/// Export the device shard (Party 0) secret share bytes for hardware-backed storage.
+/// SECURITY: This should only be called once after DKG to persist to Secure Enclave/StrongBox.
+/// The caller must immediately encrypt and store it via hardware security module.
+Future<Uint8List> exportDeviceShard() =>
+    RustLib.instance.api.crateApiExportDeviceShard();
+
+/// Import a device shard (Party 0) from hardware-backed storage into Rust memory.
+/// Called at app startup to restore the shard from Secure Enclave/StrongBox.
+Future<void> importDeviceShard({
+  required List<int> shardBytes,
+  required List<int> publicKey,
+}) => RustLib.instance.api.crateApiImportDeviceShard(
+  shardBytes: shardBytes,
+  publicKey: publicKey,
+);
+
+/// Verify a backup shard by combining it with the device shard via Lagrange
+/// interpolation to reconstruct the group public key, then comparing against the expected key.
+///
+/// If `device_shard_bytes` is provided (non-empty), it is used directly.
+/// Otherwise falls back to the device shard in memory (Party 0).
+///
+/// `expected_public_key` is the stored wallet public key to verify against.
+Future<bool> verifyBackupShard({
+  required List<int> backupBytes,
+  required List<int> deviceShardBytes,
+  required List<int> expectedPublicKey,
+}) => RustLib.instance.api.crateApiVerifyBackupShard(
+  backupBytes: backupBytes,
+  deviceShardBytes: deviceShardBytes,
+  expectedPublicKey: expectedPublicKey,
+);
+
 /// Legacy: Sign locally for testing (reconstructs full key — NOT for production).
 Future<Uint8List> signHash({required List<int> msgHash}) =>
     RustLib.instance.api.crateApiSignHash(msgHash: msgHash);

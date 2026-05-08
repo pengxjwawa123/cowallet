@@ -332,6 +332,61 @@ class MpcBridge {
     }
   }
 
+  /// ===== Device Shard Persistence =====
+
+  /// Export device shard (Party 0) for hardware-backed storage.
+  /// Call once after DKG to persist to Secure Enclave/StrongBox.
+  static Future<List<int>> exportDeviceShard() async {
+    try {
+      return await frb.exportDeviceShard();
+    } catch (e) {
+      throw MpcException('Failed to export device shard: $e');
+    }
+  }
+
+  /// Import device shard from hardware storage into Rust memory.
+  /// Call at app startup to restore wallet state.
+  static Future<void> importDeviceShard({
+    required List<int> shardBytes,
+    required List<int> publicKey,
+  }) async {
+    try {
+      return await frb.importDeviceShard(
+        shardBytes: Uint8List.fromList(shardBytes),
+        publicKey: Uint8List.fromList(publicKey),
+      );
+    } catch (e) {
+      throw MpcException('Failed to import device shard: $e');
+    }
+  }
+
+  /// ===== Backup Shard Verification =====
+
+  /// Verify a backup shard by combining it with the device shard via Lagrange
+  /// interpolation to reconstruct the public key. Returns true if it matches.
+  ///
+  /// [deviceShardBytes] - 32-byte device shard (from hardware storage).
+  /// [expectedPublicKey] - the wallet's public key to verify against.
+  /// If either is empty, falls back to in-memory state (only works if wallet was just created).
+  static Future<bool> verifyBackupShard({
+    required List<int> backupBytes,
+    List<int> deviceShardBytes = const [],
+    List<int> expectedPublicKey = const [],
+  }) async {
+    if (backupBytes.length != 32) {
+      throw MpcException('backupBytes must be 32 bytes, got ${backupBytes.length}');
+    }
+    try {
+      return await frb.verifyBackupShard(
+        backupBytes: Uint8List.fromList(backupBytes),
+        deviceShardBytes: Uint8List.fromList(deviceShardBytes),
+        expectedPublicKey: Uint8List.fromList(expectedPublicKey),
+      );
+    } catch (e) {
+      throw MpcException('Failed to verify backup shard: $e');
+    }
+  }
+
   /// ===== Backup Shard Combination =====
 
   /// Combine device and server backup share contributions into the final backup shard.

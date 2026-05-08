@@ -312,10 +312,12 @@ class S {
   static String get keyCloudWhere => _p('cowallet 服务器 · HSM 保护', 'cowallet server · HSM protected');
   static String get keyCloudMeta => _p('✓ 心跳 2 分钟前 · 加密完整', '✓ Heartbeat 2 min ago · encrypted');
   static String get keyRecovery => _p('第 3 份 · 你保管', '3rd key · Yours');
-  static String get keyRecoveryWhere => _p('由你存在 iCloud / Google Drive 或本地文件', 'Stored by you in iCloud / Google Drive or local file');
+  static String get keyRecoveryWhere => _p('由你存在 iCloud / Google Drive', 'Stored by you in iCloud / Google Drive');
+  static String get keyRecoveryWhereFile => _p('由你保存在本地 JSON 文件', 'Stored by you as a local JSON file');
   static String get keyRecoveryTag => _p('该测了', 'test it');
   static String get keyRecoveryMeta => _p('⚠ 90 天没确认过它还在', '⚠ Not verified in 90 days');
   static String get keyRecoveryAction => _p('现在花 30 秒测一下', 'Test it now (30 seconds)');
+  static String get keyRecoveryActionFile => _p('导入本地文件验证', 'Import local file to verify');
 
   // Key health status
   static String get justNow => _p('刚刚', 'just now');

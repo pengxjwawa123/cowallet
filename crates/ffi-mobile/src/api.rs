@@ -750,6 +750,144 @@ pub fn recovery_has_backup_shard() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Device Shard Export (for hardware-backed persistence)
+// ---------------------------------------------------------------------------
+
+/// Export the device shard (Party 0) secret share bytes for hardware-backed storage.
+/// SECURITY: This should only be called once after DKG to persist to Secure Enclave/StrongBox.
+/// The caller must immediately encrypt and store it via hardware security module.
+pub fn export_device_shard() -> Result<Vec<u8>, String> {
+    let share = state::get_share(0)
+        .ok_or("device shard not loaded — DKG not complete")?;
+    Ok(share.secret_share.as_bytes().to_vec())
+}
+
+/// Import a device shard (Party 0) from hardware-backed storage into Rust memory.
+/// Called at app startup to restore the shard from Secure Enclave/StrongBox.
+pub fn import_device_shard(shard_bytes: Vec<u8>, public_key: Vec<u8>) -> Result<(), String> {
+    use k256::elliptic_curve::PrimeField;
+    use k256::Scalar;
+
+    if shard_bytes.len() != 32 {
+        return Err(format!(
+            "invalid device shard length: expected 32 bytes, got {}",
+            shard_bytes.len()
+        ));
+    }
+
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&shard_bytes);
+    let _scalar = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
+        .ok_or_else(|| "invalid device shard: not a valid secp256k1 scalar".to_string())?;
+
+    let device_share = mpc_core::dkls23::KeyShare {
+        party: 0,
+        threshold: 2,
+        total_parties: 3,
+        secret_share: shard_bytes.into(),
+        public_key,
+        paillier_pk: None,
+    };
+
+    state::store_shares(vec![device_share]);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Backup Shard Verification
+// ---------------------------------------------------------------------------
+
+/// Verify a backup shard by combining it with the device shard via Lagrange
+/// interpolation to reconstruct the group public key, then comparing against the expected key.
+///
+/// If `device_shard_bytes` is provided (non-empty), it is used directly.
+/// Otherwise falls back to the device shard in memory (Party 0).
+///
+/// `expected_public_key` is the stored wallet public key to verify against.
+pub fn verify_backup_shard(
+    backup_bytes: Vec<u8>,
+    device_shard_bytes: Vec<u8>,
+    expected_public_key: Vec<u8>,
+) -> Result<bool, String> {
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    use k256::elliptic_curve::PrimeField;
+    use k256::{ProjectivePoint, Scalar};
+
+    if backup_bytes.len() != 32 {
+        return Err(format!(
+            "invalid backup shard length: expected 32 bytes, got {}",
+            backup_bytes.len()
+        ));
+    }
+
+    // Validate backup scalar
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&backup_bytes);
+    let _scalar = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
+        .ok_or_else(|| "invalid backup shard: not a valid secp256k1 scalar".to_string())?;
+
+    // Get device shard bytes
+    let device_bytes = if !device_shard_bytes.is_empty() {
+        if device_shard_bytes.len() != 32 {
+            return Err(format!(
+                "invalid device shard length: expected 32 bytes, got {}",
+                device_shard_bytes.len()
+            ));
+        }
+        device_shard_bytes
+    } else {
+        // Fallback to in-memory device shard
+        let device_share = state::get_share(0)
+            .ok_or("device shard not loaded — provide device_shard_bytes or initialize wallet")?;
+        device_share.secret_share.as_bytes().to_vec()
+    };
+
+    // Get expected public key
+    let stored_pubkey = if !expected_public_key.is_empty() {
+        expected_public_key
+    } else {
+        let device_share = state::get_share(0)
+            .ok_or("no public key available — provide expected_public_key")?;
+        if device_share.public_key.is_empty() {
+            return Err("no stored public key to verify against".into());
+        }
+        device_share.public_key.clone()
+    };
+
+    // Reconstruct the group secret using Lagrange interpolation on parties {0, 2}
+    let share_indices: Vec<u16> = vec![0, 2];
+    let share_values: Vec<Vec<u8>> = vec![device_bytes, backup_bytes];
+
+    let reconstructed_secret = mpc_core::dkls23::protocol::shamir_reconstruct(
+        &share_indices,
+        &share_values,
+    )
+    .map_err(|e| format!("Lagrange interpolation failed: {}", e))?;
+
+    // Derive public key from reconstructed secret
+    let secret_arr: [u8; 32] = reconstructed_secret
+        .as_slice()
+        .try_into()
+        .map_err(|_| "invalid reconstructed secret length".to_string())?;
+
+    let secret_scalar = Option::<Scalar>::from(Scalar::from_repr(secret_arr.into()))
+        .ok_or_else(|| "reconstructed secret is not a valid scalar".to_string())?;
+
+    let derived_pubkey_point = ProjectivePoint::GENERATOR * secret_scalar;
+    let derived_pubkey = k256::PublicKey::from_affine(derived_pubkey_point.to_affine())
+        .map_err(|e| format!("failed to derive public key: {}", e))?;
+
+    // Compare as compressed (33 bytes) or uncompressed (65 bytes) depending on stored format
+    let matches = if stored_pubkey.len() == 33 {
+        derived_pubkey.to_encoded_point(true).as_bytes().to_vec() == stored_pubkey
+    } else {
+        derived_pubkey.to_encoded_point(false).as_bytes().to_vec() == stored_pubkey
+    };
+
+    Ok(matches)
+}
+
+// ---------------------------------------------------------------------------
 // Legacy signing (for testing)
 // ---------------------------------------------------------------------------
 

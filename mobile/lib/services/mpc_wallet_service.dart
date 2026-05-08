@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import '../api/mpc_api.dart';
 import '../bridge/mpc_bridge.dart';
 import '../network/mpc_websocket.dart';
 import '../platform/cloud_backup.dart';
+import '../platform/secure_hardware.dart';
 import '../utils/secure_storage.dart';
 import 'backup_shard_service.dart';
 import 'wallet_service.dart';
@@ -154,6 +156,12 @@ class MpcWalletService implements WalletService {
 
       await SecureStorage.save('mpc_address', walletInfo.address);
       await SecureStorage.save('mpc_session_id', sessionId);
+
+      // Persist device shard to hardware-backed storage and public key to secure storage
+      final deviceShardBytes = await MpcBridge.exportDeviceShard();
+      await SecureHardware.storeDeviceShard(Uint8List.fromList(deviceShardBytes));
+      final pubKeyHex = walletInfo.publicKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      await SecureStorage.save('mpc_public_key', pubKeyHex);
 
       // Clear session state on success
       await MpcSessionStore.clearSession();

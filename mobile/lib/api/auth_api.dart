@@ -23,17 +23,22 @@ class AuthApi {
     // 注册成功自动存储token
     if (result.isSuccess) {
       String? token = result.data?["token"];
+      String? refreshToken = result.data?["refresh_token"];
       String? userId = result.data?["user_id"];
-      
+
       print("📝 AuthApi.register response: token=${token?.substring(0, 30)}..., userId=$userId");
-      
+
       if (token != null) {
         await SecureStorage.saveToken(token);
         print("✅ Token saved to SecureStorage");
       } else {
         print("❌ Token is null in response");
       }
-      
+
+      if (refreshToken != null) {
+        await SecureStorage.saveRefreshToken(refreshToken);
+      }
+
       if (userId != null) {
         await SecureStorage.saveUserId(userId);
         print("✅ UserId saved to SecureStorage");
@@ -58,9 +63,13 @@ class AuthApi {
     // 登录成功自动存储token
     if (result.isSuccess) {
       String? token = result.data?["token"];
+      String? refreshToken = result.data?["refresh_token"];
       String? userId = result.data?["user_id"];
       if (token != null) {
         await SecureStorage.saveToken(token);
+      }
+      if (refreshToken != null) {
+        await SecureStorage.saveRefreshToken(refreshToken);
       }
       if (userId != null) {
         await SecureStorage.saveUserId(userId);
@@ -69,14 +78,40 @@ class AuthApi {
     return result;
   }
 
+  /// 使用 refresh_token 刷新 access_token
+  static Future<bool> refreshToken() async {
+    final refreshToken = await SecureStorage.getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+
+    try {
+      final result = await DioClient.post<Map<String, dynamic>>(
+        "/auth/refresh",
+        data: {"refresh_token": refreshToken},
+      );
+
+      if (result.isSuccess) {
+        final newToken = result.data?["token"] as String?;
+        final newRefresh = result.data?["refresh_token"] as String?;
+        if (newToken != null) {
+          await SecureStorage.saveToken(newToken);
+        }
+        if (newRefresh != null) {
+          await SecureStorage.saveRefreshToken(newRefresh);
+        }
+        return newToken != null;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   /// 获取当前会话信息
   static Future<Result<Map<String, dynamic>>> getSessionInfo() async {
     return await DioClient.get("/auth/session");
   }
 
-  /// 退出登录 - 清除本地所有数据
+  /// 退出登录 - 仅清除认证数据，不影响钱包和设置
   static Future<void> logout() async {
-    await SecureStorage.clearAll();
+    await SecureStorage.clearAuthData();
   }
 
   /// 检查是否已登录（本地有token）
