@@ -330,11 +330,6 @@ impl MpcParticipant {
                 // Store the server's encrypted KeyShare with wallet_id association
                 self.shard_store.store_key_share_for_wallet(user_id, wallet_id, &key_share).await?;
 
-                // Also store via the legacy method for backward compatibility
-                if let Err(e) = self.shard_store.store_key_share(user_id, &key_share).await {
-                    tracing::warn!("Legacy shard store failed (non-fatal): {}", e);
-                }
-
                 if let Some(mut meta) = self.session_meta.get_mut(&session_id) {
                     meta.phase = SessionPhase::DkgComplete;
                 }
