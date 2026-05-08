@@ -69,6 +69,9 @@ fn setup_panic_hook() {
 
 #[tokio::main]
 async fn main() {
+    // Load .env file (silent if not found)
+    let _ = dotenvy::dotenv();
+
     // Initialize tracing and panic handling first
     tracing_subscriber::fmt::init();
     setup_panic_hook();
