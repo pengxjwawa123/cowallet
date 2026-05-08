@@ -486,10 +486,12 @@ pub async fn presign_status(
         id
     } else if let Some(addr) = &query.address {
         let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let addr_bytes = hex::decode(addr.trim_start_matches("0x"))
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
         let row: Option<(uuid::Uuid,)> = sqlx::query_as(
             "SELECT id FROM wallets WHERE eth_address = $1"
         )
-        .bind(addr)
+        .bind(addr_bytes)
         .fetch_optional(db)
         .await
         .map_err(|e| {
