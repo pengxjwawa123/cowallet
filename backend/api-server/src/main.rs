@@ -69,8 +69,11 @@ fn setup_panic_hook() {
 
 #[tokio::main]
 async fn main() {
-    // Load .env file (silent if not found)
-    let _ = dotenvy::dotenv();
+    // Load .env file — try current dir, then parent dirs
+    if dotenvy::dotenv().is_err() {
+        // Try from ../.. (project root when running from backend/api-server/)
+        let _ = dotenvy::from_filename("../../.env");
+    }
 
     // Initialize tracing and panic handling first
     tracing_subscriber::fmt::init();
