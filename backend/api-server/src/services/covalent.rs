@@ -250,49 +250,111 @@ pub async fn get_transactions(
     Ok(transactions)
 }
 
-/// Get transaction history from multiple chains in parallel
+/// Get transaction history across all chains using the allchains endpoint
 pub async fn get_all_chain_transactions(
     http: &Client,
     api_key: &str,
     address: &str,
-    chain_ids: &[u64],
+    _chain_ids: &[u64],
 ) -> Result<Vec<TransactionItem>, String> {
-    use futures::future::join_all;
 
-    // Create futures for all chain queries
-    let futures: Vec<_> = chain_ids
-        .iter()
-        .map(|&chain_id| {
+    let url = format!(
+        "{}/allchains/address/{}/transactions/",
+        BASE_URL, address
+    );
+
+    let http = http.clone();
+    let url_clone = url.clone();
+    let api_key = api_key.to_string();
+
+    let body = retry_with_backoff(
+        RetryConfig::conservative(),
+        || {
             let http = http.clone();
-            let api_key = api_key.to_string();
-            let address = address.to_string();
+            let url = url_clone.clone();
+            let key = api_key.clone();
             async move {
-                get_transactions(&http, &api_key, &address, chain_id).await
+                let resp = http
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", key))
+                    .send()
+                    .await
+                    .map_err(|e| format!("Covalent allchains tx request failed: {}", e))?;
+
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    return Err(format!("Covalent API returned {}", status));
+                }
+
+                let body: CovalentAllChainsTxResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Covalent allchains tx parse error: {}", e))?;
+
+                Ok(body)
+            }
+        },
+        is_retryable_covalent_error,
+        "covalent_get_all_chain_transactions",
+    )
+    .await?;
+
+    let items = body.data.ok_or("Covalent returned no allchains tx data")?.items;
+
+    let transactions: Vec<TransactionItem> = items
+        .into_iter()
+        .map(|item| {
+            let chain_id = item.chain_id
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            TransactionItem {
+                tx_hash: item.tx_hash.unwrap_or_default(),
+                from: item.from_address.unwrap_or_default(),
+                to: item.to_address.unwrap_or_default(),
+                value: item.value.unwrap_or_else(|| "0".to_string()),
+                timestamp: item.block_signed_at.unwrap_or_default(),
+                status: if item.successful.unwrap_or(false) {
+                    "confirmed".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                gas_used: item.gas_spent.unwrap_or(0),
+                token_symbol: "ETH".to_string(),
+                value_quote: item.value_quote.unwrap_or(0.0),
+                chain_id,
+                chain_name: item.chain_name.unwrap_or_else(|| chain_display_name(chain_id).to_string()),
             }
         })
         .collect();
 
-    // Execute all queries in parallel
-    let results = join_all(futures).await;
+    Ok(transactions)
+}
 
-    // Collect all successful results, log failures
-    let mut all_transactions = Vec::new();
-    for (idx, result) in results.into_iter().enumerate() {
-        match result {
-            Ok(mut txs) => {
-                all_transactions.append(&mut txs);
-            }
-            Err(e) => {
-                let chain_id = chain_ids[idx];
-                warn!("Failed to get transactions for chain {}: {}", chain_id, e);
-            }
-        }
-    }
+// ─── AllChains Transaction Response ─────────────────────────────────────────
 
-    // Sort by timestamp (newest first)
-    all_transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+#[derive(Debug, Deserialize)]
+struct CovalentAllChainsTxResponse {
+    data: Option<CovalentAllChainsTxData>,
+}
 
-    Ok(all_transactions)
+#[derive(Debug, Deserialize)]
+struct CovalentAllChainsTxData {
+    #[serde(default)]
+    items: Vec<CovalentAllChainsTxItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CovalentAllChainsTxItem {
+    tx_hash: Option<String>,
+    from_address: Option<String>,
+    to_address: Option<String>,
+    value: Option<String>,
+    block_signed_at: Option<String>,
+    successful: Option<bool>,
+    gas_spent: Option<u64>,
+    value_quote: Option<f64>,
+    chain_id: Option<String>,
+    chain_name: Option<String>,
 }
 
 // ─── Balances ────────────────────────────────────────────────────────────────
