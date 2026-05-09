@@ -45,25 +45,6 @@ class ChainSelector extends StatelessWidget {
                 color: CwColors.ink2,
               ),
             ),
-            if (chain.isTestnet) ...[
-              const SizedBox(width: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: CwColors.warnSoft,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  S.testnetBadge,
-                  style: const TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    color: CwColors.warn,
-                  ),
-                ),
-              ),
-            ],
             const SizedBox(width: 4),
             const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: CwColors.ink3),
           ],
@@ -117,6 +98,8 @@ class ChainSelector extends StatelessWidget {
         return const Color(0xFFFF0420);
       case 'bsc':
         return const Color(0xFFF3BA2F);
+      case 'polygon':
+        return const Color(0xFF8247E5);
       default:
         return CwColors.ink3;
     }
@@ -178,13 +161,11 @@ class _ChainList extends StatelessWidget {
                     children: [
                       _sectionHeader(S.mainnets),
                       const SizedBox(height: 8),
-                      ...ChainConfig.allMainnets.map((c) => _chainTile(c)),
-
+                      ...ChainConfig.supportedMainnets.map((c) => _chainTile(c)),
                       const SizedBox(height: 16),
-
                       _sectionHeader(S.testnets),
                       const SizedBox(height: 8),
-                      ...ChainConfig.allTestnets.map((c) => _chainTile(c)),
+                      ...ChainConfig.supportedTestnets.map((c) => _chainTile(c)),
                     ],
                   ),
                 ),
@@ -242,37 +223,14 @@ class _ChainList extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        chain.displayName,
-                        style: TextStyle(
-                          fontFamily: 'Inter',
-                          fontSize: 14,
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                          color: CwColors.ink1,
-                        ),
-                      ),
-                      if (chain.isTestnet) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: CwColors.warnSoft,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            S.testnetBadge,
-                            style: const TextStyle(
-                              fontFamily: 'Inter',
-                              fontSize: 9,
-                              fontWeight: FontWeight.w600,
-                              color: CwColors.warn,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                  Text(
+                    chain.displayName,
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 14,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: CwColors.ink1,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(

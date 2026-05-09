@@ -15,27 +15,20 @@ class ChainConfig {
     this.usdtContract = '',
   });
 
-  static const baseSepolia = ChainConfig(
-    chainId: 84532,
-    name: 'Base Sepolia',
-    rpcUrl: 'https://sepolia.base.org',
-    usdcContract: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-  );
-
-  static const baseMainnet = ChainConfig(
-    chainId: 8453,
-    name: 'Base',
-    rpcUrl: 'https://mainnet.base.org',
-    usdcContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-    usdtContract: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-  );
-
   static const ethereum = ChainConfig(
     chainId: 1,
     name: 'Ethereum',
     rpcUrl: 'https://eth.llamarpc.com',
     usdcContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     usdtContract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+  );
+
+  static const base = ChainConfig(
+    chainId: 8453,
+    name: 'Base',
+    rpcUrl: 'https://mainnet.base.org',
+    usdcContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    usdtContract: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   );
 
   static const arbitrum = ChainConfig(
@@ -62,12 +55,20 @@ class ChainConfig {
     usdtContract: '0x55d398326f99059fF775485246999027B3197955',
   );
 
-  static const all = [baseSepolia, baseMainnet, ethereum, arbitrum, optimism, bsc];
+  static const polygon = ChainConfig(
+    chainId: 137,
+    name: 'Polygon',
+    rpcUrl: 'https://polygon-rpc.com',
+    usdcContract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+    usdtContract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+  );
+
+  static const all = [ethereum, base, arbitrum, optimism, bsc, polygon];
 
   static ChainConfig byId(int chainId) {
     return all.firstWhere(
       (c) => c.chainId == chainId,
-      orElse: () => baseSepolia,
+      orElse: () => base,
     );
   }
 
@@ -114,8 +115,8 @@ class JsonRpcChainService implements ChainService {
 
   JsonRpcChainService({Dio? dio, ChainConfig? config})
       : _dio = dio ?? Dio(),
-        _config = config ?? ChainConfig.baseSepolia,
-        _rpcUrl = (config ?? ChainConfig.baseSepolia).rpcUrl {
+        _config = config ?? ChainConfig.base,
+        _rpcUrl = (config ?? ChainConfig.base).rpcUrl {
     _dio.options.connectTimeout = const Duration(seconds: 15);
     _dio.options.receiveTimeout = const Duration(seconds: 15);
   }

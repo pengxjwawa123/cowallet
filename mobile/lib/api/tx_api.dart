@@ -5,7 +5,7 @@ import '../network/result.dart';
 class TxApi {
   /// 提交已签名的交易
   /// [rawTx] 已签名的原始交易hex字符串
-  /// [chainId] 链ID，默认84532 (Base Sepolia)
+  /// [chainId] 链ID，默认8453 (Base)
   /// [toAddr] 接收地址（可选，用于记录）
   /// [value] 转账金额（可选，用于记录）
   /// [token] 代币符号（可选，用于记录）
@@ -107,7 +107,7 @@ class TxApi {
   /// [to] 接收地址
   /// [value] 金额（wei字符串或ETH小数）
   /// [token] 代币符号（可选，默认ETH）
-  /// [chainId] 链ID（可选，默认84532）
+  /// [chainId] 链ID（可选，默认8453）
   /// 返回: { gas_units, gas_price_gwei, estimated_cost_eth, estimated_cost_usd }
   static Future<Result<Map<String, dynamic>>> estimateGas({
     required String from,

@@ -396,9 +396,9 @@ class S {
 
   // Chain selector
   static String get selectNetwork => _p('选择网络', 'Select network');
-  static String get mainnets => _p('主网', 'Mainnets');
-  static String get testnets => _p('测试网', 'Testnets');
-  static String get testnetBadge => _p('测试', 'Test');
+  static String get mainnets => _p('主网', 'MAINNETS');
+  static String get testnets => _p('测试网', 'TESTNETS');
+  static String get testnetBadge => _p('测试', 'TEST');
 
   // Contacts
   static String get contactsTitle => _p('联系人', 'Contacts');

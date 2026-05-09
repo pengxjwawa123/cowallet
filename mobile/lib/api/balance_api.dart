@@ -11,13 +11,30 @@ class BalanceApi {
   /// - total_usd: String
   static Future<Result<Map<String, dynamic>>> getBalance({
     required String address,
-    int chainId = 84532,
+    int chainId = 8453,
   }) async {
     return await DioClient.get<Map<String, dynamic>>(
       '/balance',
       queryParameters: {
         'address': address,
         'chain_id': chainId,
+      },
+    );
+  }
+
+  /// Get token balances across all chains for an address from the backend (via GoldRush)
+  ///
+  /// Returns a map with:
+  /// - address: String
+  /// - chains: List<Map> with { chain_id, chain_name, tokens: [...], total_usd }
+  /// - total_usd: String (sum across all chains)
+  static Future<Result<Map<String, dynamic>>> getAllBalances({
+    required String address,
+  }) async {
+    return await DioClient.get<Map<String, dynamic>>(
+      '/balance/all',
+      queryParameters: {
+        'address': address,
       },
     );
   }

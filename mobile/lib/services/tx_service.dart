@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:convert/convert.dart';
 import 'package:pointycastle/export.dart';
 
+import '../api/tx_api.dart';
 import '../platform/biometrics.dart';
 import 'chain_service.dart';
 import 'wallet_service.dart';
@@ -45,7 +46,7 @@ class MpcTxService implements TxService {
     required WalletService wallet,
     required ChainService chain,
     required BiometricService biometrics,
-    this.chainId = 84532,
+    this.chainId = 8453,
   })  : _wallet = wallet,
         _chain = chain,
         _biometric = biometrics;
@@ -146,8 +147,24 @@ class MpcTxService implements TxService {
     raw[0] = 0x02;
     raw.setRange(1, raw.length, signedRlp);
 
-    final txHash = await _chain.sendRawTransaction('0x${hex.encode(raw)}');
-    return txHash;
+    final rawHex = '0x${hex.encode(raw)}';
+
+    // Submit via backend (records tx in database + broadcasts to chain)
+    final submitResult = await TxApi.submit(
+      rawTx: rawHex,
+      chainId: chainId,
+      toAddr: to,
+      value: value.toString(),
+      token: 'ETH',
+    );
+
+    if (!submitResult.isSuccess || submitResult.data == null) {
+      throw TxSigningException(
+        submitResult.errorMessage ?? 'Transaction submission failed',
+      );
+    }
+
+    return submitResult.data!['tx_hash'] as String;
   }
 
   @override

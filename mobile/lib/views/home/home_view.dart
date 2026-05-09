@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/section_label.dart';
-import '../../state/app_state.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../router/app_router.dart';
 import '../../api/tx_history_api.dart';
+import '../../config/api_config.dart';
 
 class HomeView extends StatefulWidget {
   const HomeView({super.key});
@@ -19,36 +19,17 @@ class _HomeViewState extends State<HomeView> {
   List<Map<String, dynamic>> _transactions = [];
   bool _txLoading = true;
   String? _txError;
-  int _lastChainId = 0;
-  late final AppState _appState;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _appState = CowalletApp.of(context);
-      _lastChainId = _appState.selectedChain.chainId;
-      _appState.addListener(_onAppStateChange);
       _fetchTransactions();
     });
   }
 
-  @override
-  void dispose() {
-    _appState.removeListener(_onAppStateChange);
-    super.dispose();
-  }
-
-  void _onAppStateChange() {
-    final currentChainId = _appState.selectedChain.chainId;
-    if (_lastChainId != currentChainId) {
-      _lastChainId = currentChainId;
-      _fetchTransactions();
-    }
-  }
-
   Future<void> _fetchTransactions() async {
-    final address = _appState.walletAddress;
+    final address = CowalletApp.of(context).walletAddress;
     if (address.isEmpty) {
       setState(() {
         _txLoading = false;
@@ -63,18 +44,29 @@ class _HomeViewState extends State<HomeView> {
     });
 
     try {
-      final result = await TxHistoryApi.getHistory(
+      // Fetch all-chain transaction history
+      final result = await TxHistoryApi.getAllHistory(
         address: address,
-        chainId: _appState.selectedChain.chainId,
+        limit: 5,
       );
       if (result.isSuccess && result.data != null) {
         final data = result.data!;
-        final txList = data['transactions'] as List<dynamic>? ?? [];
+        // Extract transactions from all chains and flatten
+        final chainsList = data['chains'] as List<dynamic>? ?? [];
+        final allTxs = <Map<String, dynamic>>[];
+        for (final chainData in chainsList) {
+          final chainMap = chainData as Map<String, dynamic>;
+          final txList = chainMap['transactions'] as List<dynamic>? ?? [];
+          allTxs.addAll(txList.map((tx) => tx as Map<String, dynamic>));
+        }
+        // Sort by timestamp descending and take top 5
+        allTxs.sort((a, b) {
+          final aTime = a['timestamp'] as String? ?? '';
+          final bTime = b['timestamp'] as String? ?? '';
+          return bTime.compareTo(aTime);
+        });
         setState(() {
-          _transactions = txList
-              .map((item) => item as Map<String, dynamic>)
-              .take(5)
-              .toList();
+          _transactions = allTxs.take(5).toList();
           _txLoading = false;
         });
       } else {
@@ -259,7 +251,7 @@ class _HomeViewState extends State<HomeView> {
             ),
             const SizedBox(height: 12),
             Text(
-              bal.loading ? '...' : bal.formattedTotal,
+              bal.loading ? '...' : '\$${bal.portfolioTotalUsd}',
               style: tt.displayLarge?.copyWith(
                 fontSize: 36,
                 fontWeight: FontWeight.w700,
@@ -272,11 +264,11 @@ class _HomeViewState extends State<HomeView> {
                 bal.error!,
                 style: tt.bodySmall?.copyWith(color: CwColors.danger),
               ),
-            ] else if (!bal.loading && bal.tokens.isNotEmpty) ...[
+            ] else if (!bal.loading && bal.allTokens.isNotEmpty) ...[
               const SizedBox(height: 16),
               const Divider(height: 1),
               const SizedBox(height: 12),
-              ...bal.topTokens.map((token) => _tokenRow(context, token)),
+              ...bal.allTokens.take(3).map((token) => _tokenRow(context, token)),
             ],
           ],
         ),
@@ -539,6 +531,7 @@ class _HomeViewState extends State<HomeView> {
     final timestamp = tx['timestamp'] as String? ?? '';
     final status = tx['status'] as String? ?? '';
     final tokenSymbol = tx['token_symbol'] as String? ?? 'ETH';
+    final chainId = tx['chain_id'] as int? ?? 1;
 
     // Format value from wei to ETH (18 decimals)
     final formattedValue = _formatWeiValue(value);
@@ -572,8 +565,10 @@ class _HomeViewState extends State<HomeView> {
         ? '${S.receive} $formattedValue $tokenSymbol'
         : '${S.send} $formattedValue $tokenSymbol';
 
-    // Subtitle with relative time and address
+    // Subtitle with chain badge, relative time and address
     final relativeTime = _formatRelativeTime(timestamp);
+    final chain = ChainConfig.byChainId(chainId)!;
+    final chainColor = _chainColor(chain);
     final subtitle = '$addressPreview · $relativeTime';
 
     // Trailing amount
@@ -591,7 +586,30 @@ class _HomeViewState extends State<HomeView> {
       subtitle: subtitle,
       trailing: formattedValue != '0' ? trailingText : null,
       trailingColor: trailingColor,
+      chainColor: chainColor,
+      chainName: chain.displayName,
     );
+  }
+
+  static Color _chainColor(ChainConfig chain) {
+    switch (chain.name) {
+      case 'ethereum':
+      case 'sepolia':
+        return const Color(0xFF627EEA);
+      case 'base':
+      case 'base-sepolia':
+        return const Color(0xFF0052FF);
+      case 'arbitrum':
+        return const Color(0xFF28A0F0);
+      case 'optimism':
+        return const Color(0xFFFF0420);
+      case 'bsc':
+        return const Color(0xFFF3BA2F);
+      case 'polygon':
+        return const Color(0xFF8247E5);
+      default:
+        return CwColors.ink3;
+    }
   }
 
   String _formatWeiValue(String weiValue) {
@@ -636,6 +654,8 @@ class _HomeViewState extends State<HomeView> {
     required String subtitle,
     String? trailing,
     Color? trailingColor,
+    Color? chainColor,
+    String? chainName,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -655,12 +675,41 @@ class _HomeViewState extends State<HomeView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: CwColors.ink1,
-                        fontSize: 14,
+                Row(
+                  children: [
+                    if (chainColor != null && chainName != null) ...[
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: chainColor,
+                          shape: BoxShape.circle,
+                        ),
                       ),
+                      const SizedBox(width: 6),
+                      Text(
+                        chainName,
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: chainColor,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: CwColors.ink1,
+                              fontSize: 14,
+                            ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(

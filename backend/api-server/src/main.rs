@@ -82,9 +82,44 @@ async fn main() {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost/cowallet".into());
     let rpc_url =
-        std::env::var("RPC_URL").unwrap_or_else(|_| "https://sepolia.base.org".into());
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://eth.llamarpc.com".into());
 
-    let app_state = AppState::new(&database_url, rpc_url).await
+    // Build per-chain RPC URL map
+    let mut rpc_urls = std::collections::HashMap::new();
+    rpc_urls.insert(
+        1,
+        std::env::var("ETH_MAINNET_RPC_URL").unwrap_or_else(|_| "https://eth.llamarpc.com".into()),
+    );
+    rpc_urls.insert(
+        8453,
+        std::env::var("BASE_MAINNET_RPC_URL").unwrap_or_else(|_| "https://mainnet.base.org".into()),
+    );
+    rpc_urls.insert(
+        42161,
+        std::env::var("ARB_MAINNET_RPC_URL").unwrap_or_else(|_| "https://arb1.arbitrum.io/rpc".into()),
+    );
+    rpc_urls.insert(
+        10,
+        std::env::var("OP_MAINNET_RPC_URL").unwrap_or_else(|_| "https://mainnet.optimism.io".into()),
+    );
+    rpc_urls.insert(
+        56,
+        std::env::var("BSC_MAINNET_RPC_URL").unwrap_or_else(|_| "https://bsc-dataseed.binance.org".into()),
+    );
+    rpc_urls.insert(
+        137,
+        std::env::var("POLYGON_MAINNET_RPC_URL").unwrap_or_else(|_| "https://polygon-rpc.com".into()),
+    );
+    rpc_urls.insert(
+        11155111,
+        std::env::var("ETH_SEPOLIA_RPC_URL").unwrap_or_else(|_| "https://rpc.sepolia.org".into()),
+    );
+    rpc_urls.insert(
+        84532,
+        std::env::var("BASE_SEPOLIA_RPC_URL").unwrap_or_else(|_| "https://sepolia.base.org".into()),
+    );
+
+    let app_state = AppState::new(&database_url, rpc_url, rpc_urls).await
         .expect("Database connection required — cannot start without PostgreSQL");
 
     let encryption_key = std::env::var("ENCRYPTION_KEY")
@@ -187,6 +222,7 @@ async fn main() {
         .nest("/api/v1/auth", routes::auth::router()
             .layer(axum_mw::from_fn(auth_rate_limit_middleware)))
         .nest("/api/v1/price", routes::price::router())
+        .nest("/api/v1/chains", routes::chains::router())
         .nest("/api/v1", protected)
         .with_state(app_state.clone())
         // Order: Outermost first (applied first to request, last to response)

@@ -14,6 +14,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/history", get(get_history))
         .route("/tx-history", get(get_covalent_history))
+        .route("/all-history", get(get_all_chain_history))
         .route("/{hash}", get(get_transaction))
 }
 
@@ -254,15 +255,7 @@ async fn get_covalent_history(
         return Err(validation_error("invalid address format"));
     }
 
-    let chain_id = q.chain_id.unwrap_or(84532);
-
-    // Testnets not supported by Covalent — return empty
-    if covalent::is_testnet(chain_id) {
-        return Ok(Json(CovalentHistoryResponse {
-            transactions: vec![],
-            total: 0,
-        }));
-    }
+    let chain_id = q.chain_id.unwrap_or(8453);
 
     let api_key = state
         .covalent_api_key
@@ -300,6 +293,111 @@ async fn get_covalent_history(
         .collect();
 
     Ok(Json(CovalentHistoryResponse {
+        transactions,
+        total,
+    }))
+}
+
+// ─── Multi-chain history endpoint ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AllChainHistoryQuery {
+    address: String,
+    chains: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct AllChainHistoryResponse {
+    transactions: Vec<AllChainTxInfo>,
+    total: usize,
+}
+
+#[derive(Serialize)]
+struct AllChainTxInfo {
+    chain_id: u64,
+    chain_name: String,
+    tx_hash: String,
+    from: String,
+    to: String,
+    value: String,
+    timestamp: String,
+    status: String,
+    gas_used: u64,
+    token_symbol: String,
+    value_quote: f64,
+}
+
+/// GET /api/v1/tx/all-history?address={addr}&chains={chain_ids}&limit={n}
+///
+/// Get transaction history across multiple chains in parallel
+async fn get_all_chain_history(
+    State(state): State<AppState>,
+    _claims: axum::Extension<Claims>,
+    Query(q): Query<AllChainHistoryQuery>,
+) -> Result<Json<AllChainHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Validate address
+    if !q.address.starts_with("0x") || q.address.len() != 42 {
+        return Err(validation_error("invalid address format"));
+    }
+
+    // Parse chain IDs from comma-separated string
+    let chain_ids: Vec<u64> = if let Some(chains_str) = q.chains {
+        chains_str
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u64>().ok())
+            .collect()
+    } else {
+        // Default to all mainnets
+        vec![1, 8453, 42161, 10, 56, 137]
+    };
+
+    if chain_ids.is_empty() {
+        return Err(validation_error("no valid chain IDs provided"));
+    }
+
+    let api_key = state
+        .covalent_api_key
+        .as_ref()
+        .ok_or_else(|| (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "Covalent API not configured".into(),
+            }),
+        ))?;
+
+    let items = covalent::get_all_chain_transactions(&state.http, api_key, &q.address, &chain_ids)
+        .await
+        .map_err(|e| (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: format!("Multi-chain transaction query failed: {}", e),
+            }),
+        ))?;
+
+    // Apply limit after merging
+    let limit = q.limit.unwrap_or(50).min(200);
+    let limited_items: Vec<_> = items.into_iter().take(limit).collect();
+    let total = limited_items.len();
+
+    let transactions: Vec<AllChainTxInfo> = limited_items
+        .into_iter()
+        .map(|item| AllChainTxInfo {
+            chain_id: item.chain_id,
+            chain_name: item.chain_name,
+            tx_hash: item.tx_hash,
+            from: item.from,
+            to: item.to,
+            value: item.value,
+            timestamp: item.timestamp,
+            status: item.status,
+            gas_used: item.gas_used,
+            token_symbol: item.token_symbol,
+            value_quote: item.value_quote,
+        })
+        .collect();
+
+    Ok(Json(AllChainHistoryResponse {
         transactions,
         total,
     }))

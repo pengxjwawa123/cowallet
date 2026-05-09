@@ -319,6 +319,51 @@ impl SignSession {
         })
     }
 
+    /// Create Round 1 message using a pre-computed ephemeral key (from presignature).
+    /// This avoids generating fresh randomness, reducing online signing latency.
+    pub fn generate_round1_with_presign(&mut self, k_bytes: &[u8; 32], r_bytes: &[u8]) -> Result<ProtocolMessage> {
+        match self.state {
+            SignState::Initialized => {}
+            _ => return Err(MpcError::SigningFailed("invalid state for round 1".into())),
+        }
+
+        // Deserialize the pre-computed k scalar
+        let k_i = Option::<Scalar>::from(Scalar::from_repr((*k_bytes).into()))
+            .ok_or_else(|| MpcError::SigningFailed("invalid presign k scalar".into()))?;
+
+        // Store k_i for Round 2
+        self.my_k = Some(k_i);
+
+        // The R_i point is already pre-computed, use it directly
+        let r_i_bytes = r_bytes.to_vec();
+
+        // Schnorr proof of knowledge of k_i
+        let schnorr_proof = {
+            use crate::crypto::schnorr::SchnorrProof;
+            SchnorrProof::prove(&k_i, &r_i_bytes, b"Sign-Round1")
+        };
+
+        let round1 = SignRound1Message {
+            session_id: self.config.session_id.clone(),
+            party_index: self.party_index,
+            k_public: r_i_bytes,
+            schnorr_proof,
+        };
+
+        self.round1_messages.push(round1.clone());
+
+        let payload = bincode::serialize(&round1)
+            .map_err(|e| MpcError::SigningFailed(format!("serialization failed: {}", e)))?;
+
+        Ok(ProtocolMessage {
+            session_id: self.config.session_id.clone(),
+            from: self.party_index,
+            to: 0xFFFF,
+            round: 1,
+            payload,
+        })
+    }
+
     /// Process Round 1 messages from other parties.
     ///
     /// For 2-party signing, receives R_j from the other party.

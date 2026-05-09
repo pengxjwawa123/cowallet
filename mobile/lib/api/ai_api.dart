@@ -41,6 +41,8 @@ class AiApi {
     String? sessionId,
     String? userId,
     String? walletAddress,
+    List<int>? supportedChains,
+    Map<String, dynamic>? portfolioContext,
   }) async* {
     final response = await DioClient.postStream(
       "/ai/chat",
@@ -49,6 +51,8 @@ class AiApi {
         if (sessionId != null) "session_id": sessionId,
         if (userId != null) "user_id": userId,
         if (walletAddress != null) "wallet_address": walletAddress,
+        if (supportedChains != null) "supported_chains": supportedChains,
+        if (portfolioContext != null) "portfolio": portfolioContext,
       },
     );
 

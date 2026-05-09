@@ -11,6 +11,7 @@ class ChatSwapConfirmWidget extends StatelessWidget {
   final bool resolved;
   final VoidCallback? onConfirm;
   final VoidCallback? onDeny;
+  final int? chainId;
 
   const ChatSwapConfirmWidget({
     super.key,
@@ -23,6 +24,7 @@ class ChatSwapConfirmWidget extends StatelessWidget {
     this.resolved = false,
     this.onConfirm,
     this.onDeny,
+    this.chainId,
   });
 
   @override
@@ -81,6 +83,8 @@ class ChatSwapConfirmWidget extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _infoRow('滑点容忍', '${slippage}%'),
+          if (chainId != null)
+            _infoRow('网络', _chainName(chainId!)),
           _infoRow('路由', '$fromToken → $toToken'),
           if (!resolved) ...[
             const SizedBox(height: 16),
@@ -177,5 +181,17 @@ class ChatSwapConfirmWidget extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _chainName(int chainId) {
+    switch (chainId) {
+      case 1: return 'Ethereum';
+      case 8453: return 'Base';
+      case 42161: return 'Arbitrum';
+      case 10: return 'Optimism';
+      case 56: return 'BNB Chain';
+      case 137: return 'Polygon';
+      default: return 'Chain $chainId';
+    }
   }
 }

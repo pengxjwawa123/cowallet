@@ -39,66 +39,60 @@ class ChainConfig {
     required this.name,
     required this.displayName,
     required this.symbol,
-    required this.isTestnet,
+    this.isTestnet = false,
     required this.isL2,
   });
 
-  // Mainnet chains
-  static const ethereumMainnet = ChainConfig(
+  // Mainnets
+  static const ethereum = ChainConfig(
     chainId: 1,
     name: 'ethereum',
     displayName: 'Ethereum',
     symbol: 'ETH',
-    isTestnet: false,
     isL2: false,
   );
 
-  static const baseMainnet = ChainConfig(
+  static const base = ChainConfig(
     chainId: 8453,
     name: 'base',
     displayName: 'Base',
     symbol: 'ETH',
-    isTestnet: false,
     isL2: true,
   );
 
-  static const arbitrumOne = ChainConfig(
+  static const arbitrum = ChainConfig(
     chainId: 42161,
     name: 'arbitrum',
     displayName: 'Arbitrum One',
     symbol: 'ETH',
-    isTestnet: false,
     isL2: true,
   );
 
-  static const optimismMainnet = ChainConfig(
+  static const optimism = ChainConfig(
     chainId: 10,
     name: 'optimism',
     displayName: 'Optimism',
     symbol: 'ETH',
-    isTestnet: false,
     isL2: true,
   );
 
-  static const bnbChain = ChainConfig(
+  static const bsc = ChainConfig(
     chainId: 56,
     name: 'bsc',
     displayName: 'BNB Chain',
     symbol: 'BNB',
-    isTestnet: false,
     isL2: false,
   );
 
-  // Testnet chains
-  static const ethereumSepolia = ChainConfig(
-    chainId: 11155111,
-    name: 'sepolia',
-    displayName: 'Ethereum Sepolia',
-    symbol: 'ETH',
-    isTestnet: true,
+  static const polygon = ChainConfig(
+    chainId: 137,
+    name: 'polygon',
+    displayName: 'Polygon',
+    symbol: 'POL',
     isL2: false,
   );
 
+  // Testnets
   static const baseSepolia = ChainConfig(
     chainId: 84532,
     name: 'base-sepolia',
@@ -108,36 +102,76 @@ class ChainConfig {
     isL2: true,
   );
 
-  /// All supported mainnet chains
+  static const ethereumSepolia = ChainConfig(
+    chainId: 11155111,
+    name: 'sepolia',
+    displayName: 'Ethereum Sepolia',
+    symbol: 'ETH',
+    isTestnet: true,
+    isL2: false,
+  );
+
+  /// All mainnet chains
   static const List<ChainConfig> allMainnets = [
-    ethereumMainnet,
-    baseMainnet,
-    arbitrumOne,
-    optimismMainnet,
-    bnbChain,
+    ethereum,
+    base,
+    arbitrum,
+    optimism,
+    bsc,
+    polygon,
   ];
 
-  /// All supported testnet chains
+  /// All testnet chains
   static const List<ChainConfig> allTestnets = [
-    ethereumSepolia,
     baseSepolia,
+    ethereumSepolia,
   ];
 
-  /// All supported chains (mainnet + testnet)
+  /// All supported chains
   static const List<ChainConfig> allChains = [
     ...allMainnets,
     ...allTestnets,
   ];
 
+  /// Dynamically loaded chains from backend (populated on app start)
+  static List<ChainConfig> _remoteChains = [];
+
+  /// Whether remote chains have been loaded
+  static bool get hasRemoteChains => _remoteChains.isNotEmpty;
+
+  /// Load chains from backend response
+  static void loadFromRemote(List<Map<String, dynamic>> chainsJson) {
+    _remoteChains = chainsJson.map((json) => ChainConfig(
+      chainId: json['chain_id'] as int,
+      name: json['name'] as String,
+      displayName: json['display_name'] as String,
+      symbol: json['symbol'] as String,
+      isTestnet: json['is_testnet'] as bool? ?? false,
+      isL2: json['is_l2'] as bool? ?? false,
+    )).toList();
+  }
+
+  /// All supported chains (remote if loaded, fallback to static)
+  static List<ChainConfig> get supportedChains =>
+      _remoteChains.isNotEmpty ? _remoteChains : allChains;
+
+  /// Supported mainnets
+  static List<ChainConfig> get supportedMainnets =>
+      supportedChains.where((c) => !c.isTestnet).toList();
+
+  /// Supported testnets
+  static List<ChainConfig> get supportedTestnets =>
+      supportedChains.where((c) => c.isTestnet).toList();
+
   /// Get chain config by chain ID
   static ChainConfig? byChainId(int chainId) {
     try {
-      return allChains.firstWhere((chain) => chain.chainId == chainId);
+      return supportedChains.firstWhere((chain) => chain.chainId == chainId);
     } catch (_) {
       return null;
     }
   }
 
-  /// Default chain for new wallets (Base Sepolia testnet)
-  static const ChainConfig defaultChain = baseSepolia;
+  /// Default chain (Base)
+  static const ChainConfig defaultChain = base;
 }

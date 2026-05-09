@@ -142,30 +142,14 @@ class TxExample {
 
 /// ==================== AI 助手示例 ====================
 class AiExample {
-  /// 与AI聊天
-  static Future<void> chatWithAi() async {
-    List<Map<String, dynamic>> history = [
-      {"role": "user", "content": "我的钱包里有多少钱？"},
-      {"role": "assistant", "content": "您当前有 1.5 ETH，价值约 4500 美元"},
-    ];
-
-    var result = await AiApi.chat(
-      message: "最近价格走势怎么样？",
-      history: history,
-    );
-
-    if (result.isSuccess) {
-      print("AI回复: ${result.data?["message"]}");
-    }
-  }
-
-  /// 识别用户意图
-  static Future<void> detectIntent() async {
-    var result = await AiApi.classifyIntent("给0x123转0.1个ETH");
-
-    if (result.isSuccess) {
-      print("识别到的意图: ${result.data}");
-    }
+  /// 与AI聊天 (使用 streaming API)
+  static void chatWithAi() {
+    AiApi.chatStream(
+      message: "我的钱包里有多少钱？",
+      walletAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    ).listen((event) {
+      print("AI事件: ${event.event} - ${event.data}");
+    });
   }
 }
 

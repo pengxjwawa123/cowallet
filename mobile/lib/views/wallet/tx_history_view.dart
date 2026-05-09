@@ -5,6 +5,7 @@ import '../../widgets/top_toast.dart';
 import '../../api/tx_api.dart';
 import '../../services/locator.dart';
 import '../../main.dart';
+import '../../config/api_config.dart';
 
 class TxHistoryView extends StatefulWidget {
   const TxHistoryView({super.key});
@@ -29,10 +30,10 @@ class _TxHistoryViewState extends State<TxHistoryView> {
     {'id': null, 'name': 'All Chains'},
     {'id': 1, 'name': 'Ethereum'},
     {'id': 8453, 'name': 'Base'},
-    {'id': 84532, 'name': 'Base Sepolia'},
     {'id': 42161, 'name': 'Arbitrum'},
     {'id': 10, 'name': 'Optimism'},
-    {'id': 56, 'name': 'BSC'},
+    {'id': 56, 'name': 'BNB Chain'},
+    {'id': 137, 'name': 'Polygon'},
   ];
 
   @override
@@ -151,44 +152,6 @@ class _TxHistoryViewState extends State<TxHistoryView> {
     );
   }
 
-  void _changeChainFilter() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: Text(
-                'Filter by Chain',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const Divider(),
-            ..._chains.map((chain) => ListTile(
-                  leading: _selectedChainId == chain['id']
-                      ? const Icon(Icons.check_circle, color: CwColors.accent)
-                      : const Icon(Icons.circle_outlined, color: CwColors.ink3),
-                  title: Text(chain['name']),
-                  onTap: () {
-                    setState(() {
-                      _selectedChainId = chain['id'];
-                    });
-                    Navigator.pop(context);
-                    _loadTransactions();
-                  },
-                )),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -197,19 +160,99 @@ class _TxHistoryViewState extends State<TxHistoryView> {
         title: const Text('Transaction History'),
         backgroundColor: CwColors.bgPaper,
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            onPressed: _changeChainFilter,
-            tooltip: 'Filter by chain',
-          ),
-        ],
       ),
       body: RefreshIndicator(
         onRefresh: _loadTransactions,
-        child: _buildBody(),
+        child: Column(
+          children: [
+            // Chain filter chips
+            if (_chains.length > 1) _buildChainFilterChips(),
+            Expanded(child: _buildBody()),
+          ],
+        ),
       ),
     );
+  }
+
+  Widget _buildChainFilterChips() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: _chains.map((chain) {
+            final isSelected = _selectedChainId == chain['id'];
+            final chainColor = chain['id'] == null ? CwColors.accent : _chainColor(ChainConfig.byChainId(chain['id'])!);
+
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                selected: isSelected,
+                label: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (chain['id'] != null) ...[
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: chainColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(chain['name']),
+                  ],
+                ),
+                onSelected: (selected) {
+                  setState(() {
+                    _selectedChainId = chain['id'];
+                  });
+                  _loadTransactions();
+                },
+                backgroundColor: CwColors.bgCard,
+                selectedColor: chainColor.withValues(alpha: 0.15),
+                checkmarkColor: chainColor,
+                labelStyle: TextStyle(
+                  fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected ? chainColor : CwColors.ink2,
+                ),
+                side: BorderSide(
+                  color: isSelected ? chainColor : CwColors.line,
+                  width: isSelected ? 1.5 : 1,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  static Color _chainColor(ChainConfig chain) {
+    switch (chain.name) {
+      case 'ethereum':
+      case 'sepolia':
+        return const Color(0xFF627EEA);
+      case 'base':
+      case 'base-sepolia':
+        return const Color(0xFF0052FF);
+      case 'arbitrum':
+        return const Color(0xFF28A0F0);
+      case 'optimism':
+        return const Color(0xFFFF0420);
+      case 'bsc':
+        return const Color(0xFFF3BA2F);
+      case 'polygon':
+        return const Color(0xFF8247E5);
+      default:
+        return CwColors.ink3;
+    }
   }
 
   Widget _buildBody() {
@@ -307,8 +350,11 @@ class _TransactionItem extends StatelessWidget {
     final status = tx['status'] as String? ?? '';
     final timestamp = tx['timestamp'] as String?;
     final blockNumber = tx['block_number'] as int?;
+    final chainId = tx['chain_id'] as int? ?? 1;
 
     final isIncoming = to.toLowerCase() == walletAddress.toLowerCase();
+    final chain = ChainConfig.byChainId(chainId)!;
+    final chainColor = _TxHistoryViewState._chainColor(chain);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -347,14 +393,41 @@ class _TransactionItem extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _truncateAddress(isIncoming ? from : to),
-                      style: const TextStyle(
-                        fontFamily: 'JetBrainsMono',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: CwColors.ink1,
-                      ),
+                    Row(
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: chainColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          chain.displayName,
+                          style: TextStyle(
+                            fontFamily: 'Inter',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: chainColor,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _truncateAddress(isIncoming ? from : to),
+                            style: const TextStyle(
+                              fontFamily: 'JetBrainsMono',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: CwColors.ink1,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -606,8 +679,8 @@ class _TransactionDetailSheet extends StatelessWidget {
       case 8453:
         baseUrl = 'https://basescan.org';
         break;
-      case 84532:
-        baseUrl = 'https://sepolia.basescan.org';
+      case 137:
+        baseUrl = 'https://polygonscan.com';
         break;
       case 42161:
         baseUrl = 'https://arbiscan.io';

@@ -329,7 +329,7 @@ impl MpcParticipant {
                 .unwrap_or(0);
 
                 let wallet_name = format!("Wallet {}", wallet_count + 1);
-                let default_chain_ids: Vec<i64> = vec![84532]; // Base Sepolia
+                let default_chain_ids: Vec<i64> = vec![8453]; // Base
 
                 // Create wallet entry in the wallets table
                 let wallet_id: Uuid = sqlx::query_scalar(
@@ -424,9 +424,16 @@ impl MpcParticipant {
 
                 let mut sign = SignSession::new_distributed(config, key_share, msg_hash);
 
-                // Generate server's R_1 first (must happen before process_round1)
-                let server_r1 = sign.generate_round1()
-                    .map_err(|e| format!("sign generate_round1 failed: {}", e))?;
+                // Use reserved presignature if available, otherwise generate fresh
+                let server_r1 = if let Some(presig) = self.reserved_presignatures.get(&session_id) {
+                    let k_bytes: [u8; 32] = presig.k.as_slice().try_into()
+                        .map_err(|_| "presign k wrong length".to_string())?;
+                    sign.generate_round1_with_presign(&k_bytes, &presig.big_r)
+                        .map_err(|e| format!("sign generate_round1_with_presign failed: {}", e))?
+                } else {
+                    sign.generate_round1()
+                        .map_err(|e| format!("sign generate_round1 failed: {}", e))?
+                };
 
                 // Now process client's R_0
                 let incoming = ProtocolMessage {
@@ -686,22 +693,36 @@ impl MpcParticipant {
         Ok(())
     }
 
-    /// Remove expired sessions from memory.
+    /// Remove expired sessions from memory and mark as expired in DB.
     fn cleanup_expired(&self) {
+        let now = Instant::now();
         let mut expired = Vec::new();
         for entry in self.session_meta.iter() {
-            if entry.created_at.elapsed() > SESSION_TIMEOUT {
+            if now.duration_since(entry.created_at) > SESSION_TIMEOUT {
                 expired.push(*entry.key());
             }
         }
+
         for id in expired {
             self.session_meta.remove(&id);
             self.dkg_sessions.remove(&id);
             self.sign_sessions.remove(&id);
             self.reshare_sessions.remove(&id);
-            // Clean up any reserved presignatures for expired sessions
             self.reserved_presignatures.remove(&id);
-            tracing::debug!("Cleaned up expired server session {}", id);
+
+            // Mark as expired in DB (async but fire-and-forget)
+            let db = self.db.clone();
+            tokio::spawn(async move {
+                let _ = sqlx::query(
+                    "UPDATE mpc_sessions SET status = 'expired', completed_at = NOW()
+                     WHERE id = $1 AND status NOT IN ('completed', 'failed')"
+                )
+                .bind(id)
+                .execute(&db)
+                .await;
+            });
+
+            tracing::info!("Expired stale MPC session {} (timeout after 5 minutes)", id);
         }
     }
 

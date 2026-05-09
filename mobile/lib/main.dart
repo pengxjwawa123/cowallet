@@ -5,6 +5,8 @@ import 'router/app_router.dart';
 import 'state/app_state.dart';
 import 'services/locator.dart';
 import 'api/auth_api.dart';
+import 'api/chains_api.dart';
+import 'config/api_config.dart';
 import 'utils/secure_storage.dart';
 
 void main() async {
@@ -39,6 +41,8 @@ class _CowalletAppState extends State<CowalletApp> {
 
   Future<void> _checkWalletState() async {
     try {
+      _loadSupportedChains();
+
       final hasLocalWallet = await Services.wallet.hasWallet();
       print('[App] hasLocalWallet=$hasLocalWallet');
       if (!hasLocalWallet) {
@@ -82,12 +86,19 @@ class _CowalletAppState extends State<CowalletApp> {
     }
   }
 
+  void _loadSupportedChains() async {
+    try {
+      final result = await ChainsApi.getSupportedChains();
+      if (result.isSuccess && result.data != null) {
+        ChainConfig.loadFromRemote(result.data!);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _refreshBalanceInBackground(String address) async {
     try {
-      await Services.balance.refresh(address, chainId: appState.selectedChain.chainId);
-    } catch (_) {
-      // Silently fail - balance will show error state in UI
-    }
+      await Services.balance.refresh(address);
+    } catch (_) {}
   }
 
   @override

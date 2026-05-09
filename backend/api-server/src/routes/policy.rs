@@ -339,7 +339,7 @@ async fn evaluate_transaction(
         to: to_addr,
         value,
         token: body.token,
-        chain_id: body.chain_id.unwrap_or(84532),
+        chain_id: body.chain_id.unwrap_or(8453),
         is_contract_interaction: body.is_contract.unwrap_or(false),
         timestamp: chrono::Utc::now(),
     };

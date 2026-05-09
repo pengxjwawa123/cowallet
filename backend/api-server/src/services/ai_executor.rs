@@ -80,6 +80,7 @@ impl ToolContext {
 
         let result = match tool_name {
             "get_balance" => self.execute_get_balance(tool_id, params).await,
+            "get_supported_chains" => self.execute_get_supported_chains(tool_id).await,
             "get_token_info" => self.execute_get_token_info(tool_id, params).await,
             "send_transaction" => self.execute_send_transaction(tool_id, params).await,
             "get_transaction_history" => self.execute_get_transaction_history(tool_id, params).await,
@@ -108,7 +109,7 @@ impl ToolContext {
 
     // --- get_balance ---
     async fn execute_get_balance(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
-        let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
+        let chain_id_filter: Option<u64> = parse_param(&params, "chain_id");
         let token_filter: Option<String> = parse_param(&params, "token");
         let owner = match parse_wallet_address(self.wallet_address.as_deref()) {
             Some(a) => a,
@@ -124,64 +125,132 @@ impl ToolContext {
 
         // Use Covalent API if configured
         if let Some(api_key) = &self.app_state.covalent_api_key {
-            match crate::services::covalent::get_balances(
-                &self.app_state.http,
-                api_key,
-                &address,
-                chain_id,
-            )
-            .await
-            {
-                Ok(balances) => {
-                    // Filter by token if specified
-                    let filtered: Vec<&crate::services::covalent::TokenBalance> =
-                        if let Some(ref symbol) = token_filter {
-                            let s = symbol.to_uppercase();
-                            balances.iter().filter(|b| b.symbol.to_uppercase() == s).collect()
-                        } else {
-                            balances.iter().collect()
+            // Multi-chain query if no chain_id specified
+            if chain_id_filter.is_none() {
+                let supported_chains = vec![1u64, 8453, 42161, 10, 56, 137];
+                match crate::services::covalent::get_all_chain_balances(
+                    &self.app_state.http,
+                    api_key,
+                    &address,
+                    &supported_chains,
+                )
+                .await
+                {
+                    Ok(all_balances) => {
+                        let mut chains_data: Vec<serde_json::Value> = Vec::new();
+
+                        for chain in &all_balances.chains {
+                            let filtered_tokens: Vec<&crate::services::covalent::TokenBalance> =
+                                if let Some(ref symbol) = token_filter {
+                                    let s = symbol.to_uppercase();
+                                    chain.tokens.iter().filter(|b| b.symbol.to_uppercase() == s).collect()
+                                } else {
+                                    chain.tokens.iter().collect()
+                                };
+
+                            if !filtered_tokens.is_empty() {
+                                let tokens: Vec<serde_json::Value> = filtered_tokens
+                                    .iter()
+                                    .map(|b| {
+                                        serde_json::json!({
+                                            "symbol": b.symbol,
+                                            "balance": b.balance_formatted,
+                                            "usd": b.usd,
+                                            "native": b.native_token,
+                                        })
+                                    })
+                                    .collect();
+
+                                chains_data.push(serde_json::json!({
+                                    "chain_id": chain.chain_id,
+                                    "chain_name": chain.chain_name,
+                                    "tokens": tokens,
+                                    "total_usd": chain.total_usd,
+                                }));
+                            }
+                        }
+
+                        let result = serde_json::json!({
+                            "address": address,
+                            "multi_chain": true,
+                            "chains": chains_data,
+                            "total_usd": all_balances.total_usd,
+                        });
+
+                        return ToolExecutionResult {
+                            tool_id: tool_id.to_string(),
+                            tool_name: "get_balance".into(),
+                            success: true,
+                            result,
+                            error: None,
                         };
-
-                    let total_usd: f64 = filtered
-                        .iter()
-                        .filter_map(|b| b.usd.parse::<f64>().ok())
-                        .sum();
-
-                    let tokens: Vec<serde_json::Value> = filtered
-                        .iter()
-                        .map(|b| {
-                            serde_json::json!({
-                                "symbol": b.symbol,
-                                "balance": b.balance_formatted,
-                                "usd": b.usd,
-                                "native": b.native_token,
-                            })
-                        })
-                        .collect();
-
-                    let result = serde_json::json!({
-                        "address": address,
-                        "chain_id": chain_id,
-                        "tokens": tokens,
-                        "total_usd": format!("{:.2}", total_usd),
-                    });
-
-                    return ToolExecutionResult {
-                        tool_id: tool_id.to_string(),
-                        tool_name: "get_balance".into(),
-                        success: true,
-                        result,
-                        error: None,
-                    };
+                    }
+                    Err(e) => {
+                        tracing::warn!("Covalent multi-chain balance query failed: {}", e);
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Covalent balance query failed, falling back to RPC: {}", e);
+            } else {
+                // Single chain query
+                let chain_id = chain_id_filter.unwrap();
+                match crate::services::covalent::get_balances(
+                    &self.app_state.http,
+                    api_key,
+                    &address,
+                    chain_id,
+                )
+                .await
+                {
+                    Ok(balances) => {
+                        let filtered: Vec<&crate::services::covalent::TokenBalance> =
+                            if let Some(ref symbol) = token_filter {
+                                let s = symbol.to_uppercase();
+                                balances.iter().filter(|b| b.symbol.to_uppercase() == s).collect()
+                            } else {
+                                balances.iter().collect()
+                            };
+
+                        let total_usd: f64 = filtered
+                            .iter()
+                            .filter_map(|b| b.usd.parse::<f64>().ok())
+                            .sum();
+
+                        let tokens: Vec<serde_json::Value> = filtered
+                            .iter()
+                            .map(|b| {
+                                serde_json::json!({
+                                    "symbol": b.symbol,
+                                    "balance": b.balance_formatted,
+                                    "usd": b.usd,
+                                    "native": b.native_token,
+                                })
+                            })
+                            .collect();
+
+                        let result = serde_json::json!({
+                            "address": address,
+                            "chain_id": chain_id,
+                            "tokens": tokens,
+                            "total_usd": format!("{:.2}", total_usd),
+                        });
+
+                        return ToolExecutionResult {
+                            tool_id: tool_id.to_string(),
+                            tool_name: "get_balance".into(),
+                            success: true,
+                            result,
+                            error: None,
+                        };
+                    }
+                    Err(e) => {
+                        tracing::warn!("Covalent balance query failed, falling back to RPC: {}", e);
+                    }
                 }
             }
         }
 
-        // Fallback: direct RPC query
-        let rpc_url = &self.app_state.rpc_url;
+        // Fallback: direct RPC query for single chain
+        let chain_id = chain_id_filter.unwrap_or(8453);
+        let rpc_url = self.app_state.rpc_for_chain(chain_id);
         let result = match chain_evm::tokens::query_native_balance(owner, rpc_url).await {
             Ok(balance) => {
                 let formatted = format_units(balance, 18);
@@ -413,6 +482,7 @@ impl ToolContext {
             &format!("0x{:x}", from_address),
             &to_address,
             &value_wei_str,
+            chain_id,
         ).await;
 
         let mut result = serde_json::json!({
@@ -452,8 +522,9 @@ impl ToolContext {
         from: &str,
         to: &str,
         value_wei: &str,
+        chain_id: u64,
     ) -> GasEstimate {
-        let rpc_url = &self.app_state.rpc_url;
+        let rpc_url = self.app_state.rpc_for_chain(chain_id);
         let http = &self.app_state.http;
 
         // Convert value to hex for RPC
@@ -547,7 +618,61 @@ impl ToolContext {
     async fn execute_get_transaction_history(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
         let limit: i64 = parse_param(&params, "limit").unwrap_or(20).min(100);
         let offset: i64 = parse_param(&params, "offset").unwrap_or(0);
+        let chain_id_filter: Option<u64> = parse_param(&params, "chain_id");
 
+        // Try Covalent API first if no chain_id filter and wallet address available
+        if chain_id_filter.is_none() {
+            if let (Some(api_key), Some(addr)) = (&self.app_state.covalent_api_key, &self.wallet_address) {
+                let supported_chains = vec![1u64, 8453, 42161, 10, 56, 137];
+                match crate::services::covalent::get_all_chain_transactions(
+                    &self.app_state.http,
+                    api_key,
+                    addr,
+                    &supported_chains,
+                )
+                .await
+                {
+                    Ok(txs) => {
+                        let transactions: Vec<serde_json::Value> = txs
+                            .into_iter()
+                            .take(limit as usize)
+                            .map(|tx| {
+                                serde_json::json!({
+                                    "chain_id": tx.chain_id,
+                                    "chain_name": tx.chain_name,
+                                    "tx_hash": tx.tx_hash,
+                                    "from_addr": tx.from,
+                                    "to_addr": tx.to,
+                                    "value": tx.value,
+                                    "timestamp": tx.timestamp,
+                                    "status": tx.status,
+                                })
+                            })
+                            .collect();
+
+                        let result = serde_json::json!({
+                            "transactions": transactions,
+                            "multi_chain": true,
+                            "limit": limit,
+                            "total": transactions.len()
+                        });
+
+                        return ToolExecutionResult {
+                            tool_id: tool_id.to_string(),
+                            tool_name: "get_transaction_history".into(),
+                            success: true,
+                            result,
+                            error: None,
+                        };
+                    }
+                    Err(e) => {
+                        tracing::warn!("Covalent multi-chain tx query failed, falling back to DB: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Fallback to database query
         let db = match self.app_state.require_db() {
             Ok(db) => db,
             Err(_) => {
@@ -561,7 +686,6 @@ impl ToolContext {
             }
         };
 
-        // Parse user_id from context if available
         let user_id = match &self.user_id {
             Some(uid) => match uuid::Uuid::parse_str(uid) {
                 Ok(id) => id,
@@ -586,17 +710,31 @@ impl ToolContext {
             }
         };
 
-        // Query database
-        let rows = sqlx::query(
-            "SELECT id, chain_id, to_addr, value, token, tx_hash, status, created_at
-             FROM transactions WHERE user_id = $1
-             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
-        )
-        .bind(user_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(db)
-        .await;
+        // Query database with optional chain_id filter
+        let rows = if let Some(chain_id) = chain_id_filter {
+            sqlx::query(
+                "SELECT id, chain_id, to_addr, value, token, tx_hash, status, created_at
+                 FROM transactions WHERE user_id = $1 AND chain_id = $2
+                 ORDER BY created_at DESC LIMIT $3 OFFSET $4",
+            )
+            .bind(user_id)
+            .bind(chain_id as i64)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(db)
+            .await
+        } else {
+            sqlx::query(
+                "SELECT id, chain_id, to_addr, value, token, tx_hash, status, created_at
+                 FROM transactions WHERE user_id = $1
+                 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(user_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(db)
+            .await
+        };
 
         let rows = match rows {
             Ok(r) => r,
@@ -614,9 +752,12 @@ impl ToolContext {
         let transactions: Vec<serde_json::Value> = rows
             .into_iter()
             .map(|row| {
+                let chain_id = row.get::<i64, _>("chain_id") as u64;
+                let chain_name = crate::services::covalent::chain_display_name(chain_id);
                 serde_json::json!({
                     "id": row.get::<uuid::Uuid, _>("id").to_string(),
-                    "chain_id": row.get::<i64, _>("chain_id"),
+                    "chain_id": chain_id,
+                    "chain_name": chain_name,
                     "to_addr": format!("0x{}", hex::encode(row.get::<Vec<u8>, _>("to_addr"))),
                     "value": row.get::<String, _>("value"),
                     "token": row.get::<Option<String>, _>("token"),
@@ -756,6 +897,61 @@ impl ToolContext {
         ToolExecutionResult {
             tool_id: tool_id.to_string(),
             tool_name: "search_yield_opportunities".into(),
+            success: true,
+            result,
+            error: None,
+        }
+    }
+
+    // --- get_supported_chains ---
+    async fn execute_get_supported_chains(&self, tool_id: &str) -> ToolExecutionResult {
+        let chains = vec![
+            serde_json::json!({
+                "chain_id": 1,
+                "name": "Ethereum",
+                "symbol": "ETH",
+                "type": "mainnet"
+            }),
+            serde_json::json!({
+                "chain_id": 8453,
+                "name": "Base",
+                "symbol": "ETH",
+                "type": "mainnet"
+            }),
+            serde_json::json!({
+                "chain_id": 42161,
+                "name": "Arbitrum One",
+                "symbol": "ETH",
+                "type": "mainnet"
+            }),
+            serde_json::json!({
+                "chain_id": 10,
+                "name": "Optimism",
+                "symbol": "ETH",
+                "type": "mainnet"
+            }),
+            serde_json::json!({
+                "chain_id": 56,
+                "name": "BNB Chain",
+                "symbol": "BNB",
+                "type": "mainnet"
+            }),
+            serde_json::json!({
+                "chain_id": 137,
+                "name": "Polygon",
+                "symbol": "MATIC",
+                "type": "mainnet"
+            }),
+        ];
+
+        let result = serde_json::json!({
+            "chains": chains,
+            "total_count": chains.len(),
+        });
+
+        ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            tool_name: "get_supported_chains".into(),
             success: true,
             result,
             error: None,

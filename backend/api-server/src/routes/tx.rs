@@ -31,6 +31,7 @@ struct SubmitRequest {
     to_addr: Option<String>,
     value: Option<String>,
     token: Option<String>,
+    mpc_session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -49,9 +50,9 @@ async fn submit(
         .sub
         .parse()
         .map_err(|_| rpc_error("invalid user id in token"))?;
-    let chain_id = body.chain_id.unwrap_or(84532);
+    let chain_id = body.chain_id.unwrap_or(8453);
 
-    let rpc_url = &state.rpc_url;
+    let rpc_url = state.rpc_for_chain(chain_id);
     let raw_bytes = body.raw_tx.strip_prefix("0x").unwrap_or(&body.raw_tx);
 
     let rpc_body = serde_json::json!({
@@ -155,6 +156,24 @@ async fn submit(
         {
             tracing::warn!("failed to record transaction: {e}");
         }
+
+        // Link transaction hash back to MPC session if session_id was provided
+        if let Some(ref mpc_sid) = body.mpc_session_id {
+            if let Ok(sid) = uuid::Uuid::parse_str(mpc_sid) {
+                if let Err(e) = sqlx::query(
+                    "UPDATE mpc_sessions SET tx_hash = $1 WHERE id = $2"
+                )
+                .bind(&hash_bytes)
+                .bind(sid)
+                .execute(db)
+                .await
+                {
+                    tracing::warn!("failed to link tx_hash to mpc_session {}: {}", sid, e);
+                } else {
+                    tracing::debug!("Linked tx_hash {} to mpc_session {}", tx_hash, sid);
+                }
+            }
+        }
     }
 
     // Audit log - transaction submission success
@@ -254,6 +273,7 @@ struct SimulateRequest {
     value: Option<String>,
     data: Option<String>,
     from: Option<String>,
+    chain_id: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -267,7 +287,8 @@ async fn simulate(
     State(state): State<AppState>,
     Json(body): Json<SimulateRequest>,
 ) -> Result<Json<SimulateResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let rpc_url = &state.rpc_url;
+    let chain_id = body.chain_id.unwrap_or(8453);
+    let rpc_url = state.rpc_for_chain(chain_id);
 
     let mut call_obj = serde_json::json!({
         "to": body.to,
@@ -354,7 +375,8 @@ async fn estimate_gas(
     State(state): State<AppState>,
     Json(body): Json<EstimateGasRequest>,
 ) -> Result<Json<EstimateGasResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let rpc_url = &state.rpc_url;
+    let chain_id = body.chain_id.unwrap_or(8453);
+    let rpc_url = state.rpc_for_chain(chain_id);
 
     // Build the transaction object for eth_estimateGas
     let mut tx_obj = serde_json::json!({
@@ -495,7 +517,7 @@ async fn submit_userop(
         .parse()
         .map_err(|_| rpc_error("invalid user id in token"))?;
 
-    let chain_id = body.chain_id.unwrap_or(84532);
+    let chain_id = body.chain_id.unwrap_or(8453);
 
     // Parse sender address
     let sender_str = body.sender.strip_prefix("0x").unwrap_or(&body.sender);
@@ -597,7 +619,7 @@ async fn submit_signed_userop(
     _claims: axum::Extension<Claims>,
     Json(body): Json<SubmitSignedUserOpRequest>,
 ) -> Result<Json<SubmitSignedUserOpResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let _chain_id = body.chain_id.unwrap_or(84532);
+    let _chain_id = body.chain_id.unwrap_or(8453);
 
     // Parse the UserOperation from the JSON value
     let op = &body.user_op;

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use sqlx::PgPool;
 
@@ -15,6 +16,7 @@ use crate::services::presign_manager::PresignManager;
 pub struct AppState {
     pub db: Option<PgPool>,
     pub rpc_url: String,
+    pub rpc_urls: HashMap<u64, String>,
     pub price_cache: PriceCache,
     pub yield_cache: YieldCache,
     pub http: reqwest::Client,
@@ -31,7 +33,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(database_url: &str, rpc_url: String) -> Result<Self, sqlx::Error> {
+    pub async fn new(database_url: &str, rpc_url: String, rpc_urls: HashMap<u64, String>) -> Result<Self, sqlx::Error> {
         // Configure production-grade connection pool
         let pool_options = sqlx::postgres::PgPoolOptions::new()
             .max_connections(
@@ -131,6 +133,7 @@ impl AppState {
         Ok(Self {
             db: Some(db.clone()),
             rpc_url,
+            rpc_urls,
             price_cache: PriceCache::new(),
             yield_cache: YieldCache::new(),
             http: Self::create_http_client(),
@@ -145,6 +148,14 @@ impl AppState {
             presign_manager: Some(presign_manager),
             covalent_api_key,
         })
+    }
+
+    /// Get RPC URL for a specific chain, with fallback to default
+    pub fn rpc_for_chain(&self, chain_id: u64) -> &str {
+        self.rpc_urls
+            .get(&chain_id)
+            .map(|s| s.as_str())
+            .unwrap_or(&self.rpc_url)
     }
 
 

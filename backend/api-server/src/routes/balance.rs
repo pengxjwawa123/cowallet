@@ -10,7 +10,9 @@ use crate::services::covalent;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/", get(get_balance))
+    Router::new()
+        .route("/", get(get_balance))
+        .route("/all", get(get_all_balances))
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,16 +48,16 @@ async fn get_balance(
         return Err(ApiError::invalid_address(&query.address));
     }
 
-    let chain_id = query.chain_id.unwrap_or(84532);
+    let chain_id = query.chain_id.unwrap_or(8453);
 
-    // For testnets or when Covalent is not configured, use direct RPC
-    if covalent::is_testnet(chain_id) || state.covalent_api_key.is_none() {
+    // When Covalent is not configured, use direct RPC
+    if state.covalent_api_key.is_none() {
         return get_balance_via_rpc(&state, &query.address, chain_id).await;
     }
 
     let api_key = state.covalent_api_key.as_ref().unwrap();
 
-    // Query Covalent for mainnet balances
+    // Query Covalent for balances
     match covalent::get_balances(&state.http, api_key, &query.address, chain_id).await {
         Ok(tokens) => {
             let total_usd: f64 = tokens
@@ -95,7 +97,8 @@ async fn get_balance_via_rpc(
     let owner = Address::from_str(address)
         .map_err(|_| ApiError::invalid_address(address))?;
 
-    let balance = chain_evm::tokens::query_native_balance(owner, &state.rpc_url)
+    let rpc_url = state.rpc_for_chain(chain_id);
+    let balance = chain_evm::tokens::query_native_balance(owner, rpc_url)
         .await
         .map_err(|e| ApiError::rpc_error(format!("RPC balance query failed: {}", e)))?;
 
@@ -123,4 +126,77 @@ async fn get_balance_via_rpc(
         }],
         total_usd: "—".to_string(),
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AllBalancesQuery {
+    address: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AllBalancesResponse {
+    address: String,
+    chains: Vec<ChainInfo>,
+    total_usd: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ChainInfo {
+    chain_id: u64,
+    chain_name: String,
+    tokens: Vec<TokenInfo>,
+    total_usd: String,
+}
+
+/// GET /balance/all?address={addr}
+/// Returns token balances across all supported chains from Covalent
+async fn get_all_balances(
+    State(state): State<AppState>,
+    Query(query): Query<AllBalancesQuery>,
+) -> Result<Json<AllBalancesResponse>> {
+    // Validate address format
+    if !query.address.starts_with("0x") || query.address.len() != 42 {
+        return Err(ApiError::invalid_address(&query.address));
+    }
+
+    // Require Covalent API key for cross-chain queries
+    let api_key = state.covalent_api_key.as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("Covalent API not configured"))?;
+
+    // Query all supported mainnet chains
+    let chain_ids = vec![1, 8453, 42161, 10, 56, 137];
+
+    match covalent::get_all_chain_balances(&state.http, api_key, &query.address, &chain_ids).await {
+        Ok(result) => {
+            let chains: Vec<ChainInfo> = result
+                .chains
+                .into_iter()
+                .map(|chain| ChainInfo {
+                    chain_id: chain.chain_id,
+                    chain_name: chain.chain_name,
+                    tokens: chain
+                        .tokens
+                        .into_iter()
+                        .map(|t| TokenInfo {
+                            symbol: t.symbol,
+                            balance: t.balance_formatted,
+                            usd: t.usd,
+                            native: t.native_token,
+                        })
+                        .collect(),
+                    total_usd: chain.total_usd,
+                })
+                .collect();
+
+            Ok(Json(AllBalancesResponse {
+                address: result.address,
+                chains,
+                total_usd: result.total_usd,
+            }))
+        }
+        Err(e) => Err(ApiError::service_unavailable(format!(
+            "Failed to fetch cross-chain balances: {}",
+            e
+        ))),
+    }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../l10n/strings.dart';
 import '../config/api_config.dart';
-import '../services/locator.dart';
 
 class AppState extends ChangeNotifier {
   Lang _lang = Lang.zh;
@@ -25,10 +24,8 @@ class AppState extends ChangeNotifier {
     if (_selectedChain.chainId == chain.chainId) return;
     _selectedChain = chain;
     notifyListeners();
-    // Trigger balance refresh for the new chain
-    if (_walletAddress.isNotEmpty) {
-      Services.balance.refresh(_walletAddress, chainId: chain.chainId);
-    }
+    // Note: selectedChain is now only used for send/receive targeting
+    // Balance refresh covers all chains, no need to re-fetch on chain change
   }
 
   void setLang(Lang l) {

@@ -3,12 +3,12 @@ import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/cw_chip.dart';
-import '../../widgets/chain_selector.dart';
 import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../api/mpc_api.dart';
 import '../../router/app_router.dart';
+import '../../config/api_config.dart';
 
 class WalletView extends StatefulWidget {
   const WalletView({super.key});
@@ -143,57 +143,23 @@ class _WalletViewState extends State<WalletView> {
         builder: (context, _) => RefreshIndicator(
           onRefresh: () => Services.balance.refresh(
               CowalletApp.of(context).walletAddress,
-              chainId: CowalletApp.of(context).selectedChain.chainId,
           ),
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             children: [
               const SizedBox(height: 16),
 
-              // ── Chain selector ──
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: ChainSelector(),
-              ),
-              const SizedBox(height: 12),
-
-              // ── Balance overview ──
-              _balanceOverview(tt),
+              // ── Portfolio Total ──
+              _portfolioTotalCard(tt),
               const SizedBox(height: 20),
 
               // ── Action buttons ──
               _actionButtons(context),
               const SizedBox(height: 8),
 
-              // ── Section: 你的资产 ──
+              // ── Multi-chain assets ──
               SectionLabel(title: S.yourMoney),
-              _assetRow(
-                context,
-                letter: 'U',
-                color: CwColors.info,
-                title: '美元稳定币 (USDC)',
-                amount: Services.balance.formattedUsdc,
-                value: '\$28,450',
-              ),
-              const SizedBox(height: 8),
-              _assetRow(
-                context,
-                letter: 'Ξ',
-                color: const Color(0xFF7B61FF),
-                title: '以太币 (ETH)',
-                amount: Services.balance.formattedEth,
-                value: '\$16,830',
-                change: '+2.1%',
-              ),
-              const SizedBox(height: 8),
-              _assetRow(
-                context,
-                letter: 's',
-                color: const Color(0xFF2E9E8F),
-                title: '质押的以太币 (stETH)',
-                subtitle: '每年 3.15% 利息',
-                value: '\$3,000',
-              ),
+              ..._buildChainSections(context),
 
               // ── Section: 证券代币 · 可选 ──
               SectionLabel(
@@ -225,9 +191,9 @@ class _WalletViewState extends State<WalletView> {
     );
   }
 
-  // ── Balance overview ──────────────────────────────────────────────────────────────
+  // ── Portfolio Total Card ──────────────────────────────────────────────────────────
 
-  Widget _balanceOverview(TextTheme tt) {
+  Widget _portfolioTotalCard(TextTheme tt) {
     final bal = Services.balance;
     return Container(
       padding: const EdgeInsets.all(20),
@@ -251,7 +217,7 @@ class _WalletViewState extends State<WalletView> {
           ),
           const SizedBox(height: 8),
           Text(
-            bal.loading ? '...' : bal.formattedTotal,
+            bal.loading ? '...' : '\$${bal.portfolioTotalUsd}',
             style: const TextStyle(
               fontFamily: 'JetBrainsMono',
               fontSize: 34,
@@ -261,8 +227,8 @@ class _WalletViewState extends State<WalletView> {
               height: 1.1,
             ),
           ),
-          const SizedBox(height: 12),
-          if (bal.error != null)
+          if (bal.error != null) ...[
+            const SizedBox(height: 12),
             Text(
               bal.error!,
               style: const TextStyle(
@@ -271,19 +237,18 @@ class _WalletViewState extends State<WalletView> {
                 fontWeight: FontWeight.w500,
                 color: CwColors.danger,
               ),
-            )
-          else if (!bal.loading && bal.tokens.isNotEmpty) ...[
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            ...bal.tokens.map((token) => _fullTokenRow(context, token)),
-          ] else
-            Text(
-              bal.loading ? 'Loading...' : 'Pull to refresh',
-              style: const TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: CwColors.ink4,
+            ),
+          ] else if (bal.loading)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text(
+                'Loading...',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: CwColors.ink4,
+                ),
               ),
             ),
         ],
@@ -291,7 +256,131 @@ class _WalletViewState extends State<WalletView> {
     );
   }
 
-  Widget _fullTokenRow(BuildContext context, token) {
+  // ── Multi-chain sections ───────────────────────────────────────────────────────────
+
+  List<Widget> _buildChainSections(BuildContext context) {
+    final bal = Services.balance;
+    if (bal.loading || bal.error != null) {
+      return [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: CwColors.bgCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: CwColors.line),
+          ),
+          child: Center(
+            child: Text(
+              bal.loading ? 'Loading chains...' : 'Pull to refresh',
+              style: const TextStyle(
+                fontSize: 13,
+                color: CwColors.ink3,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ];
+    }
+
+    final chainTotals = bal.chainTotals;
+    if (chainTotals.isEmpty) {
+      return [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: CwColors.bgCard,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: CwColors.line),
+          ),
+          child: const Center(
+            child: Text(
+              'No assets found',
+              style: TextStyle(
+                fontSize: 13,
+                color: CwColors.ink3,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ];
+    }
+
+    final widgets = <Widget>[];
+    for (final entry in chainTotals.entries) {
+      final chainId = entry.key;
+      final chainTotal = entry.value;
+      final tokens = bal.tokensForChain(chainId);
+
+      if (tokens.isEmpty) continue;
+
+      widgets.add(_chainSection(context, chainId, chainTotal, tokens));
+      widgets.add(const SizedBox(height: 8));
+    }
+
+    return widgets;
+  }
+
+  Widget _chainSection(BuildContext context, int chainId, String chainTotal, List tokens) {
+    final chain = ChainConfig.byChainId(chainId)!;
+    final chainColor = _chainColor(chain);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: CwColors.bgCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: CwColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Chain header: dot + name + total
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: chainColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                chain.displayName,
+                style: const TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: CwColors.ink1,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '\$$chainTotal',
+                style: const TextStyle(
+                  fontFamily: 'JetBrainsMono',
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: CwColors.ink1,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+
+          // Top tokens for this chain
+          ...tokens.map((token) => _tokenRowInChain(context, token)),
+        ],
+      ),
+    );
+  }
+
+  Widget _tokenRowInChain(BuildContext context, token) {
     final symbol = token.symbol as String;
     final balance = token.balance as String;
     final usd = token.usd as String;
@@ -374,6 +463,27 @@ class _WalletViewState extends State<WalletView> {
     );
   }
 
+  static Color _chainColor(ChainConfig chain) {
+    switch (chain.name) {
+      case 'ethereum':
+      case 'sepolia':
+        return const Color(0xFF627EEA);
+      case 'base':
+      case 'base-sepolia':
+        return const Color(0xFF0052FF);
+      case 'arbitrum':
+        return const Color(0xFF28A0F0);
+      case 'optimism':
+        return const Color(0xFFFF0420);
+      case 'bsc':
+        return const Color(0xFFF3BA2F);
+      case 'polygon':
+        return const Color(0xFF8247E5);
+      default:
+        return CwColors.ink3;
+    }
+  }
+
   // ── Action buttons ──────────────────────────────────────────────────────
 
   Widget _actionButtons(BuildContext context) {
@@ -407,105 +517,6 @@ class _WalletViewState extends State<WalletView> {
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-      ),
-    );
-  }
-
-  // ── Asset row ───────────────────────────────────────────────────────────
-
-  Widget _assetRow(
-    BuildContext context, {
-    required String letter,
-    required Color color,
-    required String title,
-    String? subtitle,
-    required String value,
-    String? amount,
-    String? change,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: CwColors.bgCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: CwColors.line),
-      ),
-      child: Row(
-        children: [
-          // Icon circle
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                letter,
-                style: TextStyle(
-                  color: color,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-
-          // Title + subtitle
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ] else if (amount != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    amount,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // Trailing value + change
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: CwColors.ink1,
-                ),
-              ),
-              if (change != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  change,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: CwColors.success,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
       ),
     );
   }

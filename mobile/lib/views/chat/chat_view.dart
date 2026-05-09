@@ -166,11 +166,35 @@ class ChatViewState extends State<ChatView> {
     final walletAddress = CowalletApp.of(context).walletAddress;
     final userId = await SecureStorage.getUserId();
 
+    // Build multi-chain portfolio context for AI
+    final balanceService = Services.balance;
+    final portfolioContext = <String, dynamic>{
+      'total_usd': balanceService.portfolioTotalUsd,
+      'chains': balanceService.chainTotals.entries.map((entry) {
+        return {
+          'chain_id': entry.key,
+          'total_usd': entry.value,
+        };
+      }).toList(),
+    };
+
+    // Supported chains (EVM chains we support)
+    const supportedChains = [
+      1,     // Ethereum
+      8453,  // Base
+      42161, // Arbitrum
+      10,    // Optimism
+      56,    // BNB Chain
+      137,   // Polygon
+    ];
+
     final stream = AiApi.chatStream(
       message: text,
       sessionId: _sessionId,
       userId: userId,
       walletAddress: walletAddress.isNotEmpty ? walletAddress : null,
+      supportedChains: supportedChains,
+      portfolioContext: portfolioContext,
     );
 
     _streamSub?.cancel();
@@ -222,6 +246,7 @@ class ChatViewState extends State<ChatView> {
                     'to_token': params['to_token'] ?? '',
                     'amount': params['amount'] ?? '0',
                     'slippage': params['slippage'] ?? 0.5,
+                    'chain_id': params['chain_id'],
                   },
                   toolCallId: id,
                 ));
@@ -789,6 +814,7 @@ class ChatViewState extends State<ChatView> {
           amount: msg.widgetData['amount'] ?? '0',
           estimatedOutput: msg.widgetData['estimated_output'] ?? '—',
           slippage: (msg.widgetData['slippage'] as num?)?.toDouble() ?? 0.5,
+          chainId: msg.widgetData['chain_id'] as int?,
           loading: msg.loading,
           resolved: msg.confirmed,
           onConfirm: () => _onSwapConfirm(index),
