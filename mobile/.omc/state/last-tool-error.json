@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"find /Users/jingle/cat/cowallet -name \\\"config.toml\\\" -path \\\"*/.cargo/*\\\" 2>/dev/null; find /Users/jingle/cat/cowallet -name \\\"Makefile*\\\" -maxdepth 1 | xargs grep -l \\\"android\\\\|jniLibs\\...",
-  "error": "Exit code 1",
-  "timestamp": "2026-05-08T09:18:45.387Z",
-  "retry_count": 3
+  "tool_input_preview": "{\"command\":\"flutter analyze lib/views/contacts/ lib/services/contacts_service.dart lib/models/contact.dart lib/router/app_router.dart 2>&1\",\"timeout\":120000,\"description\":\"Run flutter analyze on the c...",
+  "error": "Exit code 1\nAnalyzing 4 items...                                            \n\n   info • Unnecessary use of multiple underscores • lib/views/contacts/contacts_view.dart:237:41 • unnecessary_underscores\n\n1 issue found. (ran in 8.2s)",
+  "timestamp": "2026-05-09T02:49:32.956Z",
+  "retry_count": 6
 }
