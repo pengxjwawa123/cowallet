@@ -18,15 +18,37 @@ class _HomeViewState extends State<HomeView> {
   List<Map<String, dynamic>> _transactions = [];
   bool _txLoading = true;
   String? _txError;
+  int _lastChainId = 0;
+
+  AppState get _appState => CowalletApp.of(context);
 
   @override
   void initState() {
     super.initState();
-    _fetchTransactions();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _lastChainId = _appState.selectedChain.chainId;
+      _appState.addListener(_onAppStateChange);
+      _fetchTransactions();
+    });
+  }
+
+  @override
+  void dispose() {
+    _appState.removeListener(_onAppStateChange);
+    super.dispose();
+  }
+
+  void _onAppStateChange() {
+    final currentChainId = _appState.selectedChain.chainId;
+    if (_lastChainId != currentChainId) {
+      _lastChainId = currentChainId;
+      _fetchTransactions();
+    }
   }
 
   Future<void> _fetchTransactions() async {
-    final address = CowalletApp.of(context).walletAddress;
+    final appState = CowalletApp.of(context);
+    final address = appState.walletAddress;
     if (address.isEmpty) {
       setState(() {
         _txLoading = false;
@@ -41,7 +63,10 @@ class _HomeViewState extends State<HomeView> {
     });
 
     try {
-      final result = await TxHistoryApi.getHistory(address: address);
+      final result = await TxHistoryApi.getHistory(
+        address: address,
+        chainId: appState.selectedChain.chainId,
+      );
       if (result.isSuccess && result.data != null) {
         final data = result.data!;
         final txList = data['transactions'] as List<dynamic>? ?? [];

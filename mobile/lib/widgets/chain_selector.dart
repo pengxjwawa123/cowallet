@@ -12,6 +12,14 @@ class ChainSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = CowalletApp.of(context);
+    // Force rebuild via ListenableBuilder so chip updates on chain switch
+    return ListenableBuilder(
+      listenable: appState,
+      builder: (context, _) => _buildChip(context, appState),
+    );
+  }
+
+  Widget _buildChip(BuildContext context, appState) {
     final chain = appState.selectedChain;
 
     return GestureDetector(
@@ -127,49 +135,62 @@ class _ChainList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle bar
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: CwColors.lineStrong,
-                  borderRadius: BorderRadius.circular(2),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: CwColors.lineStrong,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            // Title
-            Text(
-              S.selectNetwork,
-              style: const TextStyle(
-                fontFamily: 'NotoSerifSC',
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: CwColors.ink1,
+              // Title
+              Text(
+                S.selectNetwork,
+                style: const TextStyle(
+                  fontFamily: 'NotoSerifSC',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: CwColors.ink1,
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            // Mainnets section
-            _sectionHeader(S.mainnets),
-            const SizedBox(height: 8),
-            ...ChainConfig.allMainnets.map((c) => _chainTile(c)),
+              // Scrollable chain list
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _sectionHeader(S.mainnets),
+                      const SizedBox(height: 8),
+                      ...ChainConfig.allMainnets.map((c) => _chainTile(c)),
 
-            const SizedBox(height: 16),
+                      const SizedBox(height: 16),
 
-            // Testnets section
-            _sectionHeader(S.testnets),
-            const SizedBox(height: 8),
-            ...ChainConfig.allTestnets.map((c) => _chainTile(c)),
-          ],
+                      _sectionHeader(S.testnets),
+                      const SizedBox(height: 8),
+                      ...ChainConfig.allTestnets.map((c) => _chainTile(c)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -270,9 +270,10 @@ pub async fn fetch_defi_llama_data(
         .data
         .into_iter()
         .filter(|pool| pool.chain == base_chain)
+        .filter(|pool| pool.tvl_usd.unwrap_or(0.0) >= 100_000.0)
         .filter_map(|pool| {
             let apy = pool.apy.unwrap_or(0.0);
-            if apy <= 0.0 {
+            if apy <= 0.0 || apy > 1000.0 {
                 return None;
             }
 
@@ -326,10 +327,10 @@ pub async fn fetch_defi_llama_data(
 
 fn map_project_to_type(project: &str) -> ProtocolType {
     match project {
-        "aave-v3" | "morpho-blue" | "compound-v3" => ProtocolType::Lending,
-        "uniswap-v3" | "sushi-v3" | "aerodrome" | "velodrome" => ProtocolType::Dex,
-        "lido" | "rocket-pool" | "coinbase-staked-eth" => ProtocolType::LiquidStaking,
-        "pendle" | "yearn" | "convex" | "curve" => ProtocolType::Vault,
+        s if s.starts_with("aave") || s.starts_with("morpho") || s.starts_with("compound") => ProtocolType::Lending,
+        s if s.starts_with("uniswap") || s.starts_with("sushi") || s.starts_with("aerodrome") || s.starts_with("velodrome") || s.starts_with("pancakeswap") => ProtocolType::Dex,
+        s if s.starts_with("lido") || s.starts_with("rocket-pool") || s.starts_with("coinbase-staked") => ProtocolType::LiquidStaking,
+        s if s.starts_with("pendle") || s.starts_with("yearn") || s.starts_with("convex") || s.starts_with("curve") || s.starts_with("beefy") => ProtocolType::Vault,
         _ => ProtocolType::Farm,
     }
 }
@@ -337,21 +338,44 @@ fn map_project_to_type(project: &str) -> ProtocolType {
 fn format_project_name(project: &str) -> String {
     let mapping = [
         ("aave-v3", "Aave V3"),
+        ("aave-v2", "Aave V2"),
         ("uniswap-v3", "Uniswap V3"),
+        ("uniswap-v4", "Uniswap V4"),
+        ("aerodrome-v1", "Aerodrome"),
+        ("aerodrome-v2", "Aerodrome V2"),
         ("aerodrome", "Aerodrome"),
+        ("velodrome-v2", "Velodrome V2"),
         ("morpho-blue", "Morpho Blue"),
         ("lido", "Lido"),
         ("pendle", "Pendle Finance"),
         ("yearn", "Yearn V3"),
         ("rocket-pool", "Rocket Pool"),
         ("compound-v3", "Compound V3"),
+        ("sushi-v3", "SushiSwap V3"),
+        ("pancakeswap-v3", "PancakeSwap V3"),
+        ("beefy", "Beefy Finance"),
+        ("curve-dex", "Curve"),
+        ("convex-finance", "Convex"),
+        ("coinbase-staked-eth", "Coinbase cbETH"),
     ];
 
     mapping
         .iter()
         .find(|(k, _)| *k == project)
         .map(|(_, v)| v.to_string())
-        .unwrap_or_else(|| project.to_string())
+        .unwrap_or_else(|| {
+            // Capitalize first letter of each word
+            project.split('-')
+                .map(|w| {
+                    let mut c = w.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
 }
 
 fn generate_risk_factors(level: &RiskLevel) -> Vec<String> {

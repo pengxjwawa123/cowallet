@@ -6,6 +6,18 @@
 
 use reqwest::Client;
 use serde::Deserialize;
+use tracing::warn;
+
+use crate::retry::{retry_with_backoff, RetryConfig};
+
+fn is_retryable_covalent_error(err: &String) -> bool {
+    err.contains("request failed")
+        || err.contains("timed out")
+        || err.contains("connection")
+        || err.contains("502")
+        || err.contains("503")
+        || err.contains("429")
+}
 
 const BASE_URL: &str = "https://api.covalenthq.com/v1";
 
@@ -138,27 +150,45 @@ pub async fn get_transactions(
         BASE_URL, slug, address, api_key
     );
 
-    let resp = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Covalent tx request failed: {}", e))?;
+    let http = http.clone();
+    let url_clone = url.clone();
 
-    if !resp.status().is_success() {
-        return Err(format!("Covalent API returned {}", resp.status()));
-    }
+    let body = retry_with_backoff(
+        RetryConfig::conservative(),
+        || {
+            let http = http.clone();
+            let url = url_clone.clone();
+            async move {
+                let resp = http
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Covalent tx request failed: {}", e))?;
 
-    let body: CovalentTxResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Covalent tx parse error: {}", e))?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    return Err(format!("Covalent API returned {}", status));
+                }
 
-    if body.error {
-        return Err(format!(
-            "Covalent error: {}",
-            body.error_message.unwrap_or_default()
-        ));
-    }
+                let body: CovalentTxResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Covalent tx parse error: {}", e))?;
+
+                if body.error {
+                    return Err(format!(
+                        "Covalent error: {}",
+                        body.error_message.unwrap_or_default()
+                    ));
+                }
+
+                Ok(body)
+            }
+        },
+        is_retryable_covalent_error,
+        "covalent_get_transactions",
+    )
+    .await?;
 
     let data = body.data.ok_or("Covalent returned no transaction data")?;
 
@@ -201,27 +231,45 @@ pub async fn get_balances(
         BASE_URL, slug, address, api_key
     );
 
-    let resp = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Covalent request failed: {}", e))?;
+    let http = http.clone();
+    let url_clone = url.clone();
 
-    if !resp.status().is_success() {
-        return Err(format!("Covalent API returned {}", resp.status()));
-    }
+    let body = retry_with_backoff(
+        RetryConfig::conservative(),
+        || {
+            let http = http.clone();
+            let url = url_clone.clone();
+            async move {
+                let resp = http
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Covalent request failed: {}", e))?;
 
-    let body: CovalentResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Covalent parse error: {}", e))?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    return Err(format!("Covalent API returned {}", status));
+                }
 
-    if body.error {
-        return Err(format!(
-            "Covalent error: {}",
-            body.error_message.unwrap_or_default()
-        ));
-    }
+                let body: CovalentResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Covalent parse error: {}", e))?;
+
+                if body.error {
+                    return Err(format!(
+                        "Covalent error: {}",
+                        body.error_message.unwrap_or_default()
+                    ));
+                }
+
+                Ok(body)
+            }
+        },
+        is_retryable_covalent_error,
+        "covalent_get_balances",
+    )
+    .await?;
 
     let data = body.data.ok_or("Covalent returned no data")?;
 

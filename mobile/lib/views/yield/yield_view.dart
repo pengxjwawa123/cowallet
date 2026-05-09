@@ -63,40 +63,38 @@ class _YieldViewState extends State<YieldView> {
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
 
-    return SafeArea(
-      child: RefreshIndicator(
-        color: CwColors.accent,
-        onRefresh: _loadOpportunities,
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          children: [
-            const SizedBox(height: 16),
+    return RefreshIndicator(
+      color: CwColors.accent,
+      onRefresh: _loadOpportunities,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        children: [
+          const SizedBox(height: 12),
 
-            // Header card
-            _headerCard(tt),
-            const SizedBox(height: 8),
+          // Header card
+          _headerCard(tt),
+          const SizedBox(height: 8),
 
-            // Filter chips
-            SectionLabel(title: S.yieldOpportunities),
-            _filterChips(),
-            const SizedBox(height: 12),
+          // Filter chips
+          SectionLabel(title: S.yieldOpportunities),
+          _filterChips(),
+          const SizedBox(height: 12),
 
-            // Content
-            if (_loading)
-              _loadingState()
-            else if (_error != null)
-              _errorState()
-            else if (_opportunities.isEmpty)
-              _emptyState(tt)
-            else
-              ..._opportunities.map((opp) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _opportunityCard(context, opp),
-                  )),
+          // Content
+          if (_loading)
+            _loadingState()
+          else if (_error != null)
+            _errorState()
+          else if (_opportunities.isEmpty)
+            _emptyState(tt)
+          else
+            ..._opportunities.map((opp) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _opportunityCard(context, opp),
+                )),
 
-            const SizedBox(height: 32),
-          ],
-        ),
+          const SizedBox(height: 32),
+        ],
       ),
     );
   }
@@ -274,12 +272,15 @@ class _YieldViewState extends State<YieldView> {
                     const SizedBox(height: 2),
                     Row(
                       children: [
-                        Text(
-                          opp.tokenLabel,
-                          style: const TextStyle(
-                            fontFamily: 'JetBrainsMono',
-                            fontSize: 11,
-                            color: CwColors.ink3,
+                        Flexible(
+                          child: Text(
+                            opp.tokenLabel,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'JetBrainsMono',
+                              fontSize: 11,
+                              color: CwColors.ink3,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 6),

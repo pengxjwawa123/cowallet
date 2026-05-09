@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../network/dio_client.dart';
 import '../network/result.dart';
 import '../utils/secure_storage.dart';
@@ -114,9 +115,28 @@ class AuthApi {
     await SecureStorage.clearAuthData();
   }
 
-  /// 检查是否已登录（本地有token）
+  /// 检查是否已登录且 token 未过期
   static Future<bool> isLoggedIn() async {
     String? token = await SecureStorage.getToken();
-    return token != null && token.isNotEmpty;
+    if (token == null || token.isEmpty) return false;
+    return !_isTokenExpired(token);
+  }
+
+  /// 解析 JWT payload 检查 exp 是否过期（留 60s 余量）
+  static bool _isTokenExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+      final payload = utf8.decode(
+        base64Url.decode(base64Url.normalize(parts[1])),
+      );
+      final map = jsonDecode(payload) as Map<String, dynamic>;
+      final exp = map['exp'] as int?;
+      if (exp == null) return true;
+      final expTime = DateTime.fromMillisecondsSinceEpoch(exp * 1000);
+      return DateTime.now().isAfter(expTime.subtract(const Duration(seconds: 60)));
+    } catch (_) {
+      return true;
+    }
   }
 }

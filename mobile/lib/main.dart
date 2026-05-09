@@ -46,15 +46,16 @@ class _CowalletAppState extends State<CowalletApp> {
         return;
       }
 
-      // Wallet exists locally — go to home immediately
+      // Wallet exists locally
       final addr = await Services.wallet.getAddress();
       appState.setWalletAddress(addr);
       appState.completeOnboarding();
       _initialRoute = AppRouter.home;
-      setState(() => _ready = true);
 
-      // Refresh session and balance in background (non-blocking)
-      _refreshSessionInBackground();
+      // Ensure valid token before rendering home (prevents 401 cascades)
+      await _refreshSessionInBackground();
+
+      setState(() => _ready = true);
       _refreshBalanceInBackground(addr);
     } catch (_) {
       setState(() => _ready = true);
@@ -63,16 +64,13 @@ class _CowalletAppState extends State<CowalletApp> {
 
   Future<void> _refreshSessionInBackground() async {
     try {
-      final hasValidSession = await AuthApi.isLoggedIn();
-      if (hasValidSession) {
-        final sessionResult = await AuthApi.getSessionInfo();
-        if (!sessionResult.isSuccess) {
-          final refreshed = await AuthApi.refreshToken();
-          if (!refreshed) await _reloginWithDeviceId();
-        }
-      } else {
-        final refreshed = await AuthApi.refreshToken();
-        if (!refreshed) await _reloginWithDeviceId();
+      final tokenValid = await AuthApi.isLoggedIn();
+      if (tokenValid) return;
+
+      // Token 过期或不存在，尝试 refresh
+      final refreshed = await AuthApi.refreshToken();
+      if (!refreshed) {
+        await _reloginWithDeviceId();
       }
     } catch (_) {}
   }

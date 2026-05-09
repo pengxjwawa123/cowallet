@@ -119,9 +119,13 @@ impl AppState {
         let participant = Arc::new(participant);
         participant.spawn_cleanup();
 
-        let covalent_api_key = std::env::var("COVALENT_API_KEY").ok();
+        let covalent_api_key = std::env::var("COVALENT_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
         if covalent_api_key.is_some() {
             tracing::info!("Covalent API configured for balance queries");
+        } else {
+            tracing::warn!("COVALENT_API_KEY not set — balance and tx-history endpoints will return 503");
         }
 
         Ok(Self {

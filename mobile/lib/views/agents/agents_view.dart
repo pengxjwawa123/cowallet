@@ -11,11 +11,10 @@ class AgentsView extends StatelessWidget {
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
 
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        children: [
-          const SizedBox(height: 16),
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      children: [
+        const SizedBox(height: 12),
 
           // ── Hero card ──
           _heroCard(tt),
@@ -90,9 +89,8 @@ class AgentsView extends StatelessWidget {
           ),
           _protocolList(context),
 
-          const SizedBox(height: 32),
-        ],
-      ),
+        const SizedBox(height: 32),
+      ],
     );
   }
 
