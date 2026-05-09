@@ -6,6 +6,7 @@ import '../../widgets/cw_orb.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../api/ai_api.dart';
+import '../../utils/secure_storage.dart';
 import 'widgets/balance_widget.dart';
 import 'widgets/receive_widget.dart';
 import 'widgets/send_confirm_widget.dart';
@@ -150,12 +151,17 @@ class _ChatViewState extends State<ChatView> {
     _scrollToBottom();
 
     final aiMsgIndex = _messages.length - 1;
-    final walletAddr = CowalletApp.of(context).walletAddress;
+
+    _doStream(text, aiMsgIndex);
+  }
+
+  Future<void> _doStream(String text, int aiMsgIndex) async {
+    final userId = await SecureStorage.getUserId();
 
     final stream = AiApi.chatStream(
       message: text,
       sessionId: _sessionId,
-      userId: walletAddr.isNotEmpty ? walletAddr : null,
+      userId: userId,
     );
 
     _streamSub?.cancel();
@@ -439,11 +445,14 @@ class _ChatViewState extends State<ChatView> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(child: _isEmpty ? _buildEmptyState() : _buildConversation()),
-        _buildComposer(),
-      ],
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        children: [
+          Expanded(child: _isEmpty ? _buildEmptyState() : _buildConversation()),
+          _buildComposer(),
+        ],
+      ),
     );
   }
 

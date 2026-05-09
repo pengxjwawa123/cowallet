@@ -414,7 +414,7 @@ async fn chat_stream(
 
         // Build context messages
         let mut messages: Vec<Message> = vec![
-            Message { role: "system".into(), content: Some(SYSTEM_PROMPT.into()), tool_calls: None, tool_call_id: None },
+            Message { role: "system".into(), content: Some(SYSTEM_PROMPT.into()), reasoning_content: None, tool_calls: None, tool_call_id: None },
         ];
 
         // Load history from DB
@@ -427,6 +427,7 @@ async fn chat_stream(
                     messages.push(Message {
                         role: row.role,
                         content: row.content,
+                        reasoning_content: None,
                         tool_calls: None,
                         tool_call_id: row.tool_call_id,
                     });
@@ -437,6 +438,7 @@ async fn chat_stream(
         messages.push(Message {
             role: "user".into(),
             content: Some(user_message.clone()),
+            reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
         });
@@ -457,6 +459,7 @@ async fn chat_stream(
 
         // Parse SSE from upstream DeepSeek
         let mut full_content = String::new();
+        let mut reasoning_content = String::new();
         let mut tool_calls_acc: Vec<AccToolCall> = Vec::new();
         let mut byte_stream = raw_response.bytes_stream();
 
@@ -487,6 +490,13 @@ async fn chat_stream(
                                     Some(d) => d,
                                     None => continue,
                                 };
+
+                                // Reasoning content (DeepSeek thinking mode)
+                                if let Some(rc) = delta.get("reasoning_content").and_then(|t| t.as_str()) {
+                                    if !rc.is_empty() {
+                                        reasoning_content.push_str(rc);
+                                    }
+                                }
 
                                 // Text content
                                 if let Some(text) = delta.get("content").and_then(|t| t.as_str()) {
@@ -647,6 +657,7 @@ async fn chat_stream(
         messages.push(Message {
             role: "assistant".into(),
             content: if full_content.is_empty() { None } else { Some(full_content.clone()) },
+            reasoning_content: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
             tool_calls: Some(tc_for_msg),
             tool_call_id: None,
         });
@@ -660,6 +671,7 @@ async fn chat_stream(
             messages.push(Message {
                 role: "tool".into(),
                 content: Some(content),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: Some(result.tool_id.clone()),
             });

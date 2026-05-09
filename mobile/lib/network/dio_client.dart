@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:pretty_dio_logger/pretty_dio_logger.dart';
@@ -245,7 +246,7 @@ class DioClient {
       return stream.transform(
         StreamTransformer<Uint8List, String>.fromHandlers(
           handleData: (Uint8List data, EventSink<String> sink) {
-            sink.add(String.fromCharCodes(data));
+            sink.add(utf8.decode(data, allowMalformed: true));
           },
         ),
       );

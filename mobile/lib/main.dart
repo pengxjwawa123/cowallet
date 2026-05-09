@@ -46,37 +46,34 @@ class _CowalletAppState extends State<CowalletApp> {
         return;
       }
 
-      // Wallet exists locally — ensure we have a valid session
+      // Wallet exists locally — go to home immediately
+      final addr = await Services.wallet.getAddress();
+      appState.setWalletAddress(addr);
+      appState.completeOnboarding();
+      _initialRoute = AppRouter.home;
+      setState(() => _ready = true);
+
+      // Refresh session in background (non-blocking)
+      _refreshSessionInBackground();
+    } catch (_) {
+      setState(() => _ready = true);
+    }
+  }
+
+  Future<void> _refreshSessionInBackground() async {
+    try {
       final hasValidSession = await AuthApi.isLoggedIn();
       if (hasValidSession) {
-        // Try to validate session; if expired, attempt refresh
         final sessionResult = await AuthApi.getSessionInfo();
         if (!sessionResult.isSuccess) {
           final refreshed = await AuthApi.refreshToken();
-          if (!refreshed) {
-            await _reloginWithDeviceId();
-          }
+          if (!refreshed) await _reloginWithDeviceId();
         }
       } else {
-        // No token — try refresh first, then re-login with device_id
         final refreshed = await AuthApi.refreshToken();
-        if (!refreshed) {
-          await _reloginWithDeviceId();
-        }
+        if (!refreshed) await _reloginWithDeviceId();
       }
-
-      // Check again after potential refresh/re-login
-      final hasToken = await AuthApi.isLoggedIn();
-      if (hasToken) {
-        final addr = await Services.wallet.getAddress();
-        appState.setWalletAddress(addr);
-        appState.completeOnboarding();
-        _initialRoute = AppRouter.home;
-      }
-    } catch (_) {
-      // Fall through to onboarding
-    }
-    setState(() => _ready = true);
+    } catch (_) {}
   }
 
   Future<void> _reloginWithDeviceId() async {
