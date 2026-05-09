@@ -307,6 +307,16 @@ class S {
   static String get weeklyReportSub => _p('cowallet 自我体检 · 公开', 'cowallet self-audits · public');
   static String get redoOnboarding => _p('重置引导流程', 'Redo onboarding');
   static String get redoOnboardingSub => _p('从头看一遍', 'See it from the start');
+  static String get off => _p('关', 'off');
+  static String get whileTyping => _p('打字时浮现', 'While typing');
+  static String get emergencyFreezeConfirmTitle => _p('确认紧急冻结', 'Confirm Emergency Freeze');
+  static String get emergencyFreezeConfirmBody => _p(
+    '确定要冻结吗？这会暂停所有交易和助手执行。',
+    'Are you sure? This will pause all transactions.',
+  );
+  static String get emergencyFreezeActivated => _p('紧急冻结已激活', 'Emergency freeze activated');
+  static String get emergencyFreezeDeactivated => _p('紧急冻结已解除', 'Emergency freeze deactivated');
+  static String get frozenBanner => _p('⚠ 所有交易和助手已冻结', '⚠ All transactions and agents frozen');
   static String get signoff1 => _p('cowallet · 2026', 'cowallet · 2026');
   static String get signoff2 => _p('会听懂人话的钱包', 'A wallet that listens');
 
@@ -403,6 +413,45 @@ class S {
   static String get contactsNote => _p('备注', 'Note');
   static String get contactsNoteHint => _p('可选备注', 'Optional note');
   static String get contactsSave => _p('保存', 'Save');
+
+  // Notifications
+  static String get notifTxConfirmedTitle => _p('转账已确认', 'Transfer Confirmed');
+  static String notifTxConfirmedBody(String amount, String token, String hash) =>
+      _p('$amount $token 已成功发送 ($hash)', '$amount $token sent successfully ($hash)');
+  static String get notifTxFailedTitle => _p('转账失败', 'Transfer Failed');
+  static String notifTxFailedBody(String hash, String reason) =>
+      _p('交易 $hash 失败: $reason', 'Transaction $hash failed: $reason');
+  static String get notifSecurityAlertTitle => _p('安全警告', 'Security Alert');
+  static String get notifChannelTransactions => _p('交易通知', 'Transactions');
+  static String get notifChannelSecurity => _p('安全警报', 'Security Alerts');
+
+  // Yield / DeFi
+  static String get yieldLabel => _p('DeFi 赚钱', 'DeFi Earn');
+  static String get yieldH1 => _p('让闲钱去干活。', 'Put idle money to work.');
+  static String get yieldSub => _p('链上理财协议,年化 3%–40%。风险分级一目了然。', 'On-chain yield protocols, 3%–40% APY. Risk levels at a glance.');
+  static String get yieldOpportunities => _p('收益机会', 'Opportunities');
+  static String get yieldAll => _p('全部', 'All');
+  static String get yieldLending => _p('借贷', 'Lending');
+  static String get yieldStaking => _p('质押', 'Staking');
+  static String get yieldVault => _p('金库', 'Vault');
+  static String get yieldFarm => _p('挖矿', 'Farm');
+  static String get yieldDeposit => _p('存入', 'Deposit');
+  static String get yieldDepositNow => _p('立即存入', 'Deposit now');
+  static String get yieldStrategy => _p('策略说明', 'Strategy');
+  static String get yieldApyBreakdown => _p('APY 构成', 'APY breakdown');
+  static String get yieldBaseApy => _p('基础利率', 'Base APY');
+  static String get yieldRewardApy => _p('奖励', 'Reward APY');
+  static String get yieldIncentiveApy => _p('激励', 'Incentive APY');
+  static String get yieldRisks => _p('风险因素', 'Risk factors');
+  static String get yieldRiskLow => _p('低风险', 'Low');
+  static String get yieldRiskMed => _p('中风险', 'Medium');
+  static String get yieldRiskHigh => _p('高风险', 'High');
+  static String get yieldRiskVeryHigh => _p('极高风险', 'Very high');
+  static String get yieldEmpty => _p('暂无收益机会', 'No opportunities available');
+  static String get yieldLoadFailed => _p('加载失败', 'Failed to load');
+  static String get yieldBestApy => _p('最高', 'Best');
+  static String get yieldAvgApy => _p('平均', 'Avg');
+  static String get tabDefi => _p('赚钱', 'Earn');
 
   // Presignatures
   static String get presignatures => _p('预签名', 'Presignatures');

@@ -101,4 +101,30 @@ class TxApi {
       },
     );
   }
+
+  /// 估算Gas费用
+  /// [from] 发送地址
+  /// [to] 接收地址
+  /// [value] 金额（wei字符串或ETH小数）
+  /// [token] 代币符号（可选，默认ETH）
+  /// [chainId] 链ID（可选，默认84532）
+  /// 返回: { gas_units, gas_price_gwei, estimated_cost_eth, estimated_cost_usd }
+  static Future<Result<Map<String, dynamic>>> estimateGas({
+    required String from,
+    required String to,
+    String? value,
+    String? token,
+    int? chainId,
+  }) async {
+    return await DioClient.post(
+      "/tx/estimate-gas",
+      data: {
+        "from": from,
+        "to": to,
+        if (value != null) "value": value,
+        if (token != null) "token": token,
+        if (chainId != null) "chain_id": chainId,
+      },
+    );
+  }
 }

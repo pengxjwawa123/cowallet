@@ -6,6 +6,7 @@ import '../../widgets/section_label.dart';
 import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
+import '../../services/settings_service.dart';
 import '../../utils/secure_storage.dart';
 
 class SettingsView extends StatefulWidget {
@@ -24,11 +25,24 @@ class _SettingsViewState extends State<SettingsView> {
   String? _lastRotationDate;
   bool _isRotating = false;
 
+  SettingsService get _settings => Services.settings;
+
   @override
   void initState() {
     super.initState();
     _loadBiometricStatus();
     _loadKeySecuritySettings();
+    _settings.addListener(_onSettingsChanged);
+  }
+
+  @override
+  void dispose() {
+    _settings.removeListener(_onSettingsChanged);
+    super.dispose();
+  }
+
+  void _onSettingsChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadBiometricStatus() async {
@@ -69,6 +83,63 @@ class _SettingsViewState extends State<SettingsView> {
     if (mounted) {
       setState(() => _biometricEnabled = value);
     }
+  }
+
+  Future<void> _toggleEmergencyFreeze() async {
+    if (_settings.emergencyFreezeActive) {
+      // Deactivating — no confirmation needed
+      await _settings.setEmergencyFreezeActive(false);
+      if (mounted) {
+        showTopToast(context, S.emergencyFreezeDeactivated, backgroundColor: CwColors.success);
+      }
+    } else {
+      // Activating — show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(S.emergencyFreezeConfirmTitle),
+          content: Text(S.emergencyFreezeConfirmBody),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(S.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: TextButton.styleFrom(foregroundColor: CwColors.danger),
+              child: Text(S.confirm),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) {
+        await _settings.setEmergencyFreezeActive(true);
+        if (mounted) {
+          showTopToast(context, S.emergencyFreezeActivated, backgroundColor: CwColors.danger);
+        }
+      }
+    }
+  }
+
+  void _toggleLanguage() {
+    final newLang = S.lang == Lang.zh ? Lang.en : Lang.zh;
+    _settings.setLanguage(newLang == Lang.zh ? 'zh' : 'en');
+    CowalletApp.of(context).setLang(newLang);
+  }
+
+  void _toggleIntentMode() {
+    final newMode = _settings.intentMode == IntentMode.onEnter
+        ? IntentMode.whileTyping
+        : IntentMode.onEnter;
+    _settings.setIntentMode(newMode);
+  }
+
+  void _toggleVoiceInput() {
+    _settings.setVoiceInputEnabled(!_settings.voiceInputEnabled);
+  }
+
+  void _toggleWeeklyReport() {
+    _settings.setWeeklyReportEnabled(!_settings.weeklyReportEnabled);
   }
 
   Future<void> _loadKeySecuritySettings() async {
@@ -148,6 +219,33 @@ class _SettingsViewState extends State<SettingsView> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
+          // Emergency freeze banner
+          if (_settings.emergencyFreezeActive)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: CwColors.danger.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: CwColors.danger.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.ac_unit, size: 18, color: CwColors.danger),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      S.frozenBanner,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: CwColors.danger,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           // Header
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 4),
@@ -335,6 +433,13 @@ class _SettingsViewState extends State<SettingsView> {
           iconBg: CwColors.dangerSoft,
           title: S.emergencyFreeze,
           subtitle: S.emergencyFreezeSub,
+          trailing: Switch(
+            value: _settings.emergencyFreezeActive,
+            onChanged: (_) => _toggleEmergencyFreeze(),
+            activeTrackColor: CwColors.danger.withValues(alpha: 0.5),
+            activeThumbColor: CwColors.danger,
+          ),
+          onTap: _toggleEmergencyFreeze,
         ),
         const Divider(indent: 52, height: 1),
         _settingRow(
@@ -360,6 +465,9 @@ class _SettingsViewState extends State<SettingsView> {
 
   // ── Conversation settings list ──
   Widget _conversationList(BuildContext context) {
+    final intentLabel = _settings.intentMode == IntentMode.onEnter
+        ? S.onEnter
+        : S.whileTyping;
     return _settingsContainer(
       children: [
         _settingRow(
@@ -370,9 +478,10 @@ class _SettingsViewState extends State<SettingsView> {
           title: S.intentMode,
           subtitle: S.intentModeSub,
           trailing: Text(
-            S.onEnter,
+            intentLabel,
             style: const TextStyle(fontSize: 11, color: CwColors.ink3),
           ),
+          onTap: _toggleIntentMode,
         ),
         const Divider(indent: 52, height: 1),
         _settingRow(
@@ -383,9 +492,12 @@ class _SettingsViewState extends State<SettingsView> {
           title: S.voiceInput,
           subtitle: S.voiceInputSub,
           trailing: CwChip(
-            label: S.on,
-            variant: ChipVariant.green,
+            label: _settings.voiceInputEnabled ? S.on : S.off,
+            variant: _settings.voiceInputEnabled
+                ? ChipVariant.green
+                : ChipVariant.neutral,
           ),
+          onTap: _toggleVoiceInput,
         ),
         const Divider(indent: 52, height: 1),
         _settingRow(
@@ -417,6 +529,7 @@ class _SettingsViewState extends State<SettingsView> {
             langLabel,
             style: const TextStyle(fontSize: 11, color: CwColors.ink3),
           ),
+          onTap: _toggleLanguage,
         ),
         const Divider(indent: 52, height: 1),
         _settingRow(
@@ -426,6 +539,12 @@ class _SettingsViewState extends State<SettingsView> {
           iconBg: CwColors.bgSubtle,
           title: S.weeklyReport,
           subtitle: S.weeklyReportSub,
+          trailing: Switch(
+            value: _settings.weeklyReportEnabled,
+            onChanged: (_) => _toggleWeeklyReport(),
+            activeThumbColor: CwColors.accent,
+          ),
+          onTap: _toggleWeeklyReport,
         ),
         const Divider(indent: 52, height: 1),
         _settingRow(
@@ -562,7 +681,7 @@ class _SettingsViewState extends State<SettingsView> {
               ),
             ),
             // Trailing
-            if (trailing != null) trailing,
+            ?trailing,
           ],
         ),
       ),

@@ -591,13 +591,24 @@ async fn chat_stream(
                 continue;
             }
 
-            // Write tools: mark as needing confirmation, don't execute yet
+            // Write tools: execute to get estimates (gas, quotes), but still require confirmation
             if kind == ToolKind::Write {
                 needs_confirmation.push(tc.id.clone());
-                let prepared = serde_json::json!({
-                    "status": "pending_confirmation",
-                    "parameters": tc.parameters,
-                });
+                // Execute the tool to get gas estimates and preparation data
+                let exec_result = tool_ctx.execute_tool(&tc.name, &tc.id, tc.parameters.clone()).await;
+                let prepared = if exec_result.success {
+                    // Merge pending_confirmation status with the execution result
+                    let mut result_map = exec_result.result.clone();
+                    if let Some(obj) = result_map.as_object_mut() {
+                        obj.insert("status".into(), serde_json::json!("pending_confirmation"));
+                    }
+                    result_map
+                } else {
+                    serde_json::json!({
+                        "status": "pending_confirmation",
+                        "parameters": tc.parameters,
+                    })
+                };
                 yield sse_event("tool_result", &serde_json::json!({
                     "tool_id": tc.id,
                     "tool_name": tc.name,

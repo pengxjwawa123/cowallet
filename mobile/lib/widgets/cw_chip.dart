@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/colors.dart';
 
-enum ChipVariant { green, amber, accent, info, danger }
+enum ChipVariant { green, amber, accent, info, danger, neutral }
 
 class CwChip extends StatelessWidget {
   final String label;
@@ -25,6 +25,7 @@ class CwChip extends StatelessWidget {
       ChipVariant.accent => (CwColors.accentSoft, CwColors.accent),
       ChipVariant.info => (CwColors.infoSoft, CwColors.info),
       ChipVariant.danger => (CwColors.dangerSoft, CwColors.danger),
+      ChipVariant.neutral => (CwColors.bgSubtle, CwColors.ink3),
     };
 
     return Container(

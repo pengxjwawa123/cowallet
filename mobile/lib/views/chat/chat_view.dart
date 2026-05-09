@@ -268,6 +268,26 @@ class ChatViewState extends State<ChatView> {
                   });
                 }
               }
+              // Update send widget with gas estimate from backend
+              if (toolName == 'send_transaction') {
+                final gasEstimate = result['gas_estimate'] as Map<String, dynamic>?;
+                if (gasEstimate != null) {
+                  final costEth = gasEstimate['cost_eth'] as String? ?? '';
+                  final costUsd = gasEstimate['cost_usd'] as String?;
+                  String gasDisplay = '~$costEth ETH';
+                  if (costUsd != null) {
+                    gasDisplay += ' ($costUsd)';
+                  }
+                  setState(() {
+                    for (int i = _messages.length - 1; i >= 0; i--) {
+                      if (_messages[i].widgetType == WidgetType.sendConfirm && !_messages[i].confirmed) {
+                        _messages[i].widgetData['gas_estimate'] = gasDisplay;
+                        break;
+                      }
+                    }
+                  });
+                }
+              }
               break;
             }
 

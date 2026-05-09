@@ -72,10 +72,11 @@ class ChatSendConfirmWidget extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _infoRow('收款地址', shortTo),
-          if (gasEstimate != null) ...[
-            const SizedBox(height: 4),
-            _infoRow('预估 Gas', gasEstimate!),
-          ],
+          const SizedBox(height: 4),
+          if (gasEstimate != null)
+            _infoRow('预估 Gas', gasEstimate!)
+          else if (!resolved)
+            _gasLoadingRow(),
           if (!resolved) ...[
             const SizedBox(height: 16),
             Row(
@@ -138,6 +139,38 @@ class ChatSendConfirmWidget extends StatelessWidget {
               color: CwColors.ink2,
             ),
             textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _gasLoadingRow() {
+    return Row(
+      children: [
+        const Text('预估 Gas', style: TextStyle(fontSize: 12, color: CwColors.ink4)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: CwColors.ink4,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                '估算中...',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: CwColors.ink4,
+                ),
+              ),
+            ],
           ),
         ),
       ],

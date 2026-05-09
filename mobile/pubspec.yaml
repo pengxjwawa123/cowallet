@@ -73,6 +73,9 @@ dependencies:
   # Markdown rendering for AI chat
   flutter_markdown: ^0.7.4+3
 
+  # Local push notifications
+  flutter_local_notifications: ^17.2.4
+
 flutter_launcher_icons:
   android: true
   ios: true

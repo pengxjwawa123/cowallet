@@ -119,6 +119,12 @@ impl PriceCache {
         result
     }
 
+    /// Get a single token's USD price. Returns None if unavailable.
+    pub async fn get_usd_price(&self, client: &reqwest::Client, symbol: &str) -> Option<f64> {
+        let prices = self.get_prices(client, &[symbol.to_string()]).await;
+        prices.get(&symbol.to_uppercase()).map(|p| p.usd)
+    }
+
     async fn fallback(&self, symbols: &[String]) -> HashMap<String, CachedPrice> {
         let cache = self.inner.read().await;
         let mut result = HashMap::new();

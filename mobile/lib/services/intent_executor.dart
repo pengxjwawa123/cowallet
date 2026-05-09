@@ -4,6 +4,7 @@ import 'action_result.dart';
 import 'balance_service.dart';
 import 'chain_service.dart';
 import 'gas_service.dart';
+import 'locator.dart';
 import 'tx_history_service.dart';
 import 'tx_service.dart';
 import 'wallet_service.dart';
@@ -34,6 +35,15 @@ class IntentExecutor {
     String kind,
     Map<String, String> params,
   ) async {
+    // Block execution when emergency freeze is active
+    if (Services.settings.emergencyFreezeActive) {
+      return ActionResult.fail(
+        S.lang == Lang.zh
+            ? '紧急冻结已激活，所有操作已暂停。请先在设置中解除冻结。'
+            : 'Emergency freeze is active. All operations paused. Deactivate in Settings first.',
+      );
+    }
+
     switch (kind) {
       case 'balance':
         return _executeBalance();
@@ -155,6 +165,9 @@ class IntentExecutor {
         timestamp: DateTime.now(),
       ));
 
+      // Show local notification for confirmed transaction
+      Services.notifications.showTxConfirmed(txHash, amountStr, token);
+
       final shortHash =
           '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
       return ActionResult.ok(
@@ -165,7 +178,10 @@ class IntentExecutor {
       );
     } catch (e) {
       final msg = e.toString();
+      final txHash = params['to'] ?? 'unknown';
+
       if (msg.contains('Biometric')) {
+        Services.notifications.showTxFailed(txHash, S.bioAuthFailed);
         return ActionResult.fail(
           S.lang == Lang.zh
               ? '生物认证失败,转账已取消'
@@ -173,10 +189,12 @@ class IntentExecutor {
         );
       }
       if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {
+        Services.notifications.showTxFailed(txHash, S.lang == Lang.zh ? '余额不足' : 'Insufficient balance');
         return ActionResult.fail(
           S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
         );
       }
+      Services.notifications.showTxFailed(txHash, msg);
       return ActionResult.fail(
         S.lang == Lang.zh ? '转账失败: $msg' : 'Transfer failed: $msg',
       );

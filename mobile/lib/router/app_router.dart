@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../views/home/home_view.dart';
 import '../views/wallet/wallet_view.dart';
 import '../views/chat/chat_view.dart';
-import '../views/agents/agents_view.dart';
+import '../views/yield/defi_hub_view.dart';
 import '../views/settings/settings_view.dart';
 import '../views/keys/keys_view.dart';
 import '../views/send/send_view.dart';
@@ -72,7 +72,7 @@ class _AppShellState extends State<AppShell> {
     const HomeView(),
     const WalletView(),
     ChatView(key: AppShell.chatKey),
-    const AgentsView(),
+    const DefiHubView(),
     const SettingsView(),
   ];
 
@@ -99,7 +99,7 @@ class _AppShellState extends State<AppShell> {
               _tabItem(1, Icons.account_balance_wallet_outlined,
                   Icons.account_balance_wallet, S.tabWallet),
               _askPill(),
-              _tabItem(3, Icons.person_outline, Icons.person, S.tabAgents),
+              _tabItem(3, Icons.trending_up_outlined, Icons.trending_up, S.tabDefi),
               _tabItem(4, Icons.settings_outlined, Icons.settings, S.tabSettings),
             ],
           ),

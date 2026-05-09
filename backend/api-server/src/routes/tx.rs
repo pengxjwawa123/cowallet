@@ -17,6 +17,7 @@ pub fn router() -> Router<AppState> {
         .route("/submit", post(submit))
         .route("/summary", get(spending_summary))
         .route("/simulate", post(simulate))
+        .route("/estimate-gas", post(estimate_gas))
         .route("/userop", post(submit_userop))
         .route("/userop/submit", post(submit_signed_userop))
         // Merge history routes from tx_history module
@@ -323,6 +324,137 @@ async fn simulate(
         success: true,
         return_data,
         gas_used: None,
+    }))
+}
+
+// ─── Gas Estimation Endpoint ────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct EstimateGasRequest {
+    from: String,
+    to: String,
+    value: Option<String>,
+    token: Option<String>,
+    chain_id: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct EstimateGasResponse {
+    gas_units: String,
+    gas_price_gwei: String,
+    estimated_cost_eth: String,
+    estimated_cost_usd: Option<String>,
+}
+
+/// POST /estimate-gas
+///
+/// Estimates gas cost for a transfer by calling eth_estimateGas and eth_gasPrice
+/// on the configured RPC endpoint.
+async fn estimate_gas(
+    State(state): State<AppState>,
+    Json(body): Json<EstimateGasRequest>,
+) -> Result<Json<EstimateGasResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let rpc_url = &state.rpc_url;
+
+    // Build the transaction object for eth_estimateGas
+    let mut tx_obj = serde_json::json!({
+        "from": body.from,
+        "to": body.to,
+    });
+
+    // For native ETH transfer, set value; for ERC-20 tokens, we'd need contract call data
+    if let Some(ref value) = body.value {
+        // Value should be in wei (hex-encoded)
+        let value_hex = if value.starts_with("0x") {
+            value.clone()
+        } else {
+            // Parse as decimal wei and convert to hex
+            match value.parse::<u128>() {
+                Ok(v) => format!("0x{:x}", v),
+                Err(_) => {
+                    // Try parsing as a float ETH amount and convert to wei
+                    match value.parse::<f64>() {
+                        Ok(eth_amount) => {
+                            let wei = (eth_amount * 1e18) as u128;
+                            format!("0x{:x}", wei)
+                        }
+                        Err(_) => "0x0".to_string(),
+                    }
+                }
+            }
+        };
+        tx_obj["value"] = serde_json::Value::String(value_hex);
+    }
+
+    // Call eth_estimateGas
+    let estimate_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_estimateGas",
+        "params": [tx_obj, "latest"],
+        "id": 1
+    });
+
+    // Call eth_gasPrice
+    let gas_price_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_gasPrice",
+        "params": [],
+        "id": 2
+    });
+
+    // Execute both RPC calls concurrently
+    let (estimate_resp, price_resp) = tokio::join!(
+        state.http.post(rpc_url).json(&estimate_body).send(),
+        state.http.post(rpc_url).json(&gas_price_body).send(),
+    );
+
+    let estimate_resp = estimate_resp
+        .map_err(|e| rpc_error(&format!("eth_estimateGas request failed: {e}")))?;
+    let price_resp = price_resp
+        .map_err(|e| rpc_error(&format!("eth_gasPrice request failed: {e}")))?;
+
+    let estimate_json: serde_json::Value = estimate_resp
+        .json()
+        .await
+        .map_err(|e| rpc_error(&format!("Invalid estimateGas response: {e}")))?;
+    let price_json: serde_json::Value = price_resp
+        .json()
+        .await
+        .map_err(|e| rpc_error(&format!("Invalid gasPrice response: {e}")))?;
+
+    // Parse gas units from hex
+    let gas_hex = estimate_json
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or("0x5208"); // default 21000 for simple transfer
+    let gas_units = u64::from_str_radix(gas_hex.strip_prefix("0x").unwrap_or(gas_hex), 16)
+        .unwrap_or(21000);
+
+    // Parse gas price from hex (in wei)
+    let price_hex = price_json
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or("0x0");
+    let gas_price_wei = u128::from_str_radix(price_hex.strip_prefix("0x").unwrap_or(price_hex), 16)
+        .unwrap_or(0);
+
+    // Calculate estimated cost
+    let gas_price_gwei = gas_price_wei as f64 / 1e9;
+    let estimated_cost_wei = gas_units as u128 * gas_price_wei;
+    let estimated_cost_eth = estimated_cost_wei as f64 / 1e18;
+
+    // Try to get ETH price for USD estimate
+    let estimated_cost_usd = state
+        .price_cache
+        .get_usd_price(&state.http, "ETH")
+        .await
+        .map(|eth_price| format!("${:.2}", estimated_cost_eth * eth_price));
+
+    Ok(Json(EstimateGasResponse {
+        gas_units: gas_units.to_string(),
+        gas_price_gwei: format!("{:.2}", gas_price_gwei),
+        estimated_cost_eth: format!("{:.6}", estimated_cost_eth),
+        estimated_cost_usd,
     }))
 }
 

@@ -9,6 +9,14 @@ use serde_json::Value;
 use sqlx::Row;
 use std::str::FromStr;
 
+/// Gas estimation result
+struct GasEstimate {
+    gas_units: u64,
+    gas_price_gwei: Option<String>,
+    cost_eth: Option<String>,
+    cost_usd: Option<String>,
+}
+
 /// Execution context for tool calls
 #[derive(Clone)]
 pub struct ToolContext {
@@ -249,35 +257,73 @@ impl ToolContext {
             };
         }
 
-        // Parse value
-        let value_u256 = match alloy_primitives::U256::from_str_radix(&value, 10) {
-            Ok(v) => v,
-            Err(_) => {
-                return ToolExecutionResult {
-                    tool_id: tool_id.to_string(),
-                    tool_name: "send_transaction".into(),
-                    success: false,
-                    result: Value::Null,
-                    error: Some("Invalid value format. Expected numeric string in wei".into()),
-                };
+        // Parse value - support both wei (integer) and ETH (decimal) formats
+        let value_wei_str: String;
+        let value_u256 = if value.contains('.') {
+            // Decimal ETH amount - convert to wei
+            let eth_amount: f64 = match value.parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    return ToolExecutionResult {
+                        tool_id: tool_id.to_string(),
+                        tool_name: "send_transaction".into(),
+                        success: false,
+                        result: Value::Null,
+                        error: Some("Invalid value format".into()),
+                    };
+                }
+            };
+            let wei = (eth_amount * 1e18) as u128;
+            value_wei_str = wei.to_string();
+            alloy_primitives::U256::from(wei)
+        } else {
+            match alloy_primitives::U256::from_str_radix(&value, 10) {
+                Ok(v) => {
+                    value_wei_str = value.clone();
+                    v
+                }
+                Err(_) => {
+                    return ToolExecutionResult {
+                        tool_id: tool_id.to_string(),
+                        tool_name: "send_transaction".into(),
+                        success: false,
+                        result: Value::Null,
+                        error: Some("Invalid value format. Expected numeric string in wei".into()),
+                    };
+                }
             }
         };
 
-        // Estimate gas - for demo, use reasonable defaults
-        let gas_limit = 21000;
         let value_formatted = format_units(value_u256, 18);
 
-        let result = serde_json::json!({
+        // Estimate gas via RPC
+        let gas_estimate = self.estimate_gas_for_transfer(
+            &format!("0x{:x}", from_address),
+            &to_address,
+            &value_wei_str,
+        ).await;
+
+        let mut result = serde_json::json!({
             "status": "prepared",
             "from": format!("0x{:x}", from_address),
             "to": to_address,
-            "value": value,
+            "value": value_wei_str,
             "value_formatted": format!("{} ETH", value_formatted),
             "chain_id": chain_id,
-            "estimated_gas": gas_limit,
+            "estimated_gas": gas_estimate.gas_units,
             "warning": "This transaction requires your biometric confirmation before being signed and broadcast. Please verify all parameters carefully.",
             "next_step": "Review the details above and confirm with your biometric authentication to proceed"
         });
+
+        // Add gas cost estimate if available
+        if let Some(ref cost_eth) = gas_estimate.cost_eth {
+            result["gas_estimate"] = serde_json::json!({
+                "gas_units": gas_estimate.gas_units,
+                "gas_price_gwei": gas_estimate.gas_price_gwei,
+                "cost_eth": cost_eth,
+                "cost_usd": gas_estimate.cost_usd,
+            });
+        }
 
         ToolExecutionResult {
             tool_id: tool_id.to_string(),
@@ -285,6 +331,103 @@ impl ToolContext {
             success: true,
             result,
             error: None,
+        }
+    }
+
+    /// Estimate gas for a simple ETH transfer via RPC
+    async fn estimate_gas_for_transfer(
+        &self,
+        from: &str,
+        to: &str,
+        value_wei: &str,
+    ) -> GasEstimate {
+        let rpc_url = &self.app_state.rpc_url;
+        let http = &self.app_state.http;
+
+        // Convert value to hex for RPC
+        let value_hex = match value_wei.parse::<u128>() {
+            Ok(v) => format!("0x{:x}", v),
+            Err(_) => "0x0".to_string(),
+        };
+
+        let tx_obj = serde_json::json!({
+            "from": from,
+            "to": to,
+            "value": value_hex,
+        });
+
+        let estimate_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_estimateGas",
+            "params": [tx_obj, "latest"],
+            "id": 1
+        });
+
+        let gas_price_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_gasPrice",
+            "params": [],
+            "id": 2
+        });
+
+        // Execute both RPC calls concurrently
+        let (estimate_resp, price_resp) = tokio::join!(
+            http.post(rpc_url).json(&estimate_body).send(),
+            http.post(rpc_url).json(&gas_price_body).send(),
+        );
+
+        // Parse gas units
+        let gas_units = if let Ok(resp) = estimate_resp {
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => {
+                    let hex = json.get("result").and_then(|r| r.as_str()).unwrap_or("0x5208");
+                    u64::from_str_radix(hex.strip_prefix("0x").unwrap_or(hex), 16).unwrap_or(21000)
+                }
+                Err(_) => 21000,
+            }
+        } else {
+            21000 // Default for simple ETH transfer
+        };
+
+        // Parse gas price
+        let gas_price_wei = if let Ok(resp) = price_resp {
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => {
+                    let hex = json.get("result").and_then(|r| r.as_str()).unwrap_or("0x0");
+                    u128::from_str_radix(hex.strip_prefix("0x").unwrap_or(hex), 16).unwrap_or(0)
+                }
+                Err(_) => 0,
+            }
+        } else {
+            0
+        };
+
+        if gas_price_wei == 0 {
+            return GasEstimate {
+                gas_units,
+                gas_price_gwei: None,
+                cost_eth: None,
+                cost_usd: None,
+            };
+        }
+
+        let gas_price_gwei = gas_price_wei as f64 / 1e9;
+        let cost_wei = gas_units as u128 * gas_price_wei;
+        let cost_eth = cost_wei as f64 / 1e18;
+
+        // Try to get ETH price for USD conversion
+        let cost_usd = self
+            .app_state
+            .price_cache
+            .get_usd_price(&self.app_state.http, "ETH")
+            .await
+            .map(|eth_price| format!("${:.2}", cost_eth * eth_price));
+
+        GasEstimate {
+            gas_units,
+            gas_price_gwei: Some(format!("{:.2}", gas_price_gwei)),
+            cost_eth: Some(format!("{:.6}", cost_eth)),
+            cost_usd,
         }
     }
 
