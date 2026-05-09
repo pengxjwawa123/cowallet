@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../main.dart';
+import '../../widgets/top_toast.dart';
 
 class ReceiveView extends StatelessWidget {
   const ReceiveView({super.key});
@@ -101,9 +102,7 @@ class ReceiveView extends StatelessWidget {
                     onPressed: hasAddress
                         ? () {
                             Clipboard.setData(ClipboardData(text: address));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(S.addressCopied)),
-                            );
+                            showTopToast(context, S.addressCopied);
                           }
                         : null,
                     icon: const Icon(Icons.copy, size: 18),

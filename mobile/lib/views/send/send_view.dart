@@ -4,6 +4,7 @@ import '../../l10n/strings.dart';
 import '../../models/tx_record.dart';
 import '../../services/locator.dart';
 import '../../services/gas_service.dart';
+import '../../widgets/top_toast.dart';
 
 class SendView extends StatefulWidget {
   const SendView({super.key});
@@ -102,15 +103,11 @@ class _SendViewState extends State<SendView> {
     final amountNum = double.tryParse(amountText);
 
     if (to.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.enterAddress)),
-      );
+      showTopToast(context, S.enterAddress);
       return;
     }
     if (amountNum == null || amountNum <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(S.enterValidAmount)),
-      );
+      showTopToast(context, S.enterValidAmount);
       return;
     }
 
@@ -197,9 +194,7 @@ class _SendViewState extends State<SendView> {
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${S.txFailed}: $e')),
-      );
+      showTopToast(context, '${S.txFailed}: $e', backgroundColor: CwColors.danger);
     } finally {
       if (mounted) setState(() => _sending = false);
     }

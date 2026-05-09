@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../../theme/colors.dart';
+import '../../../widgets/top_toast.dart';
 
 class ChatReceiveWidget extends StatelessWidget {
   final String address;
@@ -64,9 +65,7 @@ class ChatReceiveWidget extends StatelessWidget {
             child: OutlinedButton.icon(
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: address));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('地址已复制')),
-                );
+                showTopToast(context, '地址已复制');
               },
               icon: const Icon(Icons.copy, size: 16),
               label: const Text('复制地址'),

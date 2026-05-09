@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/colors.dart';
+import '../../../widgets/top_toast.dart';
 
 class ChatTxResultWidget extends StatelessWidget {
   final String txHash;
@@ -72,9 +73,7 @@ class ChatTxResultWidget extends StatelessWidget {
           GestureDetector(
             onTap: () {
               Clipboard.setData(ClipboardData(text: txHash));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('交易哈希已复制')),
-              );
+              showTopToast(context, '交易哈希已复制');
             },
             child: Row(
               children: [

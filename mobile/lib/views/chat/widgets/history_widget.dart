@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/colors.dart';
+import '../../../widgets/top_toast.dart';
 
 class ChatHistoryWidget extends StatelessWidget {
   final List<dynamic> transactions;
@@ -95,9 +96,7 @@ class ChatHistoryWidget extends StatelessWidget {
       onTap: txHash != null
           ? () {
               Clipboard.setData(ClipboardData(text: txHash));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('交易哈希已复制')),
-              );
+              showTopToast(context, '交易哈希已复制');
             }
           : null,
       child: Container(

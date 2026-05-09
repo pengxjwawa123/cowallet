@@ -3,6 +3,7 @@ import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/cw_chip.dart';
+import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../api/mpc_api.dart';
@@ -68,12 +69,7 @@ class _WalletViewState extends State<WalletView> {
       if (mounted) {
         setState(() => _generatingPresigns = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${S.generationSuccess} ($generated/${_selectedCount})'),
-            backgroundColor: CwColors.success,
-          ),
-        );
+        showTopToast(context, '${S.generationSuccess} ($generated/${_selectedCount})', backgroundColor: CwColors.success);
 
         await _loadPresignStatus();
       }
@@ -81,12 +77,7 @@ class _WalletViewState extends State<WalletView> {
       if (mounted) {
         setState(() => _generatingPresigns = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${S.generationFailed}: $e'),
-            backgroundColor: CwColors.danger,
-          ),
-        );
+        showTopToast(context, '${S.generationFailed}: $e', backgroundColor: CwColors.danger);
       }
     }
   }

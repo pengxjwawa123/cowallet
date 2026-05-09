@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/colors.dart';
 import '../widgets/cw_orb.dart';
+import '../widgets/top_toast.dart';
 import '../l10n/strings.dart';
 import '../main.dart';
 import '../services/locator.dart';
@@ -362,13 +363,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       final msg = result.method == BackupMethod.cloud
           ? S.backupSaved
           : S.backupFileSaved(result.filePath ?? '');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: CwColors.success,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      showTopToast(context, msg, backgroundColor: CwColors.success);
 
       Future.delayed(const Duration(milliseconds: 600), () {
         if (mounted) _goTo(_Stage.bio);
@@ -385,13 +380,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         BackupException(error: BackupError.shardNotAvailable) => S.backupErrShardNotAvailable,
         _ => S.backupErrCloudStoreFailed,
       };
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errMsg),
-          backgroundColor: CwColors.danger,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      showTopToast(context, errMsg, backgroundColor: CwColors.danger);
     }
   }
 
@@ -421,13 +410,7 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     } catch (e) {
       print('[OnboardingImport] Failed to import backup: $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to import recovery phrase: $e'),
-          backgroundColor: CwColors.danger,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      showTopToast(context, 'Failed to import recovery phrase: $e', backgroundColor: CwColors.danger);
     }
   }
 

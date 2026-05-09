@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/colors.dart';
+import '../../widgets/top_toast.dart';
 import '../../api/tx_api.dart';
 import '../../services/locator.dart';
 
@@ -672,12 +673,7 @@ class _DetailRow extends StatelessWidget {
                     constraints: const BoxConstraints(),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: value));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Copied to clipboard'),
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
+                      showTopToast(context, 'Copied to clipboard');
                     },
                   ),
               ],

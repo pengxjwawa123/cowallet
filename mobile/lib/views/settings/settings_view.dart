@@ -3,6 +3,7 @@ import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/cw_chip.dart';
 import '../../widgets/section_label.dart';
+import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../utils/secure_storage.dart';
@@ -107,23 +108,13 @@ class _SettingsViewState extends State<SettingsView> {
           _isRotating = false;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(S.rotationSuccess),
-            backgroundColor: CwColors.success,
-          ),
-        );
+        showTopToast(context, S.rotationSuccess, backgroundColor: CwColors.success);
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isRotating = false);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${S.rotationFailed}: $e'),
-            backgroundColor: CwColors.danger,
-          ),
-        );
+        showTopToast(context, '${S.rotationFailed}: $e', backgroundColor: CwColors.danger);
       }
     }
   }

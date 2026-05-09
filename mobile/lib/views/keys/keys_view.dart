@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/cw_chip.dart';
+import '../../widgets/top_toast.dart';
 import '../../services/locator.dart';
 import '../../services/key_health_service.dart';
 import '../../services/backup_shard_service.dart';
@@ -103,19 +104,9 @@ class _KeysViewState extends State<KeysView> {
           lastChecked: DateTime.now(),
         );
         setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(S.backupTestSuccess),
-            backgroundColor: CwColors.success,
-          ),
-        );
+        showTopToast(context, S.backupTestSuccess, backgroundColor: CwColors.success);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(S.backupTestFailed),
-            backgroundColor: CwColors.danger,
-          ),
-        );
+        showTopToast(context, S.backupTestFailed, backgroundColor: CwColors.danger);
       }
     }
   }

@@ -76,6 +76,9 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-production-min-32-chars}
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-sk-ant-placeholder}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:8080,http://localhost:5173,http://43.163.101.37:3000
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}
       RUST_LOG: info,api_server=debug
