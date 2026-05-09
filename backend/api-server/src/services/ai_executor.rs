@@ -80,6 +80,7 @@ impl ToolContext {
 
         let result = match tool_name {
             "get_balance" => self.execute_get_balance(tool_id, params).await,
+            "get_token_info" => self.execute_get_token_info(tool_id, params).await,
             "send_transaction" => self.execute_send_transaction(tool_id, params).await,
             "get_transaction_history" => self.execute_get_transaction_history(tool_id, params).await,
             "get_wallet_address" => self.execute_get_wallet_address(tool_id).await,
@@ -210,6 +211,104 @@ impl ToolContext {
         ToolExecutionResult {
             tool_id: tool_id.to_string(),
             tool_name: "get_balance".into(),
+            success: true,
+            result,
+            error: None,
+        }
+    }
+
+    // --- get_token_info ---
+    async fn execute_get_token_info(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
+        let token_symbol: String = parse_param(&params, "token").unwrap_or_else(|| "ETH".into());
+        let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
+        let symbol_upper = token_symbol.to_uppercase();
+
+        let owner = parse_wallet_address(self.wallet_address.as_deref());
+        let address_str = owner.map(|a| format!("0x{:x}", a));
+
+        // Get balance from Covalent if available
+        let mut balance_info = serde_json::json!(null);
+        if let (Some(api_key), Some(ref addr)) = (&self.app_state.covalent_api_key, &address_str) {
+            if let Ok(balances) = crate::services::covalent::get_balances(
+                &self.app_state.http, api_key, addr, chain_id,
+            ).await {
+                if let Some(token) = balances.iter().find(|b| b.symbol.to_uppercase() == symbol_upper) {
+                    balance_info = serde_json::json!({
+                        "balance": token.balance_formatted,
+                        "balance_raw": token.balance,
+                        "usd_value": token.usd,
+                        "contract_address": token.contract_address,
+                        "decimals": token.decimals,
+                        "is_native": token.native_token,
+                    });
+                }
+            }
+        }
+
+        // Get price from PriceCache
+        let price_usd = self.app_state.price_cache
+            .get_usd_price(&self.app_state.http, &symbol_upper)
+            .await;
+
+        // Build known token metadata
+        let token_meta = match symbol_upper.as_str() {
+            "ETH" => serde_json::json!({
+                "name": "Ethereum",
+                "symbol": "ETH",
+                "decimals": 18,
+                "type": "native",
+                "description": "Native gas token of Ethereum and L2 networks",
+            }),
+            "USDC" => serde_json::json!({
+                "name": "USD Coin",
+                "symbol": "USDC",
+                "decimals": 6,
+                "type": "ERC-20",
+                "issuer": "Circle",
+                "contract_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "description": "Fully reserved stablecoin pegged to USD, issued by Circle",
+            }),
+            "USDT" => serde_json::json!({
+                "name": "Tether USD",
+                "symbol": "USDT",
+                "decimals": 6,
+                "type": "ERC-20",
+                "issuer": "Tether",
+                "description": "Most widely used stablecoin pegged to USD",
+            }),
+            "WETH" => serde_json::json!({
+                "name": "Wrapped Ether",
+                "symbol": "WETH",
+                "decimals": 18,
+                "type": "ERC-20",
+                "description": "ERC-20 wrapped version of ETH for DeFi compatibility",
+            }),
+            "DAI" => serde_json::json!({
+                "name": "Dai",
+                "symbol": "DAI",
+                "decimals": 18,
+                "type": "ERC-20",
+                "issuer": "MakerDAO",
+                "description": "Decentralized stablecoin backed by crypto collateral",
+            }),
+            _ => serde_json::json!({
+                "name": symbol_upper.clone(),
+                "symbol": symbol_upper.clone(),
+                "type": "ERC-20",
+            }),
+        };
+
+        let result = serde_json::json!({
+            "token": token_meta,
+            "balance": balance_info,
+            "price_usd": price_usd,
+            "chain_id": chain_id,
+            "wallet_address": address_str,
+        });
+
+        ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            tool_name: "get_token_info".into(),
             success: true,
             result,
             error: None,

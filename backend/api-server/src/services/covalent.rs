@@ -25,14 +25,16 @@ pub fn chain_slug(chain_id: u64) -> Option<&'static str> {
     match chain_id {
         1 => Some("eth-mainnet"),
         8453 => Some("base-mainnet"),
-        84532 => Some("base-sepolia"),
         42161 => Some("arbitrum-mainnet"),
         10 => Some("optimism-mainnet"),
         56 => Some("bsc-mainnet"),
         137 => Some("matic-mainnet"),
-        11155111 => Some("eth-sepolia"),
         _ => None,
     }
+}
+
+pub fn is_testnet(chain_id: u64) -> bool {
+    matches!(chain_id, 84532 | 11155111 | 421614 | 11155420 | 80002)
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,25 +144,32 @@ pub async fn get_transactions(
     address: &str,
     chain_id: u64,
 ) -> Result<Vec<TransactionItem>, String> {
+    if is_testnet(chain_id) {
+        return Err(format!("Testnet chain {} not supported by Covalent — use RPC fallback", chain_id));
+    }
+
     let slug = chain_slug(chain_id)
         .ok_or_else(|| format!("Unsupported chain_id: {}", chain_id))?;
 
     let url = format!(
-        "{}/{}/address/{}/transactions_v3/?key={}&page-size=20",
-        BASE_URL, slug, address, api_key
+        "{}/{}/address/{}/transactions_v3/?page-size=20",
+        BASE_URL, slug, address
     );
 
     let http = http.clone();
     let url_clone = url.clone();
+    let api_key = api_key.to_string();
 
     let body = retry_with_backoff(
         RetryConfig::conservative(),
         || {
             let http = http.clone();
             let url = url_clone.clone();
+            let key = api_key.clone();
             async move {
                 let resp = http
                     .get(&url)
+                    .header("Authorization", format!("Bearer {}", key))
                     .send()
                     .await
                     .map_err(|e| format!("Covalent tx request failed: {}", e))?;
@@ -223,25 +232,32 @@ pub async fn get_balances(
     address: &str,
     chain_id: u64,
 ) -> Result<Vec<TokenBalance>, String> {
+    if is_testnet(chain_id) {
+        return Err(format!("Testnet chain {} not supported by Covalent — use RPC fallback", chain_id));
+    }
+
     let slug = chain_slug(chain_id)
         .ok_or_else(|| format!("Unsupported chain_id: {}", chain_id))?;
 
     let url = format!(
-        "{}/{}/address/{}/balances_v2/?key={}",
-        BASE_URL, slug, address, api_key
+        "{}/{}/address/{}/balances_v2/",
+        BASE_URL, slug, address
     );
 
     let http = http.clone();
     let url_clone = url.clone();
+    let api_key = api_key.to_string();
 
     let body = retry_with_backoff(
         RetryConfig::conservative(),
         || {
             let http = http.clone();
             let url = url_clone.clone();
+            let key = api_key.clone();
             async move {
                 let resp = http
                     .get(&url)
+                    .header("Authorization", format!("Bearer {}", key))
                     .send()
                     .await
                     .map_err(|e| format!("Covalent request failed: {}", e))?;

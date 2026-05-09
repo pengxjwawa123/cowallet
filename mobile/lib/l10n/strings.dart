@@ -153,6 +153,10 @@ class S {
   static String get tryTalking => _p('试试跟它说话', 'Try talking to it');
   static String get actionSend => _p('我想转账', 'I want to send money');
   static String get actionReceive => _p('我的收款地址是什么', "What's my receiving address");
+  static String get actionSwap => _p('我想兑换代币', 'I want to swap tokens');
+  static String actionTokenInfo(String symbol, String balance, String usd) =>
+      _p('查看我的 $symbol 代币信息，当前余额 $balance，价值 \$$usd',
+          'Show my $symbol token info, balance $balance, worth \$$usd');
   static String get actionScan => _p('帮我扫码付款', 'Help me scan and pay');
   static String get actionPeople => _p('我的联系人', 'My contacts');
   static String get recentActivity => _p('最近发生的事', 'Recent activity');

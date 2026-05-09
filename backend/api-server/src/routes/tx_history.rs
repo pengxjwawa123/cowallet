@@ -254,6 +254,16 @@ async fn get_covalent_history(
         return Err(validation_error("invalid address format"));
     }
 
+    let chain_id = q.chain_id.unwrap_or(84532);
+
+    // Testnets not supported by Covalent — return empty
+    if covalent::is_testnet(chain_id) {
+        return Ok(Json(CovalentHistoryResponse {
+            transactions: vec![],
+            total: 0,
+        }));
+    }
+
     let api_key = state
         .covalent_api_key
         .as_ref()
@@ -263,8 +273,6 @@ async fn get_covalent_history(
                 error: "Covalent API not configured".into(),
             }),
         ))?;
-
-    let chain_id = q.chain_id.unwrap_or(84532);
 
     let items = covalent::get_transactions(&state.http, api_key, &q.address, chain_id)
         .await

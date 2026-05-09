@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-09T07:02:02.206Z",
+  "updatedAt": "2026-05-09T07:27:19.674Z",
   "missions": [
     {
       "id": "session:ad831a6c-7e40-4652-98e7-ae3bb5ded7e0:none",
@@ -411,15 +411,15 @@
       "name": "none",
       "objective": "Session mission",
       "createdAt": "2026-05-09T02:32:44.874Z",
-      "updatedAt": "2026-05-09T07:02:02.206Z",
+      "updatedAt": "2026-05-09T07:27:19.674Z",
       "status": "done",
-      "workerCount": 9,
+      "workerCount": 10,
       "taskCounts": {
-        "total": 9,
+        "total": 10,
         "pending": 0,
         "blocked": 0,
         "inProgress": 0,
-        "completed": 9,
+        "completed": 10,
         "failed": 0
       },
       "agents": [
@@ -512,25 +512,19 @@
           "latestUpdate": "completed",
           "completedSummary": null,
           "updatedAt": "2026-05-09T07:02:02.206Z"
+        },
+        {
+          "name": "document-specialist:a28507d",
+          "role": "document-specialist",
+          "ownership": "a28507d31849c2e07",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-05-09T07:27:19.674Z"
         }
       ],
       "timeline": [
-        {
-          "id": "session-stop:a35932e015e9f09ba:2026-05-09T06:26:14.939Z",
-          "at": "2026-05-09T06:26:14.939Z",
-          "kind": "completion",
-          "agent": "Explore:a35932e",
-          "detail": "completed",
-          "sourceKey": "session-stop:a35932e015e9f09ba"
-        },
-        {
-          "id": "session-stop:a38a9aa3860cac832:2026-05-09T07:00:37.863Z",
-          "at": "2026-05-09T07:00:37.863Z",
-          "kind": "completion",
-          "agent": "general-purpose:ac4c293",
-          "detail": "completed",
-          "sourceKey": "session-stop:a38a9aa3860cac832"
-        },
         {
           "id": "session-start:aa4f439b13cd9838e:2026-05-09T07:01:19.460Z",
           "at": "2026-05-09T07:01:19.460Z",
@@ -546,6 +540,22 @@
           "agent": "Explore:aa4f439",
           "detail": "completed",
           "sourceKey": "session-stop:aa4f439b13cd9838e"
+        },
+        {
+          "id": "session-start:a28507d31849c2e07:2026-05-09T07:25:01.153Z",
+          "at": "2026-05-09T07:25:01.153Z",
+          "kind": "update",
+          "agent": "document-specialist:a28507d",
+          "detail": "started document-specialist:a28507d",
+          "sourceKey": "session-start:a28507d31849c2e07"
+        },
+        {
+          "id": "session-stop:a28507d31849c2e07:2026-05-09T07:27:19.674Z",
+          "at": "2026-05-09T07:27:19.674Z",
+          "kind": "completion",
+          "agent": "document-specialist:a28507d",
+          "detail": "completed",
+          "sourceKey": "session-stop:a28507d31849c2e07"
         }
       ]
     }

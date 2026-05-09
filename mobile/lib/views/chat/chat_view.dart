@@ -15,6 +15,7 @@ import 'widgets/swap_confirm_widget.dart';
 import 'widgets/tx_result_widget.dart';
 import 'widgets/history_widget.dart';
 import 'widgets/audit_widget.dart';
+import 'widgets/token_info_widget.dart';
 import 'widgets/clarify_widget.dart';
 import 'widgets/session_list_sheet.dart';
 
@@ -24,7 +25,7 @@ import 'widgets/session_list_sheet.dart';
 
 enum ChatMsgKind { user, ai, thinking, widget }
 
-enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, history, audit, clarify }
+enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, history, audit, clarify, tokenInfo }
 
 class ChatMsg {
   final ChatMsgKind kind;
@@ -340,6 +341,17 @@ class ChatViewState extends State<ChatView> {
                   _messages.add(ChatMsg(
                     kind: ChatMsgKind.widget,
                     widgetType: WidgetType.audit,
+                    widgetData: result,
+                  ));
+                });
+                _scrollToBottom();
+                break;
+              case 'token_info':
+              case 'get_token_info':
+                setState(() {
+                  _messages.add(ChatMsg(
+                    kind: ChatMsgKind.widget,
+                    widgetType: WidgetType.tokenInfo,
                     widgetData: result,
                   ));
                 });
@@ -796,6 +808,8 @@ class ChatViewState extends State<ChatView> {
         );
       case WidgetType.audit:
         return ChatAuditWidget(data: msg.widgetData);
+      case WidgetType.tokenInfo:
+        return ChatTokenInfoWidget(data: msg.widgetData);
       case WidgetType.clarify:
         final options = (msg.widgetData['options'] as List<dynamic>? ?? [])
             .map((o) => ClarifyOption.fromJson(o is Map<String, dynamic> ? o : {}))

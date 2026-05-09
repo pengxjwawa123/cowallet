@@ -8,6 +8,7 @@ import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../api/mpc_api.dart';
+import '../../router/app_router.dart';
 
 class WalletView extends StatefulWidget {
   const WalletView({super.key});
@@ -310,57 +311,65 @@ class _WalletViewState extends State<WalletView> {
       iconBg = CwColors.success.withValues(alpha: 0.12);
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                emoji,
-                style: const TextStyle(fontSize: 16),
+    return GestureDetector(
+      onTap: () => AppShell.goToChatAndSend(
+        context,
+        S.actionTokenInfo(symbol, balance, usd),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Center(
+                child: Text(
+                  emoji,
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  symbol,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    symbol,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                Text(
-                  balance,
-                  style: const TextStyle(
-                    fontFamily: 'JetBrainsMono',
-                    fontSize: 11,
-                    color: CwColors.ink3,
+                  Text(
+                    balance,
+                    style: const TextStyle(
+                      fontFamily: 'JetBrainsMono',
+                      fontSize: 11,
+                      color: CwColors.ink3,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Text(
-            '\$$usd',
-            style: const TextStyle(
-              fontFamily: 'JetBrainsMono',
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: CwColors.ink1,
+            Text(
+              '\$$usd',
+              style: const TextStyle(
+                fontFamily: 'JetBrainsMono',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: CwColors.ink1,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right, size: 16, color: CwColors.ink4),
+          ],
+        ),
       ),
     );
   }
@@ -370,19 +379,22 @@ class _WalletViewState extends State<WalletView> {
   Widget _actionButtons(BuildContext context) {
     return Row(
       children: [
-        _actionBtn(context, Icons.arrow_upward_rounded, S.send),
+        _actionBtn(context, Icons.arrow_upward_rounded, S.send,
+            () => AppShell.goToChatAndSend(context, S.actionSend)),
         const SizedBox(width: 10),
-        _actionBtn(context, Icons.arrow_downward_rounded, S.receive),
+        _actionBtn(context, Icons.arrow_downward_rounded, S.receive,
+            () => AppShell.goToChatAndSend(context, S.actionReceive)),
         const SizedBox(width: 10),
-        _actionBtn(context, Icons.swap_horiz_rounded, S.swap),
+        _actionBtn(context, Icons.swap_horiz_rounded, S.swap,
+            () => AppShell.goToChatAndSend(context, S.actionSwap)),
       ],
     );
   }
 
-  Widget _actionBtn(BuildContext context, IconData icon, String label) {
+  Widget _actionBtn(BuildContext context, IconData icon, String label, VoidCallback onTap) {
     return Expanded(
       child: OutlinedButton.icon(
-        onPressed: () {},
+        onPressed: onTap,
         icon: Icon(icon, size: 18),
         label: Text(label, style: const TextStyle(fontSize: 13)),
         style: OutlinedButton.styleFrom(

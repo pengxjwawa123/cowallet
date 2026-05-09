@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/section_label.dart';
+import '../../state/app_state.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../router/app_router.dart';
@@ -19,13 +20,13 @@ class _HomeViewState extends State<HomeView> {
   bool _txLoading = true;
   String? _txError;
   int _lastChainId = 0;
-
-  AppState get _appState => CowalletApp.of(context);
+  late final AppState _appState;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _appState = CowalletApp.of(context);
       _lastChainId = _appState.selectedChain.chainId;
       _appState.addListener(_onAppStateChange);
       _fetchTransactions();
@@ -47,8 +48,7 @@ class _HomeViewState extends State<HomeView> {
   }
 
   Future<void> _fetchTransactions() async {
-    final appState = CowalletApp.of(context);
-    final address = appState.walletAddress;
+    final address = _appState.walletAddress;
     if (address.isEmpty) {
       setState(() {
         _txLoading = false;
@@ -65,7 +65,7 @@ class _HomeViewState extends State<HomeView> {
     try {
       final result = await TxHistoryApi.getHistory(
         address: address,
-        chainId: appState.selectedChain.chainId,
+        chainId: _appState.selectedChain.chainId,
       );
       if (result.isSuccess && result.data != null) {
         final data = result.data!;

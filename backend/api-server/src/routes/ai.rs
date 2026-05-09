@@ -109,6 +109,25 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
             definition: ToolDefinition {
                 tool_type: "function".into(),
                 function: FunctionDefinition {
+                    name: "get_token_info".into(),
+                    description: "Get detailed token information including contract address, price, balance, and basic market data for a specific token in the user's wallet.".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "token": { "type": "string", "description": "Token symbol (ETH, USDC, USDT, etc.)" },
+                            "chain_id": { "type": "integer", "description": "Chain ID. Default: 8453." }
+                        },
+                        "required": ["token"]
+                    }),
+                },
+            },
+            kind: ToolKind::Read,
+            widget_type: Some("token_info"),
+        },
+        ToolMeta {
+            definition: ToolDefinition {
+                tool_type: "function".into(),
+                function: FunctionDefinition {
                     name: "security_audit".into(),
                     description: "Run a security audit on the wallet. Checks approval exposure, recent suspicious activity, and provides a security score.".into(),
                     parameters: serde_json::json!({
