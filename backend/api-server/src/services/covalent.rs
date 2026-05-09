@@ -180,6 +180,8 @@ pub async fn get_transactions(
         BASE_URL, slug, address
     );
 
+    tracing::info!("[Covalent] get_transactions chain={} slug={} url={}", chain_id, slug, url);
+
     let http = http.clone();
     let url_clone = url.clone();
     let api_key = api_key.to_string();
@@ -198,8 +200,12 @@ pub async fn get_transactions(
                     .await
                     .map_err(|e| format!("Covalent tx request failed: {}", e))?;
 
-                if !resp.status().is_success() {
-                    let status = resp.status();
+                let status = resp.status();
+                tracing::info!("[Covalent] get_transactions response status={}", status);
+
+                if !status.is_success() {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    tracing::error!("[Covalent] get_transactions error body: {}", body_text);
                     return Err(format!("Covalent API returned {}", status));
                 }
 
@@ -250,111 +256,46 @@ pub async fn get_transactions(
     Ok(transactions)
 }
 
-/// Get transaction history across all chains using the allchains endpoint
+/// Get transaction history across multiple chains by querying each chain in parallel
 pub async fn get_all_chain_transactions(
     http: &Client,
     api_key: &str,
     address: &str,
-    _chain_ids: &[u64],
+    chain_ids: &[u64],
 ) -> Result<Vec<TransactionItem>, String> {
+    use futures::future::join_all;
 
-    let url = format!(
-        "{}/allchains/address/{}/transactions/",
-        BASE_URL, address
-    );
-
-    let http = http.clone();
-    let url_clone = url.clone();
-    let api_key = api_key.to_string();
-
-    let body = retry_with_backoff(
-        RetryConfig::conservative(),
-        || {
+    let futures: Vec<_> = chain_ids
+        .iter()
+        .filter(|&&id| chain_slug(id).is_some())
+        .map(|&chain_id| {
             let http = http.clone();
-            let url = url_clone.clone();
-            let key = api_key.clone();
+            let api_key = api_key.to_string();
+            let address = address.to_string();
             async move {
-                let resp = http
-                    .get(&url)
-                    .header("Authorization", format!("Bearer {}", key))
-                    .send()
-                    .await
-                    .map_err(|e| format!("Covalent allchains tx request failed: {}", e))?;
-
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    return Err(format!("Covalent API returned {}", status));
-                }
-
-                let body: CovalentAllChainsTxResponse = resp
-                    .json()
-                    .await
-                    .map_err(|e| format!("Covalent allchains tx parse error: {}", e))?;
-
-                Ok(body)
-            }
-        },
-        is_retryable_covalent_error,
-        "covalent_get_all_chain_transactions",
-    )
-    .await?;
-
-    let items = body.data.ok_or("Covalent returned no allchains tx data")?.items;
-
-    let transactions: Vec<TransactionItem> = items
-        .into_iter()
-        .map(|item| {
-            let chain_id = item.chain_id
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
-            TransactionItem {
-                tx_hash: item.tx_hash.unwrap_or_default(),
-                from: item.from_address.unwrap_or_default(),
-                to: item.to_address.unwrap_or_default(),
-                value: item.value.unwrap_or_else(|| "0".to_string()),
-                timestamp: item.block_signed_at.unwrap_or_default(),
-                status: if item.successful.unwrap_or(false) {
-                    "confirmed".to_string()
-                } else {
-                    "failed".to_string()
-                },
-                gas_used: item.gas_spent.unwrap_or(0),
-                token_symbol: "ETH".to_string(),
-                value_quote: item.value_quote.unwrap_or(0.0),
-                chain_id,
-                chain_name: item.chain_name.unwrap_or_else(|| chain_display_name(chain_id).to_string()),
+                get_transactions(&http, &api_key, &address, chain_id).await
             }
         })
         .collect();
 
-    Ok(transactions)
-}
+    let results = join_all(futures).await;
 
-// ─── AllChains Transaction Response ─────────────────────────────────────────
+    let mut all_transactions = Vec::new();
+    for (idx, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(mut txs) => {
+                all_transactions.append(&mut txs);
+            }
+            Err(e) => {
+                let chain_id = chain_ids[idx];
+                warn!("Failed to get transactions for chain {}: {}", chain_id, e);
+            }
+        }
+    }
 
-#[derive(Debug, Deserialize)]
-struct CovalentAllChainsTxResponse {
-    data: Option<CovalentAllChainsTxData>,
-}
+    all_transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
-#[derive(Debug, Deserialize)]
-struct CovalentAllChainsTxData {
-    #[serde(default)]
-    items: Vec<CovalentAllChainsTxItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CovalentAllChainsTxItem {
-    tx_hash: Option<String>,
-    from_address: Option<String>,
-    to_address: Option<String>,
-    value: Option<String>,
-    block_signed_at: Option<String>,
-    successful: Option<bool>,
-    gas_spent: Option<u64>,
-    value_quote: Option<f64>,
-    chain_id: Option<String>,
-    chain_name: Option<String>,
+    Ok(all_transactions)
 }
 
 // ─── Balances ────────────────────────────────────────────────────────────────
@@ -374,6 +315,8 @@ pub async fn get_balances(
         BASE_URL, slug, address
     );
 
+    tracing::info!("[Covalent] get_balances chain={} slug={} url={}", chain_id, slug, url);
+
     let http = http.clone();
     let url_clone = url.clone();
     let api_key = api_key.to_string();
@@ -392,8 +335,12 @@ pub async fn get_balances(
                     .await
                     .map_err(|e| format!("Covalent request failed: {}", e))?;
 
-                if !resp.status().is_success() {
-                    let status = resp.status();
+                let status = resp.status();
+                tracing::info!("[Covalent] get_balances response status={}", status);
+
+                if !status.is_success() {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    tracing::error!("[Covalent] get_balances error body: {}", body_text);
                     return Err(format!("Covalent API returned {}", status));
                 }
 
@@ -418,6 +365,7 @@ pub async fn get_balances(
     .await?;
 
     let data = body.data.ok_or("Covalent returned no data")?;
+    tracing::info!("[Covalent] get_balances chain={} got {} items", chain_id, data.items.len());
 
     let mut tokens: Vec<TokenBalance> = Vec::new();
 
@@ -456,36 +404,7 @@ pub async fn get_balances(
     Ok(tokens)
 }
 
-// ─── Cross-Chain Balances ────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct CovalentAllChainsResponse {
-    data: Option<CovalentAllChainsData>,
-    #[serde(default)]
-    error: bool,
-    error_message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CovalentAllChainsData {
-    #[serde(default)]
-    items: Vec<CovalentAllChainsItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CovalentAllChainsItem {
-    chain_id: u64,
-    chain_name: String,
-    contract_decimals: Option<u32>,
-    contract_ticker_symbol: Option<String>,
-    contract_address: Option<String>,
-    balance: Option<String>,
-    quote: Option<f64>,
-    #[serde(rename = "is_native_token")]
-    native_token: Option<bool>,
-    #[serde(rename = "type")]
-    item_type: Option<String>,
-}
+// ─── Cross-Chain Balances (per-chain parallel) ──────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ChainBalance {
@@ -502,143 +421,60 @@ pub struct AllChainsBalance {
     pub total_usd: String,
 }
 
-/// Get balances across multiple chains using GoldRush allchains endpoint
+/// Get balances across multiple chains by querying each chain in parallel
 pub async fn get_all_chain_balances(
     http: &Client,
     api_key: &str,
     address: &str,
     chain_ids: &[u64],
 ) -> Result<AllChainsBalance, String> {
-    // Build comma-separated chain slugs
-    let chain_slugs: Vec<String> = chain_ids
+    use futures::future::join_all;
+
+    tracing::info!("[Covalent] get_all_chain_balances address={} chains={:?}", address, chain_ids);
+
+    let futures: Vec<_> = chain_ids
         .iter()
-        .filter_map(|&id| chain_slug(id).map(String::from))
+        .filter(|&&id| chain_slug(id).is_some())
+        .map(|&chain_id| {
+            let http = http.clone();
+            let api_key = api_key.to_string();
+            let address = address.to_string();
+            async move {
+                let result = get_balances(&http, &api_key, &address, chain_id).await;
+                (chain_id, result)
+            }
+        })
         .collect();
 
-    if chain_slugs.is_empty() {
-        return Err("No valid chains provided".to_string());
-    }
+    let results = join_all(futures).await;
 
-    let chains_param = chain_slugs.join(",");
-    let url = format!(
-        "{}/allchains/address/{}/balances/?chains={}",
-        BASE_URL, address, chains_param
-    );
-
-    let http = http.clone();
-    let url_clone = url.clone();
-    let api_key = api_key.to_string();
-
-    let body = retry_with_backoff(
-        RetryConfig::conservative(),
-        || {
-            let http = http.clone();
-            let url = url_clone.clone();
-            let key = api_key.clone();
-            async move {
-                let resp = http
-                    .get(&url)
-                    .header("Authorization", format!("Bearer {}", key))
-                    .send()
-                    .await
-                    .map_err(|e| format!("Covalent allchains request failed: {}", e))?;
-
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    return Err(format!("Covalent API returned {}", status));
-                }
-
-                let body: CovalentAllChainsResponse = resp
-                    .json()
-                    .await
-                    .map_err(|e| format!("Covalent allchains parse error: {}", e))?;
-
-                if body.error {
-                    return Err(format!(
-                        "Covalent error: {}",
-                        body.error_message.unwrap_or_default()
-                    ));
-                }
-
-                Ok(body)
-            }
-        },
-        is_retryable_covalent_error,
-        "covalent_get_all_chain_balances",
-    )
-    .await?;
-
-    let items = body.data.ok_or("Covalent returned no allchains data")?.items;
-
-    // Group items by chain_id
-    use std::collections::HashMap;
-    let mut chains_map: HashMap<u64, Vec<CovalentAllChainsItem>> = HashMap::new();
-
-    for item in items {
-        chains_map.entry(item.chain_id).or_default().push(item);
-    }
-
-    // Build chain balances
     let mut chains: Vec<ChainBalance> = Vec::new();
     let mut grand_total_usd = 0.0;
 
-    for (chain_id, items) in chains_map {
-        let chain_name = items.first()
-            .map(|i| i.chain_name.clone())
-            .unwrap_or_else(|| format!("Chain {}", chain_id));
+    for (chain_id, result) in results {
+        match result {
+            Ok(tokens) => {
+                let chain_total: f64 = tokens
+                    .iter()
+                    .filter_map(|t| t.usd.parse::<f64>().ok())
+                    .sum();
+                grand_total_usd += chain_total;
+                tracing::info!("[Covalent] chain {} OK: {} tokens, ${:.2}", chain_id, tokens.len(), chain_total);
 
-        let mut tokens: Vec<TokenBalance> = Vec::new();
-        let mut chain_total_usd = 0.0;
-
-        for item in items {
-            // Skip NFTs
-            if item.item_type.as_deref() == Some("nft") {
-                continue;
+                chains.push(ChainBalance {
+                    chain_id,
+                    chain_name: chain_display_name(chain_id).to_string(),
+                    tokens,
+                    total_usd: format!("{:.2}", chain_total),
+                });
             }
-
-            let raw_balance = item.balance.as_deref().unwrap_or("0");
-            let is_native = item.native_token.unwrap_or(false);
-            let is_zero = raw_balance == "0" || raw_balance.is_empty();
-
-            // Skip zero-balance non-native tokens
-            if is_zero && !is_native {
-                continue;
+            Err(e) => {
+                tracing::error!("[Covalent] chain {} FAILED: {}", chain_id, e);
+                warn!("Failed to get balances for chain {}: {}", chain_id, e);
             }
-
-            let decimals = item.contract_decimals.unwrap_or(18);
-            let symbol = item.contract_ticker_symbol
-                .unwrap_or_else(|| if is_native { "ETH".into() } else { "???".into() });
-            let formatted = format_units(raw_balance, decimals);
-            let quote = item.quote.unwrap_or(0.0);
-            let usd = format!("{:.2}", quote);
-
-            chain_total_usd += quote;
-
-            tokens.push(TokenBalance {
-                symbol,
-                balance: raw_balance.to_string(),
-                balance_formatted: formatted,
-                usd,
-                contract_address: item.contract_address,
-                decimals,
-                native_token: is_native,
-            });
         }
-
-        // Native token first
-        tokens.sort_by(|a, b| b.native_token.cmp(&a.native_token));
-
-        grand_total_usd += chain_total_usd;
-
-        chains.push(ChainBalance {
-            chain_id,
-            chain_name,
-            tokens,
-            total_usd: format!("{:.2}", chain_total_usd),
-        });
     }
 
-    // Sort chains by chain_id for consistency
     chains.sort_by_key(|c| c.chain_id);
 
     Ok(AllChainsBalance {
