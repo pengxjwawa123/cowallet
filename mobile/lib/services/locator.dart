@@ -39,7 +39,7 @@ class Services {
     mpcWallet = MpcWalletService();
     wallet = mpcWallet;
     chain = JsonRpcChainService();
-    balance = BalanceService(chain);
+    balance = BalanceService();
     gas = GasService(chain);
     tx = MpcTxService(
       wallet: wallet,
@@ -54,6 +54,7 @@ class Services {
       tx: tx,
       gas: gas,
       txHistory: txHistory,
+      chain: chain,
     );
   }
 }

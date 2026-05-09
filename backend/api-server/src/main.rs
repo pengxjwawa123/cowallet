@@ -115,6 +115,7 @@ async fn main() {
         .nest("/yield", routes::yield_::router())
         .nest("/shards", routes::shards::router())
         .nest("/wallets", routes::wallets::router())
+        .nest("/balance", routes::balance::router())
         .layer(Extension(encryption))
         .layer(axum_mw::from_fn(require_auth))
         .layer(axum_mw::from_fn(standard_rate_limit_middleware));

@@ -7,6 +7,7 @@ import '../views/settings/settings_view.dart';
 import '../views/keys/keys_view.dart';
 import '../views/send/send_view.dart';
 import '../views/receive/receive_view.dart';
+import '../views/scan/scan_view.dart';
 import '../onboarding/onboarding_flow.dart';
 import '../theme/colors.dart';
 import '../l10n/strings.dart';
@@ -17,6 +18,7 @@ class AppRouter {
   static const keys = '/keys';
   static const send = '/send';
   static const receive = '/receive';
+  static const scan = '/scan';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -28,6 +30,8 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const SendView());
       case receive:
         return MaterialPageRoute(builder: (_) => const ReceiveView());
+      case scan:
+        return MaterialPageRoute(builder: (_) => const ScanView());
       default:
         return MaterialPageRoute(builder: (_) => const AppShell());
     }
@@ -37,6 +41,18 @@ class AppRouter {
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
+  static final chatKey = GlobalKey<ChatViewState>();
+
+  static void goToChatAndSend(BuildContext context, String message) {
+    final shellState = context.findAncestorStateOfType<_AppShellState>();
+    if (shellState != null) {
+      shellState.switchToChat();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        chatKey.currentState?.sendMessage(message);
+      });
+    }
+  }
+
   @override
   State<AppShell> createState() => _AppShellState();
 }
@@ -44,12 +60,16 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _currentIndex = 0;
 
-  static const _views = <Widget>[
-    HomeView(),
-    WalletView(),
-    ChatView(),
-    AgentsView(),
-    SettingsView(),
+  void switchToChat() {
+    setState(() => _currentIndex = 2);
+  }
+
+  final _views = <Widget>[
+    const HomeView(),
+    const WalletView(),
+    ChatView(key: AppShell.chatKey),
+    const AgentsView(),
+    const SettingsView(),
   ];
 
   @override

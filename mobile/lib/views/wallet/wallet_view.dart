@@ -69,7 +69,7 @@ class _WalletViewState extends State<WalletView> {
       if (mounted) {
         setState(() => _generatingPresigns = false);
 
-        showTopToast(context, '${S.generationSuccess} ($generated/${_selectedCount})', backgroundColor: CwColors.success);
+        showTopToast(context, '${S.generationSuccess} ($generated/$_selectedCount)', backgroundColor: CwColors.success);
 
         await _loadPresignStatus();
       }
@@ -146,8 +146,8 @@ class _WalletViewState extends State<WalletView> {
             children: [
               const SizedBox(height: 16),
 
-              // ── Summary ──
-              _summary(tt),
+              // ── Balance overview ──
+              _balanceOverview(tt),
               const SizedBox(height: 20),
 
               // ── Action buttons ──
@@ -214,57 +214,144 @@ class _WalletViewState extends State<WalletView> {
     );
   }
 
-  // ── Summary ──────────────────────────────────────────────────────────────
+  // ── Balance overview ──────────────────────────────────────────────────────────────
 
-  Widget _summary(TextTheme tt) {
+  Widget _balanceOverview(TextTheme tt) {
     final bal = Services.balance;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          S.totalBalance,
-          style: const TextStyle(
-            fontFamily: 'JetBrainsMono',
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.5,
-            color: CwColors.ink3,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          bal.loading ? '...' : bal.formattedTotal,
-          style: const TextStyle(
-            fontFamily: 'JetBrainsMono',
-            fontSize: 32,
-            fontWeight: FontWeight.w700,
-            color: CwColors.ink1,
-            letterSpacing: -0.5,
-            height: 1.1,
-          ),
-        ),
-        const SizedBox(height: 4),
-        if (bal.error != null)
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: CwColors.bgCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: CwColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Text(
-            bal.error!,
+            S.totalBalance,
             style: const TextStyle(
-              fontFamily: 'Inter',
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: CwColors.danger,
-            ),
-          )
-        else
-          Text(
-            bal.loading ? '...' : 'Pull to refresh',
-            style: const TextStyle(
-              fontFamily: 'Inter',
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: CwColors.ink4,
+              fontFamily: 'JetBrainsMono',
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: CwColors.ink3,
             ),
           ),
-      ],
+          const SizedBox(height: 8),
+          Text(
+            bal.loading ? '...' : bal.formattedTotal,
+            style: const TextStyle(
+              fontFamily: 'JetBrainsMono',
+              fontSize: 34,
+              fontWeight: FontWeight.w700,
+              color: CwColors.ink1,
+              letterSpacing: -0.5,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (bal.error != null)
+            Text(
+              bal.error!,
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: CwColors.danger,
+              ),
+            )
+          else if (!bal.loading && bal.tokens.isNotEmpty) ...[
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            ...bal.tokens.map((token) => _fullTokenRow(context, token)),
+          ] else
+            Text(
+              bal.loading ? 'Loading...' : 'Pull to refresh',
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: CwColors.ink4,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fullTokenRow(BuildContext context, token) {
+    final symbol = token.symbol as String;
+    final balance = token.balance as String;
+    final usd = token.usd as String;
+
+    String emoji = '🪙';
+    Color iconBg = CwColors.ink4.withValues(alpha: 0.1);
+    if (symbol == 'ETH') {
+      emoji = 'Ⓔ';
+      iconBg = const Color(0xFF7B61FF).withValues(alpha: 0.12);
+    }
+    if (symbol == 'USDC') {
+      emoji = 'Ⓤ';
+      iconBg = CwColors.info.withValues(alpha: 0.12);
+    }
+    if (symbol == 'USDT') {
+      emoji = 'Ⓣ';
+      iconBg = CwColors.success.withValues(alpha: 0.12);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: iconBg,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Text(
+                emoji,
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  symbol,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  balance,
+                  style: const TextStyle(
+                    fontFamily: 'JetBrainsMono',
+                    fontSize: 11,
+                    color: CwColors.ink3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '\$$usd',
+            style: const TextStyle(
+              fontFamily: 'JetBrainsMono',
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: CwColors.ink1,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

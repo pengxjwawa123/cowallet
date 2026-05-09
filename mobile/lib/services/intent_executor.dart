@@ -2,6 +2,7 @@ import '../l10n/strings.dart';
 import '../models/tx_record.dart';
 import 'action_result.dart';
 import 'balance_service.dart';
+import 'chain_service.dart';
 import 'gas_service.dart';
 import 'tx_history_service.dart';
 import 'tx_service.dart';
@@ -13,6 +14,7 @@ class IntentExecutor {
   final TxService _tx;
   final GasService _gas;
   final TxHistoryService _txHistory;
+  final ChainService _chain;
 
   IntentExecutor({
     required WalletService wallet,
@@ -20,11 +22,13 @@ class IntentExecutor {
     required TxService tx,
     required GasService gas,
     required TxHistoryService txHistory,
+    required ChainService chain,
   })  : _wallet = wallet,
         _balance = balance,
         _tx = tx,
         _gas = gas,
-        _txHistory = txHistory;
+        _txHistory = txHistory,
+        _chain = chain;
 
   Future<ActionResult> execute(
     String kind,
@@ -101,7 +105,7 @@ class IntentExecutor {
     try {
       final to = params['to'] ?? '';
       final amountStr = params['amount'] ?? '0';
-      final token = params['token'] ?? 'ETH';
+      final token = (params['token'] ?? 'ETH').toUpperCase();
 
       if (to.isEmpty || !to.startsWith('0x') || to.length != 42) {
         return ActionResult.fail(
@@ -116,8 +120,33 @@ class IntentExecutor {
         );
       }
 
-      final txHash = await _tx.signAndSend(to: to, value: amount);
+      // Check balance before attempting transfer
+      final address = await _wallet.getAddress();
+      if (address.isEmpty) return ActionResult.fail(S.noWallet);
 
+      final String txHash;
+
+      if (token == 'ETH') {
+        // Native ETH transfer via MPC signing
+        txHash = await _tx.signAndSend(to: to, value: amount);
+      } else {
+        // ERC-20 token transfer (USDC, USDT, etc.)
+        final tokenContract = _chain.tokenContract(token);
+        if (tokenContract.isEmpty) {
+          return ActionResult.fail(
+            S.lang == Lang.zh
+                ? '不支持的代币: $token'
+                : 'Unsupported token: $token',
+          );
+        }
+        txHash = await _tx.sendErc20(
+          to: to,
+          tokenContract: tokenContract,
+          amount: amount,
+        );
+      }
+
+      // Record transaction locally
       await _txHistory.add(TxRecord(
         txHash: txHash,
         toAddress: to,
@@ -126,7 +155,8 @@ class IntentExecutor {
         timestamp: DateTime.now(),
       ));
 
-      final shortHash = '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
+      final shortHash =
+          '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
       return ActionResult.ok(
         S.lang == Lang.zh
             ? '转账成功! 交易: $shortHash'
@@ -137,7 +167,14 @@ class IntentExecutor {
       final msg = e.toString();
       if (msg.contains('Biometric')) {
         return ActionResult.fail(
-          S.lang == Lang.zh ? '生物认证失败,转账已取消' : 'Biometric auth failed, transfer cancelled',
+          S.lang == Lang.zh
+              ? '生物认证失败,转账已取消'
+              : 'Biometric auth failed, transfer cancelled',
+        );
+      }
+      if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {
+        return ActionResult.fail(
+          S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
         );
       }
       return ActionResult.fail(

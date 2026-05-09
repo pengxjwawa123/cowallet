@@ -151,6 +151,10 @@ class S {
   static String get scan => _p('扫码', 'Scan');
   static String get people => _p('联系人', 'People');
   static String get tryTalking => _p('试试跟它说话', 'Try talking to it');
+  static String get actionSend => _p('我想转账', 'I want to send money');
+  static String get actionReceive => _p('我的收款地址是什么', "What's my receiving address");
+  static String get actionScan => _p('帮我扫码付款', 'Help me scan and pay');
+  static String get actionPeople => _p('我的联系人', 'My contacts');
   static String get recentActivity => _p('最近发生的事', 'Recent activity');
   static String get seeAll => _p('全部', 'See all');
   static String get onlyCowallet => _p('只有 cowallet 有的', 'Only cowallet does this');
@@ -195,6 +199,12 @@ class S {
   static String get earning => _p('在赚利息的钱', 'Earning money');
 
   // Chat
+  static String get newChat => _p('新对话', 'New chat');
+  static String get chatHistory => _p('历史记录', 'History');
+  static String get noSessions => _p('暂无历史对话', 'No past conversations');
+  static String get deleteSession => _p('删除对话', 'Delete conversation');
+  static String get deleteSessionConfirm => _p('确定删除这条对话?', 'Delete this conversation?');
+  static String get confirm => _p('确定', 'Confirm');
   static String get chatEmpty => _p('说点什么?', "What's on your mind?");
   static String get chatEmptySub => _p('说话、打字、拍张照都行。', 'Talk, type, or send a photo.');
   static String get askCowallet => _p('问 cowallet', 'Ask cowallet');
@@ -358,6 +368,17 @@ class S {
   static String get rotating => _p('轮转中...', 'Rotating...');
   static String get rotationSuccess => _p('三份钥匙已刷新', 'All three keys refreshed');
   static String get rotationFailed => _p('钥匙轮转失败', 'Key rotation failed');
+
+  // Scan
+  static String get scanTitle => _p('扫一扫', 'Scan QR');
+  static String get scanPermissionDenied => _p('需要相机权限才能扫码', 'Camera permission is required to scan');
+  static String get scanOpenSettings => _p('去设置', 'Open Settings');
+  static String get scanFlashOn => _p('关闭闪光灯', 'Flash off');
+  static String get scanFlashOff => _p('打开闪光灯', 'Flash on');
+  static String get scanHint => _p('将二维码放入框内', 'Align QR code within frame');
+  static String scanTransferTo(String address) => _p('转账给 $address', 'Transfer to $address');
+  static String scanTransferAmount(String amount, String token, String address) =>
+      _p('转 $amount $token 给 $address', 'Send $amount $token to $address');
 
   // Presignatures
   static String get presignatures => _p('预签名', 'Presignatures');

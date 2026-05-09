@@ -4,6 +4,7 @@ import '../../l10n/strings.dart';
 import '../../widgets/section_label.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
+import '../../router/app_router.dart';
 
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
@@ -161,40 +162,96 @@ class HomeView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              S.yourTotal,
-              style: tt.bodySmall,
+            Row(
+              children: [
+                Text(
+                  '📊',
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  S.yourTotal,
+                  style: tt.bodySmall,
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Text(
               bal.loading ? '...' : bal.formattedTotal,
               style: tt.displayLarge?.copyWith(
-                fontSize: 34,
+                fontSize: 36,
+                fontWeight: FontWeight.w700,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
-            const SizedBox(height: 6),
-            if (bal.error != null)
+            if (bal.error != null) ...[
+              const SizedBox(height: 8),
               Text(
                 bal.error!,
-                style: tt.bodyMedium?.copyWith(color: CwColors.danger),
-              )
-            else
-              Row(
-                children: [
-                  Text(
-                    bal.loading ? '...' : bal.formattedTotal,
-                    style: tt.bodyMedium?.copyWith(color: CwColors.success),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    S.today,
-                    style: tt.bodySmall?.copyWith(color: CwColors.ink4),
-                  ),
-                ],
+                style: tt.bodySmall?.copyWith(color: CwColors.danger),
               ),
+            ] else if (!bal.loading && bal.tokens.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 12),
+              ...bal.topTokens.map((token) => _tokenRow(context, token)),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _tokenRow(BuildContext context, token) {
+    final symbol = token.symbol as String;
+    final balance = token.balance as String;
+    final usd = token.usd as String;
+
+    String emoji = '🪙';
+    if (symbol == 'ETH') emoji = 'Ⓔ';
+    if (symbol == 'USDC') emoji = 'Ⓤ';
+    if (symbol == 'USDT') emoji = 'Ⓣ';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            emoji,
+            style: const TextStyle(fontSize: 16),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            symbol,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                balance,
+                style: const TextStyle(
+                  fontFamily: 'JetBrainsMono',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: CwColors.ink1,
+                ),
+              ),
+              Text(
+                '\$$usd',
+                style: const TextStyle(
+                  fontFamily: 'JetBrainsMono',
+                  fontSize: 11,
+                  color: CwColors.ink3,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -208,18 +265,18 @@ class HomeView extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           _actionBtn(context, Icons.arrow_upward, S.send, CwColors.accent,
-              CwColors.accentSoft, () => Navigator.pushNamed(context, '/send')),
+              CwColors.accentSoft, () => AppShell.goToChatAndSend(context, S.actionSend)),
           _actionBtn(
               context,
               Icons.arrow_downward,
               S.receive,
               CwColors.success,
               CwColors.successSoft,
-              () => Navigator.pushNamed(context, '/receive')),
+              () => AppShell.goToChatAndSend(context, S.actionReceive)),
           _actionBtn(context, Icons.qr_code_scanner, S.scan, CwColors.info,
-              CwColors.infoSoft, () {}),
+              CwColors.infoSoft, () => Navigator.of(context).pushNamed(AppRouter.scan)),
           _actionBtn(context, Icons.people_outline, S.people, CwColors.gold,
-              CwColors.goldSoft, () {}),
+              CwColors.goldSoft, () => AppShell.goToChatAndSend(context, S.actionPeople)),
         ],
       ),
     );
@@ -266,20 +323,20 @@ class HomeView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionLabel(title: S.tryTalking),
-          _tryCard(context, '💬', S.try1h, S.try1s),
+          _tryCard(context, '💬', S.try1h, S.try1s, S.try1h),
           const SizedBox(height: 10),
-          _tryCard(context, '💰', S.try2h, S.try2s),
+          _tryCard(context, '💰', S.try2h, S.try2s, S.try2h),
           const SizedBox(height: 10),
-          _tryCard(context, '🎁', S.try3h, S.try3s),
+          _tryCard(context, '🎁', S.try3h, S.try3s, S.try3h),
         ],
       ),
     );
   }
 
   Widget _tryCard(
-      BuildContext context, String emoji, String title, String subtitle) {
+      BuildContext context, String emoji, String title, String subtitle, String chatMessage) {
     return GestureDetector(
-      onTap: () {},
+      onTap: () => AppShell.goToChatAndSend(context, chatMessage),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(

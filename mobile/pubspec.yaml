@@ -49,6 +49,7 @@ dependencies:
 
   # QR code
   qr_flutter: ^4.1.0
+  mobile_scanner: ^5.1.1
 
   # File / path utilities
   path_provider: ^2.1.5
@@ -65,6 +66,9 @@ dependencies:
 
   # UI
   google_fonts: ^6.2.1
+
+  # Markdown rendering for AI chat
+  flutter_markdown: ^0.7.4+3
 
 flutter_launcher_icons:
   android: true

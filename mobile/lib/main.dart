@@ -53,8 +53,9 @@ class _CowalletAppState extends State<CowalletApp> {
       _initialRoute = AppRouter.home;
       setState(() => _ready = true);
 
-      // Refresh session in background (non-blocking)
+      // Refresh session and balance in background (non-blocking)
       _refreshSessionInBackground();
+      _refreshBalanceInBackground(addr);
     } catch (_) {
       setState(() => _ready = true);
     }
@@ -80,6 +81,14 @@ class _CowalletAppState extends State<CowalletApp> {
     final deviceId = await SecureStorage.getDeviceId();
     if (deviceId != null && deviceId.isNotEmpty) {
       await AuthApi.login(deviceId: deviceId);
+    }
+  }
+
+  Future<void> _refreshBalanceInBackground(String address) async {
+    try {
+      await Services.balance.refresh(address);
+    } catch (_) {
+      // Silently fail - balance will show error state in UI
     }
   }
 

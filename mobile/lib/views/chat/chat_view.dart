@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/cw_orb.dart';
@@ -15,6 +16,7 @@ import 'widgets/tx_result_widget.dart';
 import 'widgets/history_widget.dart';
 import 'widgets/audit_widget.dart';
 import 'widgets/clarify_widget.dart';
+import 'widgets/session_list_sheet.dart';
 
 // ---------------------------------------------------------------------------
 // Message model
@@ -70,10 +72,10 @@ class ChatView extends StatefulWidget {
   const ChatView({super.key});
 
   @override
-  State<ChatView> createState() => _ChatViewState();
+  State<ChatView> createState() => ChatViewState();
 }
 
-class _ChatViewState extends State<ChatView> {
+class ChatViewState extends State<ChatView> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final _messages = <ChatMsg>[];
@@ -93,6 +95,10 @@ class _ChatViewState extends State<ChatView> {
 
   Lang get _lang => CowalletApp.of(context).lang;
   bool get _isEmpty => _messages.isEmpty;
+
+  void sendMessage(String message) {
+    _send(message);
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -443,14 +449,75 @@ class _ChatViewState extends State<ChatView> {
 
   // -- build -----------------------------------------------------------------
 
+  void _showSessionHistory() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SessionListSheet(
+        onSessionTap: (sessionId) => loadSession(sessionId),
+        onNewChat: () => startNewSession(),
+      ),
+    );
+  }
+
+  // -- build -----------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,
       child: Column(
         children: [
+          _buildHeader(),
           Expanded(child: _isEmpty ? _buildEmptyState() : _buildConversation()),
           _buildComposer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(
+        color: CwColors.bgPaper,
+        border: Border(bottom: BorderSide(color: CwColors.line)),
+      ),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: _showSessionHistory,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: CwColors.bgSubtle,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.history_rounded, size: 20, color: CwColors.ink2),
+            ),
+          ),
+          const Spacer(),
+          Text(
+            S.askCowallet,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: CwColors.ink1,
+            ),
+          ),
+          const Spacer(),
+          GestureDetector(
+            onTap: startNewSession,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: CwColors.bgSubtle,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.add_rounded, size: 20, color: CwColors.ink2),
+            ),
+          ),
         ],
       ),
     );
