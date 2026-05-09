@@ -3,6 +3,7 @@ import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/cw_chip.dart';
+import '../../widgets/chain_selector.dart';
 import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
@@ -139,12 +140,21 @@ class _WalletViewState extends State<WalletView> {
       child: ListenableBuilder(
         listenable: Services.balance,
         builder: (context, _) => RefreshIndicator(
-          onRefresh: () => Services.balance
-              .refresh(CowalletApp.of(context).walletAddress),
+          onRefresh: () => Services.balance.refresh(
+              CowalletApp.of(context).walletAddress,
+              chainId: CowalletApp.of(context).selectedChain.chainId,
+          ),
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             children: [
               const SizedBox(height: 16),
+
+              // ── Chain selector ──
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: ChainSelector(),
+              ),
+              const SizedBox(height: 12),
 
               // ── Balance overview ──
               _balanceOverview(tt),

@@ -6,6 +6,7 @@ import '../platform/secure_storage.dart';
 import '../platform/secure_storage_impl.dart';
 import '../api/mpc_api.dart';
 import 'backup_shard_service.dart';
+import 'contacts_service.dart';
 import 'wallet_service.dart';
 import 'chain_service.dart';
 import 'balance_service.dart';
@@ -27,6 +28,7 @@ class Services {
   static late final GasService gas;
   static late final TxHistoryService txHistory;
   static late final BackupShardService backup;
+  static late final ContactsService contacts;
 
   // API clients (stateless, no initialization needed)
   static final mpcApi = MpcApi();
@@ -48,6 +50,8 @@ class Services {
     );
     txHistory = TxHistoryService(storage: storage, chain: chain);
     await txHistory.load();
+    contacts = ContactsService();
+    await contacts.load();
     intent = IntentExecutor(
       wallet: wallet,
       balance: balance,

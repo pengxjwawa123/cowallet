@@ -31,7 +31,7 @@ class BalanceService extends ChangeNotifier {
   String? error;
   DateTime? lastUpdated;
 
-  Future<void> refresh(String address) async {
+  Future<void> refresh(String address, {int? chainId}) async {
     if (address.isEmpty) {
       error = 'No wallet address';
       notifyListeners();
@@ -45,7 +45,7 @@ class BalanceService extends ChangeNotifier {
     try {
       final result = await BalanceApi.getBalance(
         address: address,
-        chainId: 84532, // Base Sepolia
+        chainId: chainId ?? 84532,
       );
 
       if (result.isSuccess && result.data != null) {

@@ -380,6 +380,30 @@ class S {
   static String scanTransferAmount(String amount, String token, String address) =>
       _p('转 $amount $token 给 $address', 'Send $amount $token to $address');
 
+  // Chain selector
+  static String get selectNetwork => _p('选择网络', 'Select network');
+  static String get mainnets => _p('主网', 'Mainnets');
+  static String get testnets => _p('测试网', 'Testnets');
+  static String get testnetBadge => _p('测试', 'Test');
+
+  // Contacts
+  static String get contactsTitle => _p('联系人', 'Contacts');
+  static String get contactsAdd => _p('添加联系人', 'Add contact');
+  static String get contactsEdit => _p('编辑联系人', 'Edit contact');
+  static String get contactsDelete => _p('删除联系人', 'Delete contact');
+  static String get contactsDeleteConfirm => _p('确定删除这个联系人?', 'Delete this contact?');
+  static String get contactsSearch => _p('搜索姓名或地址', 'Search name or address');
+  static String get contactsEmpty => _p('还没有联系人', 'No contacts yet');
+  static String get contactsName => _p('姓名', 'Name');
+  static String get contactsNameHint => _p('比如 小明 / Alice', 'e.g. Alice, Mike');
+  static String get contactsNameRequired => _p('请输入姓名', 'Name is required');
+  static String get contactsAddress => _p('钱包地址', 'Wallet address');
+  static String get contactsAddressRequired => _p('请输入钱包地址', 'Address is required');
+  static String get contactsAddressInvalid => _p('无效的地址 (需要 0x 开头, 42 位)', 'Invalid address (must be 0x, 42 chars)');
+  static String get contactsNote => _p('备注', 'Note');
+  static String get contactsNoteHint => _p('可选备注', 'Optional note');
+  static String get contactsSave => _p('保存', 'Save');
+
   // Presignatures
   static String get presignatures => _p('预签名', 'Presignatures');
   static String get presignaturesAvailable => _p('可用预签名', 'Available presignatures');

@@ -7,11 +7,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::auth::Claims;
+use crate::services::covalent;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/history", get(get_history))
+        .route("/tx-history", get(get_covalent_history))
         .route("/{hash}", get(get_transaction))
 }
 
@@ -209,6 +211,89 @@ async fn get_transaction(
         timestamp: created_at.map(|t| t.to_rfc3339()),
         chain_id,
         gas_used,
+    }))
+}
+
+// ─── Covalent-based on-chain tx history ──────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CovalentHistoryQuery {
+    address: String,
+    chain_id: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct CovalentHistoryResponse {
+    transactions: Vec<CovalentTxInfo>,
+    total: usize,
+}
+
+#[derive(Serialize)]
+struct CovalentTxInfo {
+    tx_hash: String,
+    from: String,
+    to: String,
+    value: String,
+    timestamp: String,
+    status: String,
+    gas_used: u64,
+    token_symbol: String,
+    value_quote: f64,
+}
+
+/// GET /api/v1/tx/tx-history?address={addr}&chain_id={id}
+///
+/// Get on-chain transaction history via Covalent API (no DB required)
+async fn get_covalent_history(
+    State(state): State<AppState>,
+    _claims: axum::Extension<Claims>,
+    Query(q): Query<CovalentHistoryQuery>,
+) -> Result<Json<CovalentHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Validate address
+    if !q.address.starts_with("0x") || q.address.len() != 42 {
+        return Err(validation_error("invalid address format"));
+    }
+
+    let api_key = state
+        .covalent_api_key
+        .as_ref()
+        .ok_or_else(|| (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "Covalent API not configured".into(),
+            }),
+        ))?;
+
+    let chain_id = q.chain_id.unwrap_or(84532);
+
+    let items = covalent::get_transactions(&state.http, api_key, &q.address, chain_id)
+        .await
+        .map_err(|e| (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: format!("Transaction history query failed: {}", e),
+            }),
+        ))?;
+
+    let total = items.len();
+    let transactions: Vec<CovalentTxInfo> = items
+        .into_iter()
+        .map(|item| CovalentTxInfo {
+            tx_hash: item.tx_hash,
+            from: item.from,
+            to: item.to,
+            value: item.value,
+            timestamp: item.timestamp,
+            status: item.status,
+            gas_used: item.gas_used,
+            token_symbol: item.token_symbol,
+            value_quote: item.value_quote,
+        })
+        .collect();
+
+    Ok(Json(CovalentHistoryResponse {
+        transactions,
+        total,
     }))
 }
 

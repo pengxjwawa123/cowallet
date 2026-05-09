@@ -86,7 +86,7 @@ class _CowalletAppState extends State<CowalletApp> {
 
   Future<void> _refreshBalanceInBackground(String address) async {
     try {
-      await Services.balance.refresh(address);
+      await Services.balance.refresh(address, chainId: appState.selectedChain.chainId);
     } catch (_) {
       // Silently fail - balance will show error state in UI
     }

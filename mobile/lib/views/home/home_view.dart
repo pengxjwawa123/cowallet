@@ -5,9 +5,66 @@ import '../../widgets/section_label.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../router/app_router.dart';
+import '../../api/tx_history_api.dart';
 
-class HomeView extends StatelessWidget {
+class HomeView extends StatefulWidget {
   const HomeView({super.key});
+
+  @override
+  State<HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<HomeView> {
+  List<Map<String, dynamic>> _transactions = [];
+  bool _txLoading = true;
+  String? _txError;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchTransactions();
+  }
+
+  Future<void> _fetchTransactions() async {
+    final address = CowalletApp.of(context).walletAddress;
+    if (address.isEmpty) {
+      setState(() {
+        _txLoading = false;
+        _transactions = [];
+      });
+      return;
+    }
+
+    setState(() {
+      _txLoading = true;
+      _txError = null;
+    });
+
+    try {
+      final result = await TxHistoryApi.getHistory(address: address);
+      if (result.isSuccess && result.data != null) {
+        final data = result.data!;
+        final txList = data['transactions'] as List<dynamic>? ?? [];
+        setState(() {
+          _transactions = txList
+              .map((item) => item as Map<String, dynamic>)
+              .take(5)
+              .toList();
+          _txLoading = false;
+        });
+      } else {
+        setState(() {
+          _txError = result.errorMessage;
+          _txLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _txError = e.toString();
+        _txLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -276,7 +333,7 @@ class HomeView extends StatelessWidget {
           _actionBtn(context, Icons.qr_code_scanner, S.scan, CwColors.info,
               CwColors.infoSoft, () => Navigator.of(context).pushNamed(AppRouter.scan)),
           _actionBtn(context, Icons.people_outline, S.people, CwColors.gold,
-              CwColors.goldSoft, () => AppShell.goToChatAndSend(context, S.actionPeople)),
+              CwColors.goldSoft, () => Navigator.of(context).pushNamed(AppRouter.contacts)),
         ],
       ),
     );
@@ -387,59 +444,162 @@ class HomeView extends StatelessWidget {
             trailing: S.seeAll,
             onTrailingTap: () {},
           ),
-          Container(
-            decoration: BoxDecoration(
-              color: CwColors.bgCard,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: CwColors.line),
-            ),
-            child: Column(
-              children: [
-                _activityRow(
-                  context,
-                  icon: Icons.arrow_downward,
-                  iconColor: CwColors.success,
-                  iconBg: CwColors.successSoft,
-                  title: S.actRecv,
-                  subtitle: S.actRecvSub,
-                  trailing: '+0.5 ETH',
-                  trailingColor: CwColors.success,
-                ),
-                const Divider(indent: 56, height: 1),
-                _activityRow(
-                  context,
-                  icon: Icons.visibility_outlined,
-                  iconColor: CwColors.info,
-                  iconBg: CwColors.infoSoft,
-                  title: S.actAi,
-                  subtitle: S.actAiSub,
-                ),
-                const Divider(indent: 56, height: 1),
-                _activityRow(
-                  context,
-                  icon: Icons.autorenew,
-                  iconColor: CwColors.accent,
-                  iconBg: CwColors.accentSoft,
-                  title: S.actPay,
-                  subtitle: S.actPaySub,
-                  trailing: '-\$42',
-                  trailingColor: CwColors.ink2,
-                ),
-                const Divider(indent: 56, height: 1),
-                _activityRow(
-                  context,
-                  icon: Icons.shield_outlined,
-                  iconColor: CwColors.danger,
-                  iconBg: CwColors.dangerSoft,
-                  title: S.actBlock,
-                  subtitle: S.actBlockSub,
-                ),
-              ],
-            ),
-          ),
+          _buildActivityContent(context),
         ],
       ),
     );
+  }
+
+  Widget _buildActivityContent(BuildContext context) {
+    if (_txLoading) {
+      return Container(
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: CwColors.bgCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: CwColors.line),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (_txError != null || _transactions.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: CwColors.bgCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: CwColors.line),
+        ),
+        child: Center(
+          child: Text(
+            S.noTxYet,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      );
+    }
+
+    final walletAddress = CowalletApp.of(context).walletAddress.toLowerCase();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: CwColors.bgCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: CwColors.line),
+      ),
+      child: Column(
+        children: [
+          for (int i = 0; i < _transactions.length; i++) ...[
+            if (i > 0) const Divider(indent: 56, height: 1),
+            _buildTxRow(context, _transactions[i], walletAddress),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTxRow(
+      BuildContext context, Map<String, dynamic> tx, String walletAddress) {
+    final from = (tx['from'] as String? ?? '').toLowerCase();
+    final to = (tx['to'] as String? ?? '').toLowerCase();
+    final isReceive = to == walletAddress;
+    final value = tx['value'] as String? ?? '0';
+    final timestamp = tx['timestamp'] as String? ?? '';
+    final status = tx['status'] as String? ?? '';
+    final tokenSymbol = tx['token_symbol'] as String? ?? 'ETH';
+
+    // Format value from wei to ETH (18 decimals)
+    final formattedValue = _formatWeiValue(value);
+
+    // Direction icon and colors
+    final IconData icon;
+    final Color iconColor;
+    final Color iconBg;
+    if (status == 'failed') {
+      icon = Icons.close;
+      iconColor = CwColors.danger;
+      iconBg = CwColors.dangerSoft;
+    } else if (isReceive) {
+      icon = Icons.arrow_downward;
+      iconColor = CwColors.success;
+      iconBg = CwColors.successSoft;
+    } else {
+      icon = Icons.arrow_upward;
+      iconColor = CwColors.accent;
+      iconBg = CwColors.accentSoft;
+    }
+
+    // Format the address preview
+    final peerAddress = isReceive ? from : to;
+    final addressPreview = peerAddress.length >= 10
+        ? '${peerAddress.substring(0, 6)}...${peerAddress.substring(peerAddress.length - 4)}'
+        : peerAddress;
+
+    // Title
+    final title = isReceive
+        ? '${S.receive} $formattedValue $tokenSymbol'
+        : '${S.send} $formattedValue $tokenSymbol';
+
+    // Subtitle with relative time and address
+    final relativeTime = _formatRelativeTime(timestamp);
+    final subtitle = '$addressPreview · $relativeTime';
+
+    // Trailing amount
+    final trailingText = isReceive
+        ? '+$formattedValue $tokenSymbol'
+        : '-$formattedValue $tokenSymbol';
+    final trailingColor = isReceive ? CwColors.success : CwColors.ink2;
+
+    return _activityRow(
+      context,
+      icon: icon,
+      iconColor: iconColor,
+      iconBg: iconBg,
+      title: title,
+      subtitle: subtitle,
+      trailing: formattedValue != '0' ? trailingText : null,
+      trailingColor: trailingColor,
+    );
+  }
+
+  String _formatWeiValue(String weiValue) {
+    if (weiValue == '0' || weiValue.isEmpty) return '0';
+    try {
+      final wei = BigInt.tryParse(weiValue);
+      if (wei == null || wei == BigInt.zero) return '0';
+      final ethValue = wei / BigInt.from(10).pow(18);
+      final remainder = wei % BigInt.from(10).pow(18);
+      if (remainder == BigInt.zero) return ethValue.toString();
+      // Show up to 4 decimal places
+      final fracStr = remainder.toString().padLeft(18, '0');
+      final trimmed = fracStr.substring(0, 4).replaceAll(RegExp(r'0+$'), '');
+      if (trimmed.isEmpty) return ethValue.toString();
+      return '$ethValue.$trimmed';
+    } catch (_) {
+      return '0';
+    }
+  }
+
+  String _formatRelativeTime(String isoTimestamp) {
+    if (isoTimestamp.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(isoTimestamp);
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inMinutes < 1) return S.justNow;
+      if (diff.inMinutes < 60) return S.minutesAgo(diff.inMinutes);
+      if (diff.inHours < 24) return S.hoursAgo(diff.inHours);
+      return S.daysAgo(diff.inDays);
+    } catch (_) {
+      return '';
+    }
   }
 
   Widget _activityRow(

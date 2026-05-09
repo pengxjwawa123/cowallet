@@ -64,6 +64,9 @@ dependencies:
     sdk: flutter
   intl: any
 
+  # Local storage
+  shared_preferences: ^2.3.3
+
   # UI
   google_fonts: ^6.2.1
 

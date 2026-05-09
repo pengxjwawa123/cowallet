@@ -84,6 +84,109 @@ fn format_units(raw: &str, decimals: u32) -> String {
     }
 }
 
+// ─── Transaction History ─────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CovalentTxResponse {
+    data: Option<CovalentTxData>,
+    error: bool,
+    error_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CovalentTxData {
+    items: Vec<CovalentTxItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CovalentTxItem {
+    tx_hash: Option<String>,
+    from_address: Option<String>,
+    to_address: Option<String>,
+    value: Option<String>,
+    block_signed_at: Option<String>,
+    successful: Option<bool>,
+    gas_spent: Option<u64>,
+    gas_quote: Option<f64>,
+    value_quote: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TransactionItem {
+    pub tx_hash: String,
+    pub from: String,
+    pub to: String,
+    pub value: String,
+    pub timestamp: String,
+    pub status: String,
+    pub gas_used: u64,
+    pub token_symbol: String,
+    pub value_quote: f64,
+}
+
+pub async fn get_transactions(
+    http: &Client,
+    api_key: &str,
+    address: &str,
+    chain_id: u64,
+) -> Result<Vec<TransactionItem>, String> {
+    let slug = chain_slug(chain_id)
+        .ok_or_else(|| format!("Unsupported chain_id: {}", chain_id))?;
+
+    let url = format!(
+        "{}/{}/address/{}/transactions_v3/?key={}&page-size=20",
+        BASE_URL, slug, address, api_key
+    );
+
+    let resp = http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Covalent tx request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Covalent API returned {}", resp.status()));
+    }
+
+    let body: CovalentTxResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Covalent tx parse error: {}", e))?;
+
+    if body.error {
+        return Err(format!(
+            "Covalent error: {}",
+            body.error_message.unwrap_or_default()
+        ));
+    }
+
+    let data = body.data.ok_or("Covalent returned no transaction data")?;
+
+    let transactions: Vec<TransactionItem> = data
+        .items
+        .into_iter()
+        .map(|item| TransactionItem {
+            tx_hash: item.tx_hash.unwrap_or_default(),
+            from: item.from_address.unwrap_or_default(),
+            to: item.to_address.unwrap_or_default(),
+            value: item.value.unwrap_or_else(|| "0".to_string()),
+            timestamp: item.block_signed_at.unwrap_or_default(),
+            status: if item.successful.unwrap_or(false) {
+                "confirmed".to_string()
+            } else {
+                "failed".to_string()
+            },
+            gas_used: item.gas_spent.unwrap_or(0),
+            token_symbol: "ETH".to_string(),
+            value_quote: item.value_quote.unwrap_or(0.0),
+        })
+        .collect();
+
+    Ok(transactions)
+}
+
+// ─── Balances ────────────────────────────────────────────────────────────────
+
 pub async fn get_balances(
     http: &Client,
     api_key: &str,

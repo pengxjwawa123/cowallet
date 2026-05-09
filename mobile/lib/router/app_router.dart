@@ -8,6 +8,7 @@ import '../views/keys/keys_view.dart';
 import '../views/send/send_view.dart';
 import '../views/receive/receive_view.dart';
 import '../views/scan/scan_view.dart';
+import '../views/contacts/contacts_view.dart';
 import '../onboarding/onboarding_flow.dart';
 import '../theme/colors.dart';
 import '../l10n/strings.dart';
@@ -19,6 +20,7 @@ class AppRouter {
   static const send = '/send';
   static const receive = '/receive';
   static const scan = '/scan';
+  static const contacts = '/contacts';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -32,6 +34,8 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const ReceiveView());
       case scan:
         return MaterialPageRoute(builder: (_) => const ScanView());
+      case contacts:
+        return MaterialPageRoute(builder: (_) => const ContactsView());
       default:
         return MaterialPageRoute(builder: (_) => const AppShell());
     }

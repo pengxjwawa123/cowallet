@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../l10n/strings.dart';
+import '../config/api_config.dart';
+import '../services/locator.dart';
 
 class AppState extends ChangeNotifier {
   Lang _lang = Lang.zh;
@@ -8,6 +10,7 @@ class AppState extends ChangeNotifier {
   bool _onboardingComplete = false;
   String _walletAddress = '';
   bool _walletLoading = false;
+  ChainConfig _selectedChain = ChainConfig.defaultChain;
 
   Lang get lang => _lang;
   String get userName => _userName;
@@ -16,6 +19,17 @@ class AppState extends ChangeNotifier {
   String get walletAddress => _walletAddress;
   bool get walletLoading => _walletLoading;
   bool get hasWallet => _walletAddress.isNotEmpty;
+  ChainConfig get selectedChain => _selectedChain;
+
+  void setChain(ChainConfig chain) {
+    if (_selectedChain.chainId == chain.chainId) return;
+    _selectedChain = chain;
+    notifyListeners();
+    // Trigger balance refresh for the new chain
+    if (_walletAddress.isNotEmpty) {
+      Services.balance.refresh(_walletAddress, chainId: chain.chainId);
+    }
+  }
 
   void setLang(Lang l) {
     _lang = l;
