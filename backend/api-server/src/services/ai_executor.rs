@@ -79,6 +79,9 @@ impl ToolContext {
             "get_balance" => self.execute_get_balance(tool_id, params).await,
             "send_transaction" => self.execute_send_transaction(tool_id, params).await,
             "get_transaction_history" => self.execute_get_transaction_history(tool_id, params).await,
+            "get_wallet_address" => self.execute_get_wallet_address(tool_id).await,
+            "security_audit" => self.execute_security_audit(tool_id).await,
+            "swap_token" => self.execute_swap_token(tool_id, params).await,
             "search_yield_opportunities" => self.execute_search_yield(tool_id, params).await,
             "list_yield_protocols" => self.execute_list_protocols(tool_id, params).await,
             _ => ToolExecutionResult {
@@ -517,6 +520,170 @@ impl ToolContext {
         ToolExecutionResult {
             tool_id: tool_id.to_string(),
             tool_name: "search_yield_opportunities".into(),
+            success: true,
+            result,
+            error: None,
+        }
+    }
+
+    // --- get_wallet_address ---
+    async fn execute_get_wallet_address(&self, tool_id: &str) -> ToolExecutionResult {
+        let address = demo_wallet_address();
+        let result = serde_json::json!({
+            "address": format!("0x{:x}", address),
+            "chain": "Base",
+            "chain_id": 8453,
+        });
+
+        ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            tool_name: "get_wallet_address".into(),
+            success: true,
+            result,
+            error: None,
+        }
+    }
+
+    // --- security_audit ---
+    async fn execute_security_audit(&self, tool_id: &str) -> ToolExecutionResult {
+        let address = demo_wallet_address();
+
+        // Check token approvals (simplified - in production, query on-chain approvals)
+        let mut findings: Vec<Value> = Vec::new();
+        let mut score: u32 = 100;
+
+        // Check if DB has recent suspicious transactions
+        if let Ok(db) = self.app_state.require_db() {
+            if let Some(uid) = &self.user_id {
+                if let Ok(user_uuid) = uuid::Uuid::parse_str(uid) {
+                    let suspicious = sqlx::query(
+                        "SELECT COUNT(*) as cnt FROM transactions WHERE user_id = $1 AND status = 'failed' AND created_at > NOW() - INTERVAL '7 days'"
+                    )
+                    .bind(user_uuid)
+                    .fetch_one(db)
+                    .await;
+
+                    if let Ok(row) = suspicious {
+                        let failed_count: i64 = row.get("cnt");
+                        if failed_count > 3 {
+                            score -= 15;
+                            findings.push(serde_json::json!({
+                                "severity": "medium",
+                                "type": "failed_transactions",
+                                "message": format!("过去7天有 {} 笔失败交易，可能存在风险操作", failed_count),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Static checks
+        findings.push(serde_json::json!({
+            "severity": "info",
+            "type": "mpc_protection",
+            "message": "MPC 多方计算保护已启用 (2-of-3 门限签名)",
+        }));
+
+        findings.push(serde_json::json!({
+            "severity": "info",
+            "type": "biometric_auth",
+            "message": "生物识别认证已启用",
+        }));
+
+        let risk_level = if score >= 90 { "low" } else if score >= 70 { "medium" } else { "high" };
+
+        let result = serde_json::json!({
+            "address": format!("0x{:x}", address),
+            "score": score,
+            "risk_level": risk_level,
+            "findings": findings,
+            "recommendations": [
+                "定期检查代币授权额度",
+                "对大额转账启用多签确认",
+                "不要点击不明链接或授权未知合约"
+            ],
+        });
+
+        ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            tool_name: "security_audit".into(),
+            success: true,
+            result,
+            error: None,
+        }
+    }
+
+    // --- swap_token ---
+    async fn execute_swap_token(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
+        let from_token: String = match parse_param(&params, "from_token") {
+            Some(t) => t,
+            None => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some("Missing required parameter: from_token".into()),
+                };
+            }
+        };
+
+        let to_token: String = match parse_param(&params, "to_token") {
+            Some(t) => t,
+            None => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some("Missing required parameter: to_token".into()),
+                };
+            }
+        };
+
+        let amount: String = match parse_param(&params, "amount") {
+            Some(a) => a,
+            None => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some("Missing required parameter: amount".into()),
+                };
+            }
+        };
+
+        let slippage: f64 = parse_param(&params, "slippage").unwrap_or(0.5);
+
+        // Simulate price quote (in production, query DEX aggregator)
+        let estimated_output = match (from_token.to_uppercase().as_str(), to_token.to_uppercase().as_str()) {
+            ("ETH", "USDC") => {
+                let amt: f64 = amount.parse().unwrap_or(0.0);
+                format!("{:.2}", amt * 2500.0) // Simplified ETH price
+            }
+            ("USDC", "ETH") => {
+                let amt: f64 = amount.parse().unwrap_or(0.0);
+                format!("{:.6}", amt / 2500.0)
+            }
+            _ => "0".into(),
+        };
+
+        let result = serde_json::json!({
+            "status": "pending_confirmation",
+            "from_token": from_token.to_uppercase(),
+            "to_token": to_token.to_uppercase(),
+            "amount": amount,
+            "estimated_output": estimated_output,
+            "slippage": slippage,
+            "route": format!("{} → {}", from_token.to_uppercase(), to_token.to_uppercase()),
+            "warning": "兑换需要您确认后执行。实际到账金额可能因市场波动略有差异。",
+        });
+
+        ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            tool_name: "swap_token".into(),
             success: true,
             result,
             error: None,

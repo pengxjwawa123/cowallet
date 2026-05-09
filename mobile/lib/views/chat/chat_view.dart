@@ -9,7 +9,11 @@ import '../../api/ai_api.dart';
 import 'widgets/balance_widget.dart';
 import 'widgets/receive_widget.dart';
 import 'widgets/send_confirm_widget.dart';
+import 'widgets/swap_confirm_widget.dart';
 import 'widgets/tx_result_widget.dart';
+import 'widgets/history_widget.dart';
+import 'widgets/audit_widget.dart';
+import 'widgets/clarify_widget.dart';
 
 // ---------------------------------------------------------------------------
 // Message model
@@ -17,7 +21,7 @@ import 'widgets/tx_result_widget.dart';
 
 enum ChatMsgKind { user, ai, thinking, widget }
 
-enum WidgetType { balance, receive, sendConfirm, txResult }
+enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, history, audit, clarify }
 
 class ChatMsg {
   final ChatMsgKind kind;
@@ -52,8 +56,9 @@ class _Suggestion {
 
 const _suggestions = [
   _Suggestion(zhText: '我的余额是多少', enText: "What's my balance"),
-  _Suggestion(zhText: '我的收款地址', enText: 'Show my address'),
   _Suggestion(zhText: '最近的交易记录', enText: 'Recent transactions'),
+  _Suggestion(zhText: '安全审计', enText: 'Security audit'),
+  _Suggestion(zhText: '我的收款地址', enText: 'Show my address'),
 ];
 
 // ---------------------------------------------------------------------------
@@ -172,11 +177,13 @@ class _ChatViewState extends State<ChatView> {
             break;
 
           case 'tool_call':
+            // Tool calls with kind=write show confirmation widgets immediately
             final name = event.data['name'] as String? ?? '';
             final id = event.data['id'] as String? ?? '';
+            final kind = event.data['kind'] as String? ?? 'read';
             final params = event.data['parameters'] as Map<String, dynamic>? ?? {};
 
-            if (name == 'send_transaction') {
+            if (kind == 'write' && name == 'send_transaction') {
               setState(() {
                 _messages.add(ChatMsg(
                   kind: ChatMsgKind.widget,
@@ -184,8 +191,22 @@ class _ChatViewState extends State<ChatView> {
                   widgetData: {
                     'to_address': params['to_address'] ?? '',
                     'amount': params['value'] ?? '0',
-                    'token': params['token_address'] != null ? 'Token' : 'ETH',
-                    'token_address': params['token_address'],
+                    'token': params['token'] ?? 'ETH',
+                  },
+                  toolCallId: id,
+                ));
+              });
+              _scrollToBottom();
+            } else if (kind == 'write' && name == 'swap_token') {
+              setState(() {
+                _messages.add(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.swapConfirm,
+                  widgetData: {
+                    'from_token': params['from_token'] ?? '',
+                    'to_token': params['to_token'] ?? '',
+                    'amount': params['amount'] ?? '0',
+                    'slippage': params['slippage'] ?? 0.5,
                   },
                   toolCallId: id,
                 ));
@@ -196,12 +217,51 @@ class _ChatViewState extends State<ChatView> {
 
           case 'tool_result':
             final toolName = event.data['tool_name'] as String? ?? '';
+            final kind = event.data['kind'] as String? ?? 'read';
+            final widgetType = event.data['widget_type'] as String?;
             final success = event.data['success'] as bool? ?? false;
             final result = event.data['result'] as Map<String, dynamic>? ?? {};
 
             if (!success) break;
 
-            switch (toolName) {
+            // Meta tools (clarify) render directly
+            if (kind == 'meta' && widgetType == 'clarify') {
+              final question = result['question'] as String? ?? '';
+              final options = (result['options'] as List<dynamic>?) ?? [];
+              setState(() {
+                _messages.add(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.clarify,
+                  widgetData: {'question': question, 'options': options},
+                ));
+              });
+              _scrollToBottom();
+              break;
+            }
+
+            // Write tools already rendered at tool_call phase
+            if (kind == 'write') {
+              // Update swap widget with estimated output
+              if (toolName == 'swap_token') {
+                final estimated = result['estimated_output'] as String?;
+                if (estimated != null) {
+                  setState(() {
+                    // Find the last swap widget and update estimated output
+                    for (int i = _messages.length - 1; i >= 0; i--) {
+                      if (_messages[i].widgetType == WidgetType.swapConfirm && !_messages[i].confirmed) {
+                        _messages[i].widgetData['estimated_output'] = estimated;
+                        break;
+                      }
+                    }
+                  });
+                }
+              }
+              break;
+            }
+
+            // Read tools: render widget based on widget_type
+            switch (widgetType ?? toolName) {
+              case 'balance':
               case 'get_balance':
                 setState(() {
                   _messages.add(ChatMsg(
@@ -212,6 +272,7 @@ class _ChatViewState extends State<ChatView> {
                 });
                 _scrollToBottom();
                 break;
+              case 'receive':
               case 'get_wallet_address':
                 final addr = result['address'] as String? ??
                     CowalletApp.of(context).walletAddress;
@@ -225,6 +286,30 @@ class _ChatViewState extends State<ChatView> {
                   });
                   _scrollToBottom();
                 }
+                break;
+              case 'history':
+              case 'get_transaction_history':
+                final transactions = (result['transactions'] as List<dynamic>?) ?? [];
+                final total = result['total'] as int? ?? transactions.length;
+                setState(() {
+                  _messages.add(ChatMsg(
+                    kind: ChatMsgKind.widget,
+                    widgetType: WidgetType.history,
+                    widgetData: {'transactions': transactions, 'total': total},
+                  ));
+                });
+                _scrollToBottom();
+                break;
+              case 'audit':
+              case 'security_audit':
+                setState(() {
+                  _messages.add(ChatMsg(
+                    kind: ChatMsgKind.widget,
+                    widgetType: WidgetType.audit,
+                    widgetData: result,
+                  ));
+                });
+                _scrollToBottom();
                 break;
             }
             break;
@@ -297,6 +382,57 @@ class _ChatViewState extends State<ChatView> {
       _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '好的，已取消转账。'));
     });
     _scrollToBottom();
+  }
+
+  Future<void> _onSwapConfirm(int index) async {
+    final msg = _messages[index];
+    setState(() => msg.loading = true);
+
+    final params = {
+      'from_token': msg.widgetData['from_token'] as String? ?? '',
+      'to_token': msg.widgetData['to_token'] as String? ?? '',
+      'amount': msg.widgetData['amount'] as String? ?? '0',
+    };
+
+    final result = await Services.intent.execute('swap', params);
+
+    if (!mounted) return;
+    setState(() {
+      msg.loading = false;
+      msg.confirmed = true;
+
+      if (result.success) {
+        _messages.add(ChatMsg(
+          kind: ChatMsgKind.widget,
+          widgetType: WidgetType.txResult,
+          widgetData: {
+            'tx_hash': result.data['txHash'] ?? '',
+            'success': true,
+            'amount': params['amount'],
+            'token': '${params['from_token']} → ${params['to_token']}',
+          },
+        ));
+        _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: result.message));
+      } else {
+        _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ ${result.message}'));
+      }
+    });
+    _scrollToBottom();
+  }
+
+  void _onSwapDeny(int index) {
+    setState(() {
+      _messages[index].confirmed = true;
+      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '好的，已取消兑换。'));
+    });
+    _scrollToBottom();
+  }
+
+  void _onClarifySelect(int index, String prompt) {
+    setState(() {
+      _messages[index].confirmed = true;
+    });
+    _send(prompt);
   }
 
   // -- build -----------------------------------------------------------------
@@ -503,12 +639,41 @@ class _ChatViewState extends State<ChatView> {
           onConfirm: () => _onSendConfirm(index),
           onDeny: () => _onSendDeny(index),
         );
+      case WidgetType.swapConfirm:
+        return ChatSwapConfirmWidget(
+          fromToken: msg.widgetData['from_token'] ?? '',
+          toToken: msg.widgetData['to_token'] ?? '',
+          amount: msg.widgetData['amount'] ?? '0',
+          estimatedOutput: msg.widgetData['estimated_output'] ?? '—',
+          slippage: (msg.widgetData['slippage'] as num?)?.toDouble() ?? 0.5,
+          loading: msg.loading,
+          resolved: msg.confirmed,
+          onConfirm: () => _onSwapConfirm(index),
+          onDeny: () => _onSwapDeny(index),
+        );
       case WidgetType.txResult:
         return ChatTxResultWidget(
           txHash: msg.widgetData['tx_hash'] ?? '',
           success: msg.widgetData['success'] ?? true,
           amount: msg.widgetData['amount'],
           token: msg.widgetData['token'],
+        );
+      case WidgetType.history:
+        return ChatHistoryWidget(
+          transactions: (msg.widgetData['transactions'] as List<dynamic>?) ?? [],
+          total: msg.widgetData['total'] as int? ?? 0,
+        );
+      case WidgetType.audit:
+        return ChatAuditWidget(data: msg.widgetData);
+      case WidgetType.clarify:
+        final options = (msg.widgetData['options'] as List<dynamic>? ?? [])
+            .map((o) => ClarifyOption.fromJson(o is Map<String, dynamic> ? o : {}))
+            .toList();
+        return ChatClarifyWidget(
+          question: msg.widgetData['question'] ?? '',
+          options: options,
+          resolved: msg.confirmed,
+          onSelect: (prompt) => _onClarifySelect(index, prompt),
         );
       default:
         return const SizedBox.shrink();
