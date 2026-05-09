@@ -972,8 +972,15 @@ impl ToolContext {
         };
         let result = serde_json::json!({
             "address": format!("0x{:x}", address),
-            "chain": "Base",
-            "chain_id": 8453,
+            "supported_chains": [
+                {"chain_id": 1, "name": "Ethereum"},
+                {"chain_id": 8453, "name": "Base"},
+                {"chain_id": 42161, "name": "Arbitrum One"},
+                {"chain_id": 10, "name": "Optimism"},
+                {"chain_id": 56, "name": "BNB Chain"},
+                {"chain_id": 137, "name": "Polygon"},
+            ],
+            "note": "同一地址适用于所有 EVM 链",
         });
 
         ToolExecutionResult {

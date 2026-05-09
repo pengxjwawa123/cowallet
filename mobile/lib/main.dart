@@ -42,6 +42,7 @@ class _CowalletAppState extends State<CowalletApp> {
   Future<void> _checkWalletState() async {
     try {
       _loadSupportedChains();
+      appState.loadUserName();
 
       final hasLocalWallet = await Services.wallet.hasWallet();
       print('[App] hasLocalWallet=$hasLocalWallet');
@@ -55,6 +56,7 @@ class _CowalletAppState extends State<CowalletApp> {
       appState.setWalletAddress(addr);
       appState.completeOnboarding();
       _initialRoute = AppRouter.home;
+
 
       // Ensure valid token before rendering home (prevents 401 cascades)
       await _refreshSessionInBackground();

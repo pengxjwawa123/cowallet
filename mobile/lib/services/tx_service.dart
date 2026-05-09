@@ -116,15 +116,15 @@ class MpcTxService implements TxService {
     final msgHash = Digest('Keccak/256').process(payload);
 
     // MPC distributed signature (device + server cooperate, no full key ever exists)
-    final signature = await _wallet.sign(msgHash.toList());
+    final signResult = await _wallet.signWithSession(msgHash.toList());
 
-    if (signature.length != 65) {
-      throw TxSigningException('Invalid MPC signature length: ${signature.length}');
+    if (signResult.signature.length != 65) {
+      throw TxSigningException('Invalid MPC signature length: ${signResult.signature.length}');
     }
 
-    final r = _bytesToBigInt(Uint8List.fromList(signature.sublist(0, 32)));
-    final s = _bytesToBigInt(Uint8List.fromList(signature.sublist(32, 64)));
-    final v = signature[64];
+    final r = _bytesToBigInt(Uint8List.fromList(signResult.signature.sublist(0, 32)));
+    final s = _bytesToBigInt(Uint8List.fromList(signResult.signature.sublist(32, 64)));
+    final v = signResult.signature[64];
 
     // Build signed tx: 0x02 || RLP([...fields, v, r, s])
     final signedFields = [
@@ -156,6 +156,8 @@ class MpcTxService implements TxService {
       toAddr: to,
       value: value.toString(),
       token: 'ETH',
+      fromAddr: address,
+      mpcSessionId: signResult.sessionId,
     );
 
     if (!submitResult.isSuccess || submitResult.data == null) {

@@ -100,20 +100,12 @@ class KeyHealthService {
 
       final method = await _backupService.getBackupMethod();
 
-      // If backup is stored as local file, we can't auto-check — rely on last verified timestamp
+      // Local file backup cannot be auto-verified — always require manual confirmation
       if (method == BackupMethod.file) {
-        if (lastChecked != null) {
-          final days = DateTime.now().difference(lastChecked).inDays;
-          return KeyHealth(
-            status: days > 90 ? KeyStatus.warning : KeyStatus.ok,
-            lastChecked: lastChecked,
-            error: days > 90 ? 'Local file not verified for $days days' : null,
-          );
-        }
         return KeyHealth(
           status: KeyStatus.warning,
-          lastChecked: null,
-          error: 'Local backup file needs verification',
+          lastChecked: lastChecked,
+          error: '点击验证本地备份文件',
         );
       }
 

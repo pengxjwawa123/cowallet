@@ -179,6 +179,29 @@ class MpcWalletService implements WalletService {
     }
   }
 
+  /// 按需加载设备分片到 Rust 内存（签名前调用）
+  Future<void> _ensureShardLoaded() async {
+    final shardBytes = await SecureHardware.loadDeviceShard();
+    if (shardBytes == null || shardBytes.isEmpty) {
+      throw MpcException('Device shard not found in secure hardware');
+    }
+
+    final pubKeyHex = await SecureStorage.get('mpc_public_key');
+    if (pubKeyHex == null || pubKeyHex.isEmpty) {
+      throw MpcException('Public key not found');
+    }
+
+    final publicKey = List<int>.generate(
+      pubKeyHex.length ~/ 2,
+      (i) => int.parse(pubKeyHex.substring(i * 2, i * 2 + 2), radix: 16),
+    );
+
+    await MpcBridge.importDeviceShard(
+      shardBytes: shardBytes.toList(),
+      publicKey: publicKey,
+    );
+  }
+
   /// 执行分布式签名协议 (2-party ECDSA, 私钥从未被重组)
   /// [msgHash] 32字节消息哈希
   /// [walletId] 可选，指定使用哪个钱包的密钥分片签名
@@ -186,6 +209,8 @@ class MpcWalletService implements WalletService {
     if (msgHash.length != 32) {
       throw MpcException('Message hash must be exactly 32 bytes');
     }
+
+    await _ensureShardLoaded();
 
     final sessionResult = await MpcApi.createSession(
       sessionType: 'sign',
@@ -472,6 +497,12 @@ class MpcWalletService implements WalletService {
   @override
   Future<List<int>> sign(List<int> msgHash) async {
     return await runSign(msgHash);
+  }
+
+  @override
+  Future<SignResult> signWithSession(List<int> msgHash) async {
+    final signature = await runSign(msgHash);
+    return SignResult(signature: signature, sessionId: _currentSessionId);
   }
 
   @override

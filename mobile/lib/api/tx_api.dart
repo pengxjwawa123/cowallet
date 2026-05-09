@@ -16,6 +16,8 @@ class TxApi {
     String? toAddr,
     String? value,
     String? token,
+    String? fromAddr,
+    String? mpcSessionId,
   }) async {
     return await DioClient.post(
       "/tx/submit",
@@ -25,6 +27,8 @@ class TxApi {
         if (toAddr != null) "to_addr": toAddr,
         if (value != null) "value": value,
         if (token != null) "token": token,
+        if (fromAddr != null) "from_addr": fromAddr,
+        if (mpcSessionId != null) "mpc_session_id": mpcSessionId,
       },
     );
   }

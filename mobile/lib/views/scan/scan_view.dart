@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../theme/colors.dart';
 import '../../l10n/strings.dart';
-import '../../router/app_router.dart';
 
 class ScanView extends StatefulWidget {
   const ScanView({super.key});
@@ -117,14 +116,7 @@ class _ScanViewState extends State<ScanView> {
   }
 
   void _navigateToChatWithMessage(String message) {
-    Navigator.of(context).pop();
-    // After popping back to AppShell, send the message to chat
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctx = context;
-      if (ctx.mounted) {
-        AppShell.goToChatAndSend(ctx, message);
-      }
-    });
+    Navigator.of(context).pop(message);
   }
 
   @override

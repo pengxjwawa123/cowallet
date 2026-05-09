@@ -56,8 +56,20 @@ class ChatReceiveWidget extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Base · Ethereum L2',
+            '所有 EVM 链通用',
             style: TextStyle(fontSize: 11, color: CwColors.ink4),
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            children: [
+              _chainBadge('ETH', const Color(0xFF627EEA)),
+              _chainBadge('Base', const Color(0xFF0052FF)),
+              _chainBadge('Arb', const Color(0xFF28A0F0)),
+              _chainBadge('OP', const Color(0xFFFF0420)),
+              _chainBadge('BSC', const Color(0xFFF3BA2F)),
+              _chainBadge('Polygon', const Color(0xFF8247E5)),
+            ],
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -79,6 +91,20 @@ class ChatReceiveWidget extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _chainBadge(String name, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        name,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
       ),
     );
   }

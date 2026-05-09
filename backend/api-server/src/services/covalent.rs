@@ -82,6 +82,7 @@ struct CovalentBalanceItem {
     contract_address: Option<String>,
     balance: Option<String>,
     quote: Option<f64>,
+    #[serde(rename = "is_native_token")]
     native_token: Option<bool>,
     #[serde(rename = "type")]
     item_type: Option<String>,
@@ -397,9 +398,16 @@ pub async fn get_balances(
 
 #[derive(Debug, Deserialize)]
 struct CovalentAllChainsResponse {
-    data: Option<Vec<CovalentAllChainsItem>>,
+    data: Option<CovalentAllChainsData>,
+    #[serde(default)]
     error: bool,
     error_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CovalentAllChainsData {
+    #[serde(default)]
+    items: Vec<CovalentAllChainsItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -411,6 +419,7 @@ struct CovalentAllChainsItem {
     contract_address: Option<String>,
     balance: Option<String>,
     quote: Option<f64>,
+    #[serde(rename = "is_native_token")]
     native_token: Option<bool>,
     #[serde(rename = "type")]
     item_type: Option<String>,
@@ -497,7 +506,7 @@ pub async fn get_all_chain_balances(
     )
     .await?;
 
-    let items = body.data.ok_or("Covalent returned no allchains data")?;
+    let items = body.data.ok_or("Covalent returned no allchains data")?.items;
 
     // Group items by chain_id
     use std::collections::HashMap;

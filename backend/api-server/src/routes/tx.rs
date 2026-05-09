@@ -29,6 +29,7 @@ struct SubmitRequest {
     raw_tx: String,
     chain_id: Option<u64>,
     to_addr: Option<String>,
+    from_addr: Option<String>,
     value: Option<String>,
     token: Option<String>,
     mpc_session_id: Option<String>,
@@ -132,6 +133,11 @@ async fn submit(
         .to_string();
 
     if let Some(db) = &state.db {
+        let from_bytes = body
+            .from_addr
+            .as_deref()
+            .and_then(|a| hex::decode(a.strip_prefix("0x").unwrap_or(a)).ok())
+            .unwrap_or_default();
         let to_bytes = body
             .to_addr
             .as_deref()
@@ -146,7 +152,7 @@ async fn submit(
         )
         .bind(user_id)
         .bind(chain_id as i64)
-        .bind(&[] as &[u8])
+        .bind(&from_bytes)
         .bind(&to_bytes)
         .bind(body.value.as_deref().unwrap_or("0"))
         .bind(&body.token)

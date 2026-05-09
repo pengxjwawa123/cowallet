@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../l10n/strings.dart';
 import '../config/api_config.dart';
+import '../utils/secure_storage.dart';
 
 class AppState extends ChangeNotifier {
   Lang _lang = Lang.zh;
@@ -36,7 +37,16 @@ class AppState extends ChangeNotifier {
 
   void setUserName(String name) {
     _userName = name;
+    SecureStorage.save('user_name', name);
     notifyListeners();
+  }
+
+  Future<void> loadUserName() async {
+    final name = await SecureStorage.get('user_name');
+    if (name != null && name.isNotEmpty) {
+      _userName = name;
+      notifyListeners();
+    }
   }
 
   void setPersona(String p) {

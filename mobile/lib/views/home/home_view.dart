@@ -348,7 +348,12 @@ class _HomeViewState extends State<HomeView> {
               CwColors.successSoft,
               () => AppShell.goToChatAndSend(context, S.actionReceive)),
           _actionBtn(context, Icons.qr_code_scanner, S.scan, CwColors.info,
-              CwColors.infoSoft, () => Navigator.of(context).pushNamed(AppRouter.scan)),
+              CwColors.infoSoft, () async {
+                final result = await Navigator.of(context).pushNamed(AppRouter.scan);
+                if (result is String && result.isNotEmpty && context.mounted) {
+                  AppShell.goToChatAndSend(context, result);
+                }
+              }),
           _actionBtn(context, Icons.people_outline, S.people, CwColors.gold,
               CwColors.goldSoft, () => Navigator.of(context).pushNamed(AppRouter.contacts)),
         ],
