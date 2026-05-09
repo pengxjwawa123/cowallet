@@ -27,6 +27,7 @@ pub struct AppState {
     pub audit_logger: AuditLogger,
     pub mpc_participant: Option<Arc<MpcParticipant>>,
     pub presign_manager: Option<Arc<PresignManager>>,
+    pub covalent_api_key: Option<String>,
 }
 
 impl AppState {
@@ -118,6 +119,11 @@ impl AppState {
         let participant = Arc::new(participant);
         participant.spawn_cleanup();
 
+        let covalent_api_key = std::env::var("COVALENT_API_KEY").ok();
+        if covalent_api_key.is_some() {
+            tracing::info!("Covalent API configured for balance queries");
+        }
+
         Ok(Self {
             db: Some(db.clone()),
             rpc_url,
@@ -133,6 +139,7 @@ impl AppState {
             audit_logger: AuditLogger::new(Some(db)),
             mpc_participant: Some(participant),
             presign_manager: Some(presign_manager),
+            covalent_api_key,
         })
     }
 

@@ -104,107 +104,94 @@ impl ToolContext {
 
     // --- get_balance ---
     async fn execute_get_balance(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
-        let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453); // Default: Base
-        let token: Option<String> = parse_param(&params, "token");
-
+        let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
+        let token_filter: Option<String> = parse_param(&params, "token");
         let owner = demo_wallet_address();
-        let rpc_url = &self.app_state.rpc_url;
+        let address = format!("0x{:x}", owner);
 
-        let result = match token.as_deref() {
-            Some("ETH") | None => {
-                // Native ETH balance
-                match chain_evm::tokens::query_native_balance(owner, rpc_url).await {
-                    Ok(balance) => {
-                        let formatted = format!("{} ETH", format_units(balance, 18));
-                        serde_json::json!({
-                            "token": "ETH",
-                            "chain_id": chain_id,
-                            "address": format!("0x{:x}", owner),
-                            "balance": balance.to_string(),
-                            "balance_formatted": formatted,
-                            "unit": "wei"
-                        })
-                    }
-                    Err(e) => {
-                        return ToolExecutionResult {
-                            tool_id: tool_id.to_string(),
-                            tool_name: "get_balance".into(),
-                            success: false,
-                            result: Value::Null,
-                            error: Some(format!("Failed to query balance: {}", e)),
+        // Use Covalent API if configured
+        if let Some(api_key) = &self.app_state.covalent_api_key {
+            match crate::services::covalent::get_balances(
+                &self.app_state.http,
+                api_key,
+                &address,
+                chain_id,
+            )
+            .await
+            {
+                Ok(balances) => {
+                    // Filter by token if specified
+                    let filtered: Vec<&crate::services::covalent::TokenBalance> =
+                        if let Some(ref symbol) = token_filter {
+                            let s = symbol.to_uppercase();
+                            balances.iter().filter(|b| b.symbol.to_uppercase() == s).collect()
+                        } else {
+                            balances.iter().collect()
                         };
-                    }
+
+                    let total_usd: f64 = filtered
+                        .iter()
+                        .filter_map(|b| b.usd.parse::<f64>().ok())
+                        .sum();
+
+                    let tokens: Vec<serde_json::Value> = filtered
+                        .iter()
+                        .map(|b| {
+                            serde_json::json!({
+                                "symbol": b.symbol,
+                                "balance": b.balance_formatted,
+                                "usd": b.usd,
+                                "native": b.native_token,
+                            })
+                        })
+                        .collect();
+
+                    let result = serde_json::json!({
+                        "address": address,
+                        "chain_id": chain_id,
+                        "tokens": tokens,
+                        "total_usd": format!("{:.2}", total_usd),
+                    });
+
+                    return ToolExecutionResult {
+                        tool_id: tool_id.to_string(),
+                        tool_name: "get_balance".into(),
+                        success: true,
+                        result,
+                        error: None,
+                    };
+                }
+                Err(e) => {
+                    tracing::warn!("Covalent balance query failed, falling back to RPC: {}", e);
                 }
             }
-            Some(token_symbol) => {
-                // ERC-20 token balance
-                let token_address = if token_symbol.starts_with("0x") {
-                    match Address::from_str(token_symbol) {
-                        Ok(addr) => addr,
-                        Err(_) => {
-                            return ToolExecutionResult {
-                                tool_id: tool_id.to_string(),
-                                tool_name: "get_balance".into(),
-                                success: false,
-                                result: Value::Null,
-                                error: Some(format!("Invalid token address: {}", token_symbol)),
-                            };
-                        }
-                    }
-                } else {
-                    // Try to resolve by symbol
-                    match token_symbol.to_uppercase().as_str() {
-                        "USDC" => match usdc_address_for_chain(chain_id) {
-                            Some(addr) => addr,
-                            None => {
-                                return ToolExecutionResult {
-                                    tool_id: tool_id.to_string(),
-                                    tool_name: "get_balance".into(),
-                                    success: false,
-                                    result: Value::Null,
-                                    error: Some(format!("USDC not supported for chain {}", chain_id)),
-                                };
-                            }
-                        },
-                        _ => {
-                            return ToolExecutionResult {
-                                tool_id: tool_id.to_string(),
-                                tool_name: "get_balance".into(),
-                                success: false,
-                                result: Value::Null,
-                                error: Some(format!(
-                                    "Token {} not recognized. Use 0x address or ETH/USDC",
-                                    token_symbol
-                                )),
-                            };
-                        }
-                    }
-                };
+        }
 
-                match chain_evm::tokens::query_balance(token_address, owner, rpc_url).await {
-                    Ok(balance) => {
-                        let decimals = 6; // USDC default
-                        let formatted = format!("{} {}", format_units(balance, decimals), token_symbol);
-                        serde_json::json!({
-                            "token": token_symbol,
-                            "token_address": format!("0x{:x}", token_address),
-                            "chain_id": chain_id,
-                            "address": format!("0x{:x}", owner),
-                            "balance": balance.to_string(),
-                            "balance_formatted": formatted,
-                            "unit": "wei"
-                        })
-                    }
-                    Err(e) => {
-                        return ToolExecutionResult {
-                            tool_id: tool_id.to_string(),
-                            tool_name: "get_balance".into(),
-                            success: false,
-                            result: Value::Null,
-                            error: Some(format!("Failed to query token balance: {}", e)),
-                        };
-                    }
-                }
+        // Fallback: direct RPC query
+        let rpc_url = &self.app_state.rpc_url;
+        let result = match chain_evm::tokens::query_native_balance(owner, rpc_url).await {
+            Ok(balance) => {
+                let formatted = format_units(balance, 18);
+                serde_json::json!({
+                    "address": address,
+                    "chain_id": chain_id,
+                    "tokens": [{
+                        "symbol": "ETH",
+                        "balance": formatted,
+                        "usd": "—",
+                        "native": true,
+                    }],
+                    "total_usd": "—",
+                })
+            }
+            Err(e) => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "get_balance".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some(format!("Failed to query balance: {}", e)),
+                };
             }
         };
 
