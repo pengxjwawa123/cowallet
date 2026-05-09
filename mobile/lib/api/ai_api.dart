@@ -40,6 +40,7 @@ class AiApi {
     required String message,
     String? sessionId,
     String? userId,
+    String? walletAddress,
   }) async* {
     final response = await DioClient.postStream(
       "/ai/chat",
@@ -47,6 +48,7 @@ class AiApi {
         "message": message,
         if (sessionId != null) "session_id": sessionId,
         if (userId != null) "user_id": userId,
+        if (walletAddress != null) "wallet_address": walletAddress,
       },
     );
 

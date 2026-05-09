@@ -295,7 +295,7 @@ pub async fn fetch_defi_llama_data(
                 chain_id: 8453,
                 opportunity_type: protocol_type,
                 token_a: Some(TokenInfo {
-                    address: "0x0".to_string(),
+                    address: pool.pool.clone(),
                     symbol: pool.symbol,
                     name: "".to_string(),
                     decimals: 18,
@@ -315,7 +315,7 @@ pub async fn fetch_defi_llama_data(
                 risk_factors: generate_risk_factors(&risk_level),
                 strategy: None,
                 lock_days: None,
-                smart_contract_address: "0x0".to_string(),
+                smart_contract_address: pool.pool.clone(),
                 updated_at: chrono::Utc::now().to_rfc3339(),
             })
         })
@@ -432,302 +432,6 @@ pub struct SearchQuery {
     pub limit: Option<usize>,
 }
 
-fn generate_opportunities() -> Vec<YieldOpportunity> {
-    let mut opps = Vec::new();
-
-    // Aave V3 Lending Markets
-    opps.push(YieldOpportunity {
-        id: "aave-eth-supply".to_string(),
-        protocol_id: "aave-v3-base".to_string(),
-        protocol_name: "Aave V3".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::Lending,
-        token_a: Some(TokenInfo {
-            address: "0x4200000000000000000000000000000000000006".to_string(),
-            symbol: "WETH".to_string(),
-            name: "Wrapped Ether".to_string(),
-            decimals: 18,
-            price_usd: Some(3200.0),
-        }),
-        token_b: None,
-        apy: 2.8,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 2.8,
-            reward_apy: 0.0,
-            incentive_apy: 0.0,
-            total_apy: 2.8,
-        },
-        tvl_usd: 125_000_000.0,
-        volume_24h_usd: Some(8_500_000.0),
-        risk_level: RiskLevel::Low,
-        risk_factors: vec!["Smart contract risk".to_string(), "Liquidation risk".to_string()],
-        strategy: Some("Supply ETH as collateral to earn interest from borrowers".to_string()),
-        lock_days: None,
-        smart_contract_address: "0xe50fA9b3c56FfB159cB0FCA61F5c910BBc05074E".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    opps.push(YieldOpportunity {
-        id: "aave-usdc-supply".to_string(),
-        protocol_id: "aave-v3-base".to_string(),
-        protocol_name: "Aave V3".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::Lending,
-        token_a: Some(TokenInfo {
-            address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".to_string(),
-            symbol: "USDC".to_string(),
-            name: "USD Coin".to_string(),
-            decimals: 6,
-            price_usd: Some(1.0),
-        }),
-        token_b: None,
-        apy: 4.2,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 4.2,
-            reward_apy: 0.0,
-            incentive_apy: 0.0,
-            total_apy: 4.2,
-        },
-        tvl_usd: 85_000_000.0,
-        volume_24h_usd: Some(12_000_000.0),
-        risk_level: RiskLevel::Low,
-        risk_factors: vec!["Smart contract risk".to_string(), "Depegging risk".to_string()],
-        strategy: Some("Supply USDC stablecoin to earn variable interest rate.".to_string()),
-        lock_days: None,
-        smart_contract_address: "0xe50fA9b3c56FfB159cB0FCA61F5c910BBc05074E".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    // Uniswap V3 Pools
-    opps.push(YieldOpportunity {
-        id: "uni-v3-eth-usdc-03".to_string(),
-        protocol_id: "uniswap-v3-base".to_string(),
-        protocol_name: "Uniswap V3".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::Dex,
-        token_a: Some(TokenInfo {
-            address: "0x4200000000000000000000000000000000000006".to_string(),
-            symbol: "WETH".to_string(),
-            name: "Wrapped Ether".to_string(),
-            decimals: 18,
-            price_usd: Some(3200.0),
-        }),
-        token_b: Some(TokenInfo {
-            address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".to_string(),
-            symbol: "USDC".to_string(),
-            name: "USD Coin".to_string(),
-            decimals: 6,
-            price_usd: Some(1.0),
-        }),
-        apy: 18.5,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 12.5,
-            reward_apy: 6.0,
-            incentive_apy: 0.0,
-            total_apy: 18.5,
-        },
-        tvl_usd: 45_000_000.0,
-        volume_24h_usd: Some(85_000_000.0),
-        risk_level: RiskLevel::Medium,
-        risk_factors: vec![
-            "Impermanent loss".to_string(),
-            "Smart contract risk".to_string(),
-            "Concentrated liquidity range risk".to_string(),
-        ],
-        strategy: Some("Provide concentrated liquidity in ETH-USDC 0.3% fee pool with narrow range for higher fees.".to_string()),
-        lock_days: None,
-        smart_contract_address: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    // Aerodrome Farms
-    opps.push(YieldOpportunity {
-        id: "aero-eth-usdc-volatile".to_string(),
-        protocol_id: "aerodrome-base".to_string(),
-        protocol_name: "Aerodrome".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::Farm,
-        token_a: Some(TokenInfo {
-            address: "0x4200000000000000000000000000000000000006".to_string(),
-            symbol: "WETH".to_string(),
-            name: "Wrapped Ether".to_string(),
-            decimals: 18,
-            price_usd: Some(3200.0),
-        }),
-        token_b: Some(TokenInfo {
-            address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".to_string(),
-            symbol: "USDC".to_string(),
-            name: "USD Coin".to_string(),
-            decimals: 6,
-            price_usd: Some(1.0),
-        }),
-        apy: 38.2,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 8.2,
-            reward_apy: 25.0,
-            incentive_apy: 5.0,
-            total_apy: 38.2,
-        },
-        tvl_usd: 12_500_000.0,
-        volume_24h_usd: Some(18_000_000.0),
-        risk_level: RiskLevel::High,
-        risk_factors: vec![
-            "Impermanent loss".to_string(),
-            "Reward token price volatility".to_string(),
-            "Smart contract risk".to_string(),
-            "Voting lock requirements".to_string(),
-        ],
-        strategy: Some("Stake ETH-USDC LP tokens in Aerodrome gauge to earn trading fees plus AERO emissions.".to_string()),
-        lock_days: Some(7),
-        smart_contract_address: "0x420DD381b31aEf6683db6B902084cB0FFECe40Da".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    // Liquid Staking
-    opps.push(YieldOpportunity {
-        id: "cbeth-stake".to_string(),
-        protocol_id: "coinbase-cbeth".to_string(),
-        protocol_name: "Coinbase cbETH".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::LiquidStaking,
-        token_a: Some(TokenInfo {
-            address: "0x4200000000000000000000000000000000000006".to_string(),
-            symbol: "ETH".to_string(),
-            name: "Ether".to_string(),
-            decimals: 18,
-            price_usd: Some(3200.0),
-        }),
-        token_b: None,
-        apy: 3.5,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 3.5,
-            reward_apy: 0.0,
-            incentive_apy: 0.0,
-            total_apy: 3.5,
-        },
-        tvl_usd: 2_500_000_000.0,
-        volume_24h_usd: Some(25_000_000.0),
-        risk_level: RiskLevel::Low,
-        risk_factors: vec![
-            "Consensus layer slashing risk".to_string(),
-            "Centralization risk (Coinbase)".to_string(),
-            "Withdrawal queue delay".to_string(),
-        ],
-        strategy: Some("Stake ETH through Coinbase to receive cbETH liquid staking derivative. Earn consensus and execution layer rewards.".to_string()),
-        lock_days: None,
-        smart_contract_address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc8".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    opps.push(YieldOpportunity {
-        id: "steth-lido".to_string(),
-        protocol_id: "lido-steth-base".to_string(),
-        protocol_name: "Lido stETH".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::LiquidStaking,
-        token_a: Some(TokenInfo {
-            address: "0x4200000000000000000000000000000000000006".to_string(),
-            symbol: "ETH".to_string(),
-            name: "Ether".to_string(),
-            decimals: 18,
-            price_usd: Some(3200.0),
-        }),
-        token_b: None,
-        apy: 3.3,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 3.3,
-            reward_apy: 0.0,
-            incentive_apy: 0.0,
-            total_apy: 3.3,
-        },
-        tvl_usd: 1_800_000_000.0,
-        volume_24h_usd: Some(45_000_000.0),
-        risk_level: RiskLevel::Low,
-        risk_factors: vec![
-            "Consensus layer slashing risk".to_string(),
-            "Oracle risk".to_string(),
-            "Withdrawal queue delay".to_string(),
-        ],
-        strategy: Some("Stake ETH with Lido's decentralized validator set to receive stETH. No minimum, no lock-up.".to_string()),
-        lock_days: None,
-        smart_contract_address: "0x76712280a2F7d86855f89020505915E7B571914f".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    // Pendle PT strategies
-    opps.push(YieldOpportunity {
-        id: "pendle-cbeth-pt".to_string(),
-        protocol_id: "pendle-base".to_string(),
-        protocol_name: "Pendle Finance".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::Vault,
-        token_a: Some(TokenInfo {
-            address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc8".to_string(),
-            symbol: "cbETH".to_string(),
-            name: "Coinbase Wrapped Staked ETH".to_string(),
-            decimals: 18,
-            price_usd: Some(3450.0),
-        }),
-        token_b: None,
-        apy: 8.7,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 3.5,
-            reward_apy: 0.0,
-            incentive_apy: 5.2,
-            total_apy: 8.7,
-        },
-        tvl_usd: 12_000_000.0,
-        volume_24h_usd: Some(2_500_000.0),
-        risk_level: RiskLevel::Medium,
-        risk_factors: vec![
-            "Yield token price fluctuation".to_string(),
-            "Maturity date risk".to_string(),
-            "Smart contract risk".to_string(),
-        ],
-        strategy: Some("Purchase discounted cbETH Principal Token (PT) on Pendle. Hold to maturity for fixed yield enhancement.".to_string()),
-        lock_days: Some(180),
-        smart_contract_address: "0x4A61E1DD111C21e7b96B16Fd4E5e202fF689a739".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    // Morpho Blue Markets
-    opps.push(YieldOpportunity {
-        id: "morpho-blue-weth-market".to_string(),
-        protocol_id: "morpho-base".to_string(),
-        protocol_name: "Morpho Blue".to_string(),
-        chain_id: 8453,
-        opportunity_type: ProtocolType::Lending,
-        token_a: Some(TokenInfo {
-            address: "0x4200000000000000000000000000000000000006".to_string(),
-            symbol: "WETH".to_string(),
-            name: "Wrapped Ether".to_string(),
-            decimals: 18,
-            price_usd: Some(3200.0),
-        }),
-        token_b: None,
-        apy: 5.2,
-        apy_breakdown: ApyBreakdown {
-            base_apy: 5.2,
-            reward_apy: 0.0,
-            incentive_apy: 0.0,
-            total_apy: 5.2,
-        },
-        tvl_usd: 35_000_000.0,
-        volume_24h_usd: Some(5_000_000.0),
-        risk_level: RiskLevel::Low,
-        risk_factors: vec![
-            "Smart contract risk".to_string(),
-            "Oracle risk".to_string(),
-            "Isolated market risk".to_string(),
-        ],
-        strategy: Some("Supply WETH to Morpho Blue's isolated lending market with risk-adjusted interest rates.".to_string()),
-        lock_days: None,
-        smart_contract_address: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb".to_string(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    });
-
-    opps
-}
 
 async fn search(
     State(state): State<AppState>,
@@ -742,7 +446,7 @@ async fn search(
         }
     }
 
-    // Try to get cached data, fallback to static if cache is empty
+    // Try to get cached data, fallback to live fetch if cache is empty
     let cached = state.yield_cache.data.read().await;
     let all_opps = if !cached.is_empty() {
         cached.clone()
@@ -750,7 +454,7 @@ async fn search(
         drop(cached);
         match fetch_defi_llama_data(&state.http, &state.defi_circuit_breaker).await {
             Ok(data) if !data.is_empty() => data,
-            _ => generate_opportunities(),
+            _ => vec![],
         }
     };
 

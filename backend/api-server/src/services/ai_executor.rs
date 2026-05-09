@@ -22,6 +22,7 @@ struct GasEstimate {
 pub struct ToolContext {
     pub app_state: AppState,
     pub user_id: Option<String>,
+    pub wallet_address: Option<String>,
 }
 
 /// Result of a tool execution
@@ -41,15 +42,9 @@ fn parse_param<T: for<'a> Deserialize<'a>>(params: &Value, key: &str) -> Option<
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-/// Helper: Get demo wallet address (fallback)
-fn demo_wallet_address() -> Address {
-    std::env::var("WALLET_DEMO_ADDRESS")
-        .ok()
-        .and_then(|s| Address::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            // Vitalik's address as default demo
-            Address::from_str("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").unwrap()
-        })
+/// Parse wallet address from context. Returns None if not provided or invalid.
+fn parse_wallet_address(wallet_address: Option<&str>) -> Option<Address> {
+    wallet_address.and_then(|addr| Address::from_str(addr).ok())
 }
 
 /// Helper: Get USDC address for common chains
@@ -114,7 +109,16 @@ impl ToolContext {
     async fn execute_get_balance(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
         let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
         let token_filter: Option<String> = parse_param(&params, "token");
-        let owner = demo_wallet_address();
+        let owner = match parse_wallet_address(self.wallet_address.as_deref()) {
+            Some(a) => a,
+            None => return ToolExecutionResult {
+                tool_id: tool_id.to_string(),
+                tool_name: "get_balance".into(),
+                success: false,
+                result: Value::Null,
+                error: Some("钱包地址未提供".into()),
+            },
+        };
         let address = format!("0x{:x}", owner);
 
         // Use Covalent API if configured
@@ -244,7 +248,16 @@ impl ToolContext {
         };
 
         let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
-        let from_address = demo_wallet_address();
+        let from_address = match parse_wallet_address(self.wallet_address.as_deref()) {
+            Some(a) => a,
+            None => return ToolExecutionResult {
+                tool_id: tool_id.to_string(),
+                tool_name: "send_transaction".into(),
+                success: false,
+                result: Value::Null,
+                error: Some("钱包地址未提供".into()),
+            },
+        };
 
         // Validate to_address format
         if !to_address.starts_with("0x") || to_address.len() != 42 {
@@ -439,18 +452,12 @@ impl ToolContext {
         let db = match self.app_state.require_db() {
             Ok(db) => db,
             Err(_) => {
-                // Database not available - return demo response
-                let demo_tx = serde_json::json!({
-                    "transactions": [],
-                    "total": 0,
-                    "note": "Database not available. Running in demo mode."
-                });
                 return ToolExecutionResult {
                     tool_id: tool_id.to_string(),
                     tool_name: "get_transaction_history".into(),
-                    success: true,
-                    result: demo_tx,
-                    error: None,
+                    success: false,
+                    result: Value::Null,
+                    error: Some("数据库不可用".into()),
                 };
             }
         };
@@ -658,7 +665,16 @@ impl ToolContext {
 
     // --- get_wallet_address ---
     async fn execute_get_wallet_address(&self, tool_id: &str) -> ToolExecutionResult {
-        let address = demo_wallet_address();
+        let address = match parse_wallet_address(self.wallet_address.as_deref()) {
+            Some(a) => a,
+            None => return ToolExecutionResult {
+                tool_id: tool_id.to_string(),
+                tool_name: "get_wallet_address".into(),
+                success: false,
+                result: Value::Null,
+                error: Some("钱包地址未提供".into()),
+            },
+        };
         let result = serde_json::json!({
             "address": format!("0x{:x}", address),
             "chain": "Base",
@@ -676,7 +692,16 @@ impl ToolContext {
 
     // --- security_audit ---
     async fn execute_security_audit(&self, tool_id: &str) -> ToolExecutionResult {
-        let address = demo_wallet_address();
+        let address = match parse_wallet_address(self.wallet_address.as_deref()) {
+            Some(a) => a,
+            None => return ToolExecutionResult {
+                tool_id: tool_id.to_string(),
+                tool_name: "security_audit".into(),
+                success: false,
+                result: Value::Null,
+                error: Some("钱包地址未提供".into()),
+            },
+        };
 
         // Check token approvals (simplified - in production, query on-chain approvals)
         let mut findings: Vec<Value> = Vec::new();
@@ -787,17 +812,28 @@ impl ToolContext {
 
         let slippage: f64 = parse_param(&params, "slippage").unwrap_or(0.5);
 
-        // Simulate price quote (in production, query DEX aggregator)
-        let estimated_output = match (from_token.to_uppercase().as_str(), to_token.to_uppercase().as_str()) {
-            ("ETH", "USDC") => {
+        let from_price = self.app_state.price_cache
+            .get_usd_price(&self.app_state.http, &from_token)
+            .await;
+        let to_price = self.app_state.price_cache
+            .get_usd_price(&self.app_state.http, &to_token)
+            .await;
+
+        let estimated_output = match (from_price, to_price) {
+            (Some(fp), Some(tp)) if tp > 0.0 => {
                 let amt: f64 = amount.parse().unwrap_or(0.0);
-                format!("{:.2}", amt * 2500.0) // Simplified ETH price
+                let output = amt * fp / tp;
+                if tp >= 1.0 { format!("{:.2}", output) } else { format!("{:.6}", output) }
             }
-            ("USDC", "ETH") => {
-                let amt: f64 = amount.parse().unwrap_or(0.0);
-                format!("{:.6}", amt / 2500.0)
+            _ => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some(format!("无法获取 {}/{} 价格", from_token, to_token)),
+                };
             }
-            _ => "0".into(),
         };
 
         let result = serde_json::json!({

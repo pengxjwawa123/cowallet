@@ -162,12 +162,14 @@ class ChatViewState extends State<ChatView> {
   }
 
   Future<void> _doStream(String text, int aiMsgIndex) async {
+    final walletAddress = CowalletApp.of(context).walletAddress;
     final userId = await SecureStorage.getUserId();
 
     final stream = AiApi.chatStream(
       message: text,
       sessionId: _sessionId,
       userId: userId,
+      walletAddress: walletAddress.isNotEmpty ? walletAddress : null,
     );
 
     _streamSub?.cancel();
@@ -867,7 +869,7 @@ class ChatViewState extends State<ChatView> {
 }
 
 // ---------------------------------------------------------------------------
-// Thinking dots animation
+// Claude Code-style thinking indicator
 // ---------------------------------------------------------------------------
 
 class _ThinkingDots extends StatefulWidget {
@@ -878,14 +880,22 @@ class _ThinkingDots extends StatefulWidget {
 class _ThinkingDotsState extends State<_ThinkingDots>
     with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
+  int _phraseIndex = 0;
+
+  static const _phrases = ['思考中', '分析中', '处理中', '理解中'];
 
   @override
   void initState() {
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 2000),
     )..repeat();
+    _ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        setState(() => _phraseIndex = (_phraseIndex + 1) % _phrases.length);
+      }
+    });
   }
 
   @override
@@ -901,33 +911,63 @@ class _ThinkingDotsState extends State<_ThinkingDots>
       builder: (_, __) {
         return Row(
           mainAxisSize: MainAxisSize.min,
-          children: List.generate(3, (i) {
-            final delay = i * 0.2;
-            final t = (_ctrl.value - delay).clamp(0.0, 1.0);
-            final progress = (t * 3.14159).clamp(0.0, 3.14159);
-            final sinVal = _sin(progress);
-            final opacity = 0.3 + 0.7 * sinVal;
-            final offset = -3.0 * sinVal;
-
-            return Padding(
-              padding: EdgeInsets.only(right: i < 2 ? 4 : 0),
-              child: Transform.translate(
-                offset: Offset(0, offset),
-                child: Opacity(
-                  opacity: opacity,
-                  child: Container(
-                    width: 6, height: 6,
-                    decoration: const BoxDecoration(
-                      color: CwColors.ink4,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
+          children: [
+            _buildPulsingOrb(),
+            const SizedBox(width: 10),
+            _buildShimmerText(),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildPulsingOrb() {
+    final scale = 1.0 + 0.2 * _sin(_ctrl.value * 3.14159 * 2);
+    final opacity = 0.6 + 0.4 * _sin(_ctrl.value * 3.14159 * 2);
+    return Transform.scale(
+      scale: scale,
+      child: Opacity(
+        opacity: opacity,
+        child: Container(
+          width: 8, height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                CwColors.accent.withValues(alpha: 0.9),
+                CwColors.accent.withValues(alpha: 0.3),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShimmerText() {
+    final shimmerPosition = _ctrl.value;
+    return ShaderMask(
+      shaderCallback: (bounds) {
+        return LinearGradient(
+          begin: Alignment(-1.0 + 2.0 * shimmerPosition, 0),
+          end: Alignment(0.0 + 2.0 * shimmerPosition, 0),
+          colors: const [
+            CwColors.ink4,
+            CwColors.ink2,
+            CwColors.ink4,
+          ],
+          stops: const [0.0, 0.5, 1.0],
+        ).createShader(bounds);
+      },
+      child: Text(
+        _phrases[_phraseIndex],
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: Colors.white,
+          letterSpacing: 0.5,
+        ),
+      ),
     );
   }
 

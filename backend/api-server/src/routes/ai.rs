@@ -314,6 +314,8 @@ pub struct ChatRequest {
     pub session_id: Option<String>,
     #[serde(default)]
     pub user_id: Option<String>,
+    #[serde(default)]
+    pub wallet_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -566,6 +568,7 @@ async fn chat_stream(
         let tool_ctx = ToolContext {
             app_state: state.clone(),
             user_id: req.user_id.clone(),
+            wallet_address: req.wallet_address.clone(),
         };
 
         let mut tool_results: Vec<ToolExecutionResult> = Vec::new();

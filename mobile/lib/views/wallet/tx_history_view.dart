@@ -4,6 +4,7 @@ import '../../theme/colors.dart';
 import '../../widgets/top_toast.dart';
 import '../../api/tx_api.dart';
 import '../../services/locator.dart';
+import '../../main.dart';
 
 class TxHistoryView extends StatefulWidget {
   const TxHistoryView({super.key});
@@ -278,6 +279,7 @@ class _TxHistoryViewState extends State<TxHistoryView> {
         final tx = _transactions[index] as Map<String, dynamic>;
         return _TransactionItem(
           tx: tx,
+          walletAddress: CowalletApp.of(context).walletAddress,
           onTap: () => _showTransactionDetail(tx),
         );
       },
@@ -287,10 +289,12 @@ class _TxHistoryViewState extends State<TxHistoryView> {
 
 class _TransactionItem extends StatelessWidget {
   final Map<String, dynamic> tx;
+  final String walletAddress;
   final VoidCallback onTap;
 
   const _TransactionItem({
     required this.tx,
+    required this.walletAddress,
     required this.onTap,
   });
 
@@ -304,8 +308,7 @@ class _TransactionItem extends StatelessWidget {
     final timestamp = tx['timestamp'] as String?;
     final blockNumber = tx['block_number'] as int?;
 
-    // Determine if incoming or outgoing (simplified - needs actual wallet address)
-    final isIncoming = true; // TODO: Compare with wallet address
+    final isIncoming = to.toLowerCase() == walletAddress.toLowerCase();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

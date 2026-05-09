@@ -478,39 +478,7 @@ async fn verify_recovery_otp(
     .await
     .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    // TODO: Decrypt server shard and perform actual reshare protocol
-    // For now, return placeholder response
-    let public_key_hex = "0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string();
-    let server_reshare_messages_json = vec![];
-
-    // Issue JWT for the recovered session
-    let token_pair = issue_token_pair(&user_id.to_string(), &body.device_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Audit log - successful recovery
-    let _ = state
-        .audit_logger
-        .log_with_details(
-            user_id,
-            "auth.recovery_completed",
-            AuditResult::Success,
-            None,
-            None,
-            None,
-            None,
-            Some(serde_json::json!({ "device_id": body.device_id })),
-        )
-        .await;
-
-    tracing::info!("Wallet recovery completed for user {}", user_id);
-
-    Ok(Json(VerifyRecoveryOtpResponse {
-        token: token_pair.access_token,
-        refresh_token: token_pair.refresh_token,
-        expires_in: token_pair.expires_in,
-        token_type: token_pair.token_type,
-        user_id: user_id.to_string(),
-        public_key_hex,
-        server_reshare_messages_json,
-    }))
+    // TODO: Implement actual reshare protocol — decrypt server shard and generate reshare messages
+    // Once implemented: decrypt shard, perform reshare, issue JWT, return public key + messages
+    Err(StatusCode::NOT_IMPLEMENTED)
 }
