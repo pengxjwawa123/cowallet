@@ -430,6 +430,7 @@ impl ToolContext {
         let token_str: String = parse_param(&params, "token").unwrap_or_else(|| "ETH".into());
         let chain_id: u64 = parse_param(&params, "chain_id")
             .unwrap_or_else(|| infer_chain_id_from_token(&token_str));
+        let send_all: bool = parse_param(&params, "send_all").unwrap_or(false);
         let from_address = match parse_wallet_address(self.wallet_address.as_deref()) {
             Some(a) => a,
             None => return ToolExecutionResult {
@@ -506,6 +507,8 @@ impl ToolContext {
             "value": value_wei_str,
             "value_formatted": format!("{} ETH", value_formatted),
             "chain_id": chain_id,
+            "token": token_str,
+            "send_all": send_all,
             "estimated_gas": gas_estimate.gas_units,
             "warning": "This transaction requires your biometric confirmation before being signed and broadcast. Please verify all parameters carefully.",
             "next_step": "Review the details above and confirm with your biometric authentication to proceed"

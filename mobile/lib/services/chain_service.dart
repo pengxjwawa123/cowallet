@@ -102,6 +102,7 @@ abstract class ChainService {
   Future<BigInt> getGasPrice();
   Future<BigInt> estimateGas(Map<String, dynamic> txParams);
   Future<BigInt?> getBaseFee();
+  Future<BigInt> getMaxPriorityFeePerGas();
   Future<Map<String, dynamic>?> getTransactionReceipt(String txHash);
   String tokenContract(String symbol);
   ChainConfig get currentConfig;
@@ -212,6 +213,34 @@ class JsonRpcChainService implements ChainService {
     final baseFeeHex = block['baseFeePerGas'] as String?;
     if (baseFeeHex == null) return null;
     return BigInt.parse(baseFeeHex);
+  }
+
+  @override
+  Future<BigInt> getMaxPriorityFeePerGas() async {
+    try {
+      final result = await _call('eth_maxPriorityFeePerGas', []);
+      final suggested = BigInt.parse(result as String);
+      final floor = _minPriorityFee(_config.chainId);
+      return suggested > floor ? suggested : floor;
+    } catch (_) {
+      // Fallback: gasPrice - baseFee, or chain minimum
+      final gasPrice = await getGasPrice();
+      final baseFee = await getBaseFee();
+      final floor = _minPriorityFee(_config.chainId);
+      if (baseFee != null && gasPrice > baseFee) {
+        final derived = gasPrice - baseFee;
+        return derived > floor ? derived : floor;
+      }
+      return floor;
+    }
+  }
+
+  static BigInt _minPriorityFee(int chainId) {
+    switch (chainId) {
+      case 137: return BigInt.from(30000000000); // Polygon: 30 gwei
+      case 56:  return BigInt.from(3000000000);  // BSC: 3 gwei
+      default:  return BigInt.from(1000000000);  // Others: 1 gwei
+    }
   }
 
   @override

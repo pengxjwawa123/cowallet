@@ -85,10 +85,9 @@ class MpcTxService implements TxService {
               })
             : BigInt.from(21000));
 
-    final baseGasPrice = await _chain.getGasPrice();
-    final maxFee = maxFeePerGas ?? baseGasPrice * BigInt.two;
-    final maxPriority =
-        maxPriorityFeePerGas ?? BigInt.from(1500000000); // 1.5 gwei
+    final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
+    final maxPriority = maxPriorityFeePerGas ?? await _chain.getMaxPriorityFeePerGas();
+    final maxFee = maxFeePerGas ?? baseFee * BigInt.two + maxPriority;
 
     final dataBytes =
         hasCalldata ? Uint8List.fromList(hex.decode(data.replaceFirst('0x', ''))) : Uint8List(0);
@@ -134,7 +133,8 @@ class MpcTxService implements TxService {
 
     final r = _bytesToBigInt(Uint8List.fromList(signResult.signature.sublist(0, 32)));
     final s = _bytesToBigInt(Uint8List.fromList(signResult.signature.sublist(32, 64)));
-    final v = signResult.signature[64];
+    final rawV = signResult.signature[64];
+    final v = rawV >= 27 ? rawV - 27 : rawV;
 
     // Build signed tx: 0x02 || RLP([...fields, v, r, s])
     final signedFields = [

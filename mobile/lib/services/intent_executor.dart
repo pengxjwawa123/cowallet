@@ -120,17 +120,11 @@ class IntentExecutor {
       final token = (params['token'] ?? 'ETH').toUpperCase();
       final chainIdStr = params['chain_id'];
       final chainId = chainIdStr != null ? int.tryParse(chainIdStr) : null;
+      final sendAll = params['send_all'] == 'true';
 
       if (to.isEmpty || !to.startsWith('0x') || to.length != 42) {
         return ActionResult.fail(
           S.lang == Lang.zh ? '无效的收款地址' : 'Invalid recipient address',
-        );
-      }
-
-      final amount = _parseAmount(amountStr, token);
-      if (amount == BigInt.zero) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '无效的金额' : 'Invalid amount',
         );
       }
 
@@ -144,9 +138,33 @@ class IntentExecutor {
         (_chain as JsonRpcChainService).switchChain(ChainConfig.byId(targetChainId));
       }
 
+      final isNativeToken = _isNativeToken(token, targetChainId);
+
+      BigInt amount;
+      if (sendAll && isNativeToken) {
+        final balance = await _chain.getEthBalance(address);
+        final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
+        final maxPriority = await _chain.getMaxPriorityFeePerGas();
+        final maxFee = baseFee * BigInt.two + maxPriority;
+        final gasCost = maxFee * BigInt.from(21000);
+        amount = balance - gasCost;
+        if (amount <= BigInt.zero) {
+          return ActionResult.fail(
+            S.lang == Lang.zh ? '余额不足以支付Gas费' : 'Insufficient balance for gas',
+          );
+        }
+      } else {
+        amount = _parseAmount(amountStr, token);
+      }
+
+      if (amount == BigInt.zero) {
+        return ActionResult.fail(
+          S.lang == Lang.zh ? '无效的金额' : 'Invalid amount',
+        );
+      }
+
       final String txHash;
 
-      final isNativeToken = _isNativeToken(token, targetChainId);
       if (isNativeToken) {
         txHash = await _tx.signAndSend(to: to, value: amount, chainId: targetChainId);
       } else {

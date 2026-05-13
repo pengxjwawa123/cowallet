@@ -163,14 +163,15 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                 tool_type: "function".into(),
                 function: FunctionDefinition {
                     name: "send_transaction".into(),
-                    description: "Prepare a token or ETH transfer. Requires user confirmation before signing. IMPORTANT: You MUST set chain_id based on the token. POL/MATIC → 137 (Polygon), ETH → 1 or 8453 (Base), BNB → 56 (BSC). Never default to Base for non-Base tokens.".into(),
+                    description: "Prepare a token or ETH transfer. Requires user confirmation before signing. IMPORTANT: You MUST set chain_id based on the token. POL/MATIC → 137 (Polygon), ETH → 1 or 8453 (Base), BNB → 56 (BSC). Never default to Base for non-Base tokens. When user says '全部转出'/'send all'/'transfer all', set send_all=true and value to '0'.".into(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
                             "to_address": { "type": "string", "description": "Recipient 0x address" },
-                            "value": { "type": "string", "description": "Amount to send (human readable, e.g. '0.1')" },
+                            "value": { "type": "string", "description": "Amount to send (human readable, e.g. '0.1'). Set '0' when send_all is true." },
                             "token": { "type": "string", "description": "Token symbol: ETH, USDC, POL, BNB, etc. Default: ETH" },
-                            "chain_id": { "type": "integer", "description": "Target chain ID. MUST match the token's native chain: ETH→1, Base ETH→8453, POL/MATIC→137, BNB→56, ARB ETH→42161, OP ETH→10. Required for non-ETH native tokens." }
+                            "chain_id": { "type": "integer", "description": "Target chain ID. MUST match the token's native chain: ETH→1, Base ETH→8453, POL/MATIC→137, BNB→56, ARB ETH→42161, OP ETH→10. Required for non-ETH native tokens." },
+                            "send_all": { "type": "boolean", "description": "Set true when user wants to send entire balance. Client will auto-deduct gas fees." }
                         },
                         "required": ["to_address", "value"]
                     }),
@@ -285,6 +286,7 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，一个 AI 驱动的多链 MPC �
   - ETH (Arbitrum) → chain_id: 42161
   - ETH (Optimism) → chain_id: 10
   - 如果用户未指定链，根据代币的原生链推断。USDC/USDT 等多链代币默认 Base (8453)
+  - 用户说"全部转出"/"send all"/"transfer all"/"全部发送"时，设置 send_all: true，value 设为 "0"（客户端会自动计算余额减去 gas 费）
 - 用户提到"兑换"/"swap"/"换"时，用 swap_token。必须根据代币确定 chain_id（同 send_transaction 规则）
 - 用户提到"余额"/"balance"时，用 get_balance（默认返回所有链的余额）
 - 用户提到"地址"/"收款"/"receive"时，用 get_wallet_address

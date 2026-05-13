@@ -236,6 +236,7 @@ class ChatViewState extends State<ChatView> {
                     'amount': params['value'] ?? '0',
                     'token': params['token'] ?? 'ETH',
                     'chain_id': params['chain_id'],
+                    'send_all': params['send_all'] == true || params['send_all'] == 'true',
                   },
                   toolCallId: id,
                 ));
@@ -431,6 +432,7 @@ class ChatViewState extends State<ChatView> {
       'amount': msg.widgetData['amount'] as String? ?? '0',
       'token': msg.widgetData['token'] as String? ?? 'ETH',
       if (msg.widgetData['chain_id'] != null) 'chain_id': msg.widgetData['chain_id'].toString(),
+      if (msg.widgetData['send_all'] == true) 'send_all': 'true',
     };
 
     final result = await Services.intent.execute('transfer', params);

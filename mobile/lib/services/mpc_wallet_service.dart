@@ -24,7 +24,7 @@ class MpcWalletService implements WalletService {
   static const int _deviceParty = 0;
   static const int _serverParty = 1;
   static const int _backupParty = 2;
-  static const Duration _wsTimeout = Duration(seconds: 60);
+  static const Duration _wsTimeout = Duration(seconds: 5);
 
   /// 执行完整的 DKG 密钥生成协议
   /// [walletId] 可选，用于多钱包场景
@@ -594,8 +594,8 @@ class MpcWalletService implements WalletService {
     required int expectedCount,
     int afterId = 0,
   }) async {
-    const pollInterval = Duration(milliseconds: 500);
-    const pollTimeout = Duration(seconds: 60);
+    const pollInterval = Duration(seconds: 1);
+    const pollTimeout = Duration(seconds: 10);
     final deadline = DateTime.now().add(pollTimeout);
     List<MpcMessage> allMessages = [];
     int lastId = afterId;
