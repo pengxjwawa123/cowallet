@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-13T07:02:48.469Z",
+  "updatedAt": "2026-05-13T07:56:32.710Z",
   "missions": [
     {
       "id": "session:ad831a6c-7e40-4652-98e7-ae3bb5ded7e0:none",
@@ -861,7 +861,7 @@
       "name": "none",
       "objective": "Session mission",
       "createdAt": "2026-05-12T07:20:24.800Z",
-      "updatedAt": "2026-05-13T07:02:48.469Z",
+      "updatedAt": "2026-05-13T07:56:32.710Z",
       "status": "done",
       "workerCount": 3,
       "taskCounts": {
@@ -881,7 +881,7 @@
           "currentStep": null,
           "latestUpdate": "completed",
           "completedSummary": null,
-          "updatedAt": "2026-05-13T07:02:48.469Z"
+          "updatedAt": "2026-05-13T07:56:32.710Z"
         },
         {
           "name": "document-specialist:a3dc3ff",
@@ -984,6 +984,38 @@
           "agent": "executor:ad67fe1",
           "detail": "completed",
           "sourceKey": "session-stop:a77c92735ca1bfc7e"
+        },
+        {
+          "id": "session-stop:aa6b711b6b4c77cb7:2026-05-13T07:17:08.813Z",
+          "at": "2026-05-13T07:17:08.813Z",
+          "kind": "completion",
+          "agent": "executor:ad67fe1",
+          "detail": "completed",
+          "sourceKey": "session-stop:aa6b711b6b4c77cb7"
+        },
+        {
+          "id": "session-stop:a79ac8d16dfb881b4:2026-05-13T07:41:21.160Z",
+          "at": "2026-05-13T07:41:21.160Z",
+          "kind": "completion",
+          "agent": "executor:ad67fe1",
+          "detail": "completed",
+          "sourceKey": "session-stop:a79ac8d16dfb881b4"
+        },
+        {
+          "id": "session-stop:a4fe154e7d5d3dd93:2026-05-13T07:53:09.115Z",
+          "at": "2026-05-13T07:53:09.115Z",
+          "kind": "completion",
+          "agent": "executor:ad67fe1",
+          "detail": "completed",
+          "sourceKey": "session-stop:a4fe154e7d5d3dd93"
+        },
+        {
+          "id": "session-stop:aa11c8aaab9acb099:2026-05-13T07:56:32.710Z",
+          "at": "2026-05-13T07:56:32.710Z",
+          "kind": "completion",
+          "agent": "executor:ad67fe1",
+          "detail": "completed",
+          "sourceKey": "session-stop:aa11c8aaab9acb099"
         }
       ]
     }

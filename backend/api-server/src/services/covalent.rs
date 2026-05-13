@@ -61,6 +61,14 @@ pub fn chain_display_name(chain_id: u64) -> &'static str {
     }
 }
 
+pub fn native_symbol(chain_id: u64) -> &'static str {
+    match chain_id {
+        137 | 80002 => "POL",
+        56 => "BNB",
+        _ => "ETH",
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CovalentResponse {
     data: Option<CovalentData>,
@@ -86,6 +94,12 @@ struct CovalentBalanceItem {
     native_token: Option<bool>,
     #[serde(rename = "type")]
     item_type: Option<String>,
+    logo_urls: Option<CovalentLogoUrls>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CovalentLogoUrls {
+    token_logo_url: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -97,6 +111,7 @@ pub struct TokenBalance {
     pub contract_address: Option<String>,
     pub decimals: u32,
     pub native_token: bool,
+    pub logo_url: Option<String>,
 }
 
 fn format_units(raw: &str, decimals: u32) -> String {
@@ -246,7 +261,7 @@ pub async fn get_transactions(
                 "failed".to_string()
             },
             gas_used: item.gas_spent.unwrap_or(0),
-            token_symbol: "ETH".to_string(),
+            token_symbol: native_symbol(chain_id).to_string(),
             value_quote: item.value_quote.unwrap_or(0.0),
             chain_id,
             chain_name: chain_display_name(chain_id).to_string(),
@@ -383,9 +398,11 @@ pub async fn get_balances(
         let decimals = item.contract_decimals.unwrap_or(18);
         let symbol = item
             .contract_ticker_symbol
-            .unwrap_or_else(|| if is_native { "ETH".into() } else { "???".into() });
+            .unwrap_or_else(|| if is_native { native_symbol(chain_id).into() } else { "???".into() });
         let formatted = format_units(raw_balance, decimals);
         let usd = format!("{:.2}", item.quote.unwrap_or(0.0));
+
+        let logo_url = item.logo_urls.and_then(|l| l.token_logo_url);
 
         tokens.push(TokenBalance {
             symbol,
@@ -395,6 +412,7 @@ pub async fn get_balances(
             contract_address: item.contract_address,
             decimals,
             native_token: is_native,
+            logo_url,
         });
     }
 

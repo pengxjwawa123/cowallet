@@ -6,12 +6,16 @@ class TokenBalance {
   final String balance;
   final String usd;
   final bool native;
+  final String? logoUrl;
+  final String? contractAddress;
 
   TokenBalance({
     required this.symbol,
     required this.balance,
     required this.usd,
     required this.native,
+    this.logoUrl,
+    this.contractAddress,
   });
 
   factory TokenBalance.fromJson(Map<String, dynamic> json) {
@@ -20,6 +24,8 @@ class TokenBalance {
       balance: json['balance'] as String? ?? '0',
       usd: json['usd'] as String? ?? '0.00',
       native: json['native'] as bool? ?? false,
+      logoUrl: json['logo_url'] as String?,
+      contractAddress: json['contract_address'] as String?,
     );
   }
 }

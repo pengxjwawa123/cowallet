@@ -35,6 +35,10 @@ struct TokenInfo {
     balance: String,
     usd: String,
     native: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logo_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contract_address: Option<String>,
 }
 
 /// GET /balance?address={addr}&chain_id={chain_id}
@@ -72,6 +76,8 @@ async fn get_balance(
                     balance: t.balance_formatted,
                     usd: t.usd,
                     native: t.native_token,
+                    logo_url: t.logo_url,
+                    contract_address: t.contract_address,
                 })
                 .collect();
 
@@ -123,6 +129,8 @@ async fn get_balance_via_rpc(
             balance: formatted,
             usd: "—".to_string(),
             native: true,
+            logo_url: None,
+            contract_address: None,
         }],
         total_usd: "—".to_string(),
     }))
@@ -182,6 +190,8 @@ async fn get_all_balances(
                             balance: t.balance_formatted,
                             usd: t.usd,
                             native: t.native_token,
+                            logo_url: t.logo_url,
+                            contract_address: t.contract_address,
                         })
                         .collect(),
                     total_usd: chain.total_usd,

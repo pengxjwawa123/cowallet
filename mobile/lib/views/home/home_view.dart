@@ -78,14 +78,8 @@ class _HomeViewState extends State<HomeView> {
       );
       if (result.isSuccess && result.data != null) {
         final data = result.data!;
-        // Extract transactions from all chains and flatten
-        final chainsList = data['chains'] as List<dynamic>? ?? [];
-        final allTxs = <Map<String, dynamic>>[];
-        for (final chainData in chainsList) {
-          final chainMap = chainData as Map<String, dynamic>;
-          final txList = chainMap['transactions'] as List<dynamic>? ?? [];
-          allTxs.addAll(txList.map((tx) => tx as Map<String, dynamic>));
-        }
+        final txList = data['transactions'] as List<dynamic>? ?? [];
+        final allTxs = txList.map((tx) => tx as Map<String, dynamic>).toList();
         // Sort by timestamp descending and take top 5
         allTxs.sort((a, b) {
           final aTime = a['timestamp'] as String? ?? '';
@@ -603,8 +597,8 @@ class _HomeViewState extends State<HomeView> {
 
     // Subtitle with chain badge, relative time and address
     final relativeTime = _formatRelativeTime(timestamp);
-    final chain = ChainConfig.byChainId(chainId)!;
-    final chainColor = _chainColor(chain);
+    final chain = ChainConfig.byChainId(chainId);
+    final chainColor = chain != null ? _chainColor(chain) : CwColors.ink3;
     final subtitle = '$addressPreview · $relativeTime';
 
     // Trailing amount
@@ -623,7 +617,7 @@ class _HomeViewState extends State<HomeView> {
       trailing: formattedValue != '0' ? trailingText : null,
       trailingColor: trailingColor,
       chainColor: chainColor,
-      chainName: chain.displayName,
+      chainName: chain?.displayName ?? 'Chain $chainId',
     );
   }
 

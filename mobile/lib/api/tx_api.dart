@@ -33,7 +33,7 @@ class TxApi {
     );
   }
 
-  /// 获取交易历史记录（新版本 - 按地址查询）
+  /// 获取交易历史记录（多链链上查询 via Covalent）
   /// [address] 钱包地址
   /// [chainId] 可选的链ID筛选
   /// [limit] 每页数量，默认50，最大100
@@ -45,12 +45,11 @@ class TxApi {
     int offset = 0,
   }) async {
     return await DioClient.get(
-      "/tx/history",
+      "/tx/all-history",
       params: {
         "address": address,
-        if (chainId != null) "chain_id": chainId,
+        if (chainId != null) "chains": chainId.toString(),
         "limit": limit,
-        "offset": offset,
       },
     );
   }

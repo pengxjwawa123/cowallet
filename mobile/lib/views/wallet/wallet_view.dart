@@ -384,6 +384,7 @@ class _WalletViewState extends State<WalletView> {
     final symbol = token.symbol as String;
     final balance = token.balance as String;
     final usd = token.usd as String;
+    final logoUrl = token.logoUrl as String?;
 
     String emoji = '🪙';
     Color iconBg = CwColors.ink4.withValues(alpha: 0.1);
@@ -409,20 +410,19 @@ class _WalletViewState extends State<WalletView> {
         padding: const EdgeInsets.only(bottom: 12),
         child: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: iconBg,
+            if (logoUrl != null && logoUrl.isNotEmpty)
+              ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-              ),
-              child: Center(
-                child: Text(
-                  emoji,
-                  style: const TextStyle(fontSize: 16),
+                child: Image.network(
+                  logoUrl,
+                  width: 32,
+                  height: 32,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _tokenFallbackIcon(emoji, iconBg),
                 ),
-              ),
-            ),
+              )
+            else
+              _tokenFallbackIcon(emoji, iconBg),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -458,6 +458,23 @@ class _WalletViewState extends State<WalletView> {
             const SizedBox(width: 4),
             const Icon(Icons.chevron_right, size: 16, color: CwColors.ink4),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tokenFallbackIcon(String emoji, Color iconBg) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: iconBg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: Text(
+          emoji,
+          style: const TextStyle(fontSize: 16),
         ),
       ),
     );

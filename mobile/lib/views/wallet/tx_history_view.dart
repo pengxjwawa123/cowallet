@@ -182,7 +182,8 @@ class _TxHistoryViewState extends State<TxHistoryView> {
         child: Row(
           children: _chains.map((chain) {
             final isSelected = _selectedChainId == chain['id'];
-            final chainColor = chain['id'] == null ? CwColors.accent : _chainColor(ChainConfig.byChainId(chain['id'])!);
+            final chainConfig = chain['id'] != null ? ChainConfig.byChainId(chain['id']) : null;
+            final chainColor = chainConfig != null ? _chainColor(chainConfig) : CwColors.accent;
 
             return Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -346,15 +347,14 @@ class _TransactionItem extends StatelessWidget {
     final from = tx['from'] as String? ?? '';
     final to = tx['to'] as String? ?? '';
     final value = tx['value'] as String? ?? '0';
-    final tokenAddress = tx['token_address'] as String?;
     final status = tx['status'] as String? ?? '';
     final timestamp = tx['timestamp'] as String?;
     final blockNumber = tx['block_number'] as int?;
     final chainId = tx['chain_id'] as int? ?? 1;
 
     final isIncoming = to.toLowerCase() == walletAddress.toLowerCase();
-    final chain = ChainConfig.byChainId(chainId)!;
-    final chainColor = _TxHistoryViewState._chainColor(chain);
+    final chain = ChainConfig.byChainId(chainId);
+    final chainColor = chain != null ? _TxHistoryViewState._chainColor(chain) : CwColors.ink3;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -405,7 +405,7 @@ class _TransactionItem extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          chain.displayName,
+                          chain?.displayName ?? (tx['chain_name'] as String? ?? 'Chain $chainId'),
                           style: TextStyle(
                             fontFamily: 'Inter',
                             fontSize: 11,
@@ -433,7 +433,7 @@ class _TransactionItem extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          _getTokenSymbol(tokenAddress),
+                          _getTokenSymbol(tx),
                           style: const TextStyle(
                             fontSize: 12,
                             color: CwColors.ink3,
@@ -470,7 +470,7 @@ class _TransactionItem extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    _formatValue(value),
+                    _formatValue(value, _getTokenSymbol(tx)),
                     style: TextStyle(
                       fontFamily: 'JetBrainsMono',
                       fontSize: 14,
@@ -494,24 +494,34 @@ class _TransactionItem extends StatelessWidget {
     return '${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}';
   }
 
-  String _getTokenSymbol(String? tokenAddress) {
+  String _getTokenSymbol(Map<String, dynamic> tx) {
+    final symbol = tx['token_symbol'] as String?;
+    if (symbol != null && symbol.isNotEmpty) return symbol;
+    final tokenAddress = tx['token_address'] as String?;
     if (tokenAddress == null || tokenAddress == 'native') {
+      final chainId = tx['chain_id'] as int? ?? 1;
+      if (chainId == 137) return 'POL';
+      if (chainId == 56) return 'BNB';
       return 'ETH';
     }
-    // TODO: Map token addresses to symbols
     return 'Token';
   }
 
-  String _formatValue(String value) {
+  String _formatValue(String value, String symbol) {
     try {
       final val = BigInt.parse(value);
       final divisor18 = BigInt.from(10).pow(18);
-      final eth = val ~/ divisor18;
-      if (eth < BigInt.one) {
+      final whole = val ~/ divisor18;
+      final frac = val % divisor18;
+      if (whole == BigInt.zero) {
         final divisor15 = BigInt.from(10).pow(15);
-        return '${val ~/ divisor15} mETH';
+        final milli = val ~/ divisor15;
+        if (milli == BigInt.zero) return '< 0.001 $symbol';
+        return '0.${milli.toString().padLeft(3, '0')} $symbol';
       }
-      return '$eth ETH';
+      if (frac == BigInt.zero) return '$whole $symbol';
+      final fracStr = (frac * BigInt.from(1000) ~/ divisor18).toString().padLeft(3, '0');
+      return '$whole.$fracStr $symbol';
     } catch (e) {
       return value;
     }
