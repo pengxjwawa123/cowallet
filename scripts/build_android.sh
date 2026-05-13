@@ -46,14 +46,17 @@ echo "NDK: $ANDROID_NDK_HOME"
 echo "API Level: $API_LEVEL"
 echo ""
 
-# arm64-v8a (primary)
+# arm64-v8a (primary, modern devices)
 build_target "aarch64-linux-android" "arm64-v8a" "aarch64-linux-android"
 
-# armeabi-v7a (optional, uncomment if needed)
-# build_target "armv7-linux-androideabi" "armeabi-v7a" "armv7a-linux-androideabi"
+# armeabi-v7a (older 32-bit ARM devices)
+build_target "armv7-linux-androideabi" "armeabi-v7a" "armv7a-linux-androideabi"
 
-# x86_64 (emulator, uncomment if needed)
-# build_target "x86_64-linux-android" "x86_64" "x86_64-linux-android"
+# x86_64 (emulator)
+build_target "x86_64-linux-android" "x86_64" "x86_64-linux-android"
+
+# x86 (older emulator)
+build_target "i686-linux-android" "x86" "i686-linux-android"
 
 echo ""
 echo "Done. Run 'cd mobile && flutter run' to test."

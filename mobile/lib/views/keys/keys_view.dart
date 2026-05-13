@@ -9,6 +9,7 @@ import '../../widgets/top_toast.dart';
 import '../../services/locator.dart';
 import '../../services/key_health_service.dart';
 import '../../services/backup_shard_service.dart';
+import '../../utils/secure_storage.dart';
 
 class KeysView extends StatefulWidget {
   const KeysView({super.key});
@@ -64,12 +65,15 @@ class _KeysViewState extends State<KeysView> {
     });
     _keyHealth.checkPhoneKey().then((h) {
       if (mounted) setState(() { _phoneHealth = h; _phoneLoading = false; });
+      _saveStatus('key_phone_status', h.status);
     });
     _keyHealth.checkServerKey().then((h) {
       if (mounted) setState(() { _serverHealth = h; _serverLoading = false; });
+      _saveStatus('key_server_status', h.status);
     });
     _keyHealth.checkBackupKey().then((h) {
       if (mounted) setState(() { _backupHealth = h; _backupLoading = false; });
+      _saveStatus('key_backup_status', h.status);
     });
   }
 
@@ -89,7 +93,7 @@ class _KeysViewState extends State<KeysView> {
   Future<void> _testBackupKey() async {
     setState(() => _testingBackup = true);
 
-    bool success;
+    bool? success;
     if (_backupMethod == BackupMethod.file) {
       success = await _testBackupKeyWithFile();
     } else {
@@ -98,35 +102,57 @@ class _KeysViewState extends State<KeysView> {
 
     if (mounted) {
       setState(() => _testingBackup = false);
+      if (success == null) return; // user cancelled file picker
       if (success) {
         _backupHealth = KeyHealth(
           status: KeyStatus.ok,
           lastChecked: DateTime.now(),
         );
         setState(() {});
+        _saveStatus('key_backup_status', KeyStatus.ok);
         showTopToast(context, S.backupTestSuccess, backgroundColor: CwColors.success);
       } else {
+        _backupHealth = KeyHealth(
+          status: KeyStatus.error,
+          lastChecked: null,
+          error: S.backupTestFailed,
+        );
+        setState(() {});
+        _saveStatus('key_backup_status', KeyStatus.error);
+        _clearBackupLastChecked();
         showTopToast(context, S.backupTestFailed, backgroundColor: CwColors.danger);
       }
     }
   }
 
-  Future<bool> _testBackupKeyWithFile() async {
+  Future<bool?> _testBackupKeyWithFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
       );
-      if (result == null || result.files.isEmpty) return false;
+      if (result == null || result.files.isEmpty) return null;
 
       final filePath = result.files.single.path;
-      if (filePath == null) return false;
+      if (filePath == null) return null;
 
       final fileContent = await File(filePath).readAsString();
       return await _keyHealth.testBackupKeyWithFile(fileContent);
     } catch (_) {
       return false;
     }
+  }
+
+  Future<void> _saveStatus(String prefix, KeyStatus status) async {
+    final addr = await SecureStorage.get('mpc_address');
+    final suffix = (addr != null && addr.length >= 10) ? addr.toLowerCase().substring(0, 10) : 'unknown';
+    await SecureStorage.save('${prefix}_$suffix', status.name);
+  }
+
+  Future<void> _clearBackupLastChecked() async {
+    final addr = await SecureStorage.get('mpc_address');
+    final suffix = (addr != null && addr.length >= 10) ? addr.toLowerCase().substring(0, 10) : 'unknown';
+    await SecureStorage.delete('key_backup_last_checked_$suffix');
   }
 
   String _formatTimeAgo(DateTime? time) {
@@ -156,25 +182,24 @@ class _KeysViewState extends State<KeysView> {
 
   String _backupMetaText() {
     if (_backupHealth == null) return '...';
+    if (_backupHealth!.status == KeyStatus.error) return '✗ ${S.backupTestFailed}';
     if (_backupHealth!.status == KeyStatus.ok) {
+      final lastChecked = _backupHealth!.lastChecked;
+      if (lastChecked != null) {
+        final days = DateTime.now().difference(lastChecked).inDays;
+        if (days >= KeyHealthService.verifyExpiryDays) return '⚠ ${S.keyNotVerifiedDays(days)}';
+      }
       return '✓ ${S.keyVerified(_formatTimeAgo(_backupHealth!.lastChecked))}';
     }
-    if (_backupHealth!.status == KeyStatus.unknown) return '⚠ ${S.keyNotVerified}';
-    if (_backupHealth!.lastChecked != null) {
-      final days = DateTime.now().difference(_backupHealth!.lastChecked!).inDays;
-      if (days > 90) return '⚠ ${S.keyNotVerifiedDays(days)}';
-      return '✓ ${S.keyVerified(_formatTimeAgo(_backupHealth!.lastChecked))}';
-    }
+    if (_backupHealth!.status == KeyStatus.warning) return '⚠ ${S.keyNotVerified}';
     return '⚠ ${S.keyNotVerified}';
   }
 
   KeyStatus _overallBackupStatus() {
     if (_backupHealth == null) return KeyStatus.unknown;
-    if (_backupHealth!.status == KeyStatus.ok) return KeyStatus.ok;
-    if (_backupHealth!.lastChecked != null) {
+    if (_backupHealth!.status == KeyStatus.ok && _backupHealth!.lastChecked != null) {
       final days = DateTime.now().difference(_backupHealth!.lastChecked!).inDays;
-      if (days > 90) return KeyStatus.warning;
-      return KeyStatus.ok;
+      if (days >= KeyHealthService.verifyExpiryDays) return KeyStatus.warning;
     }
     return _backupHealth!.status;
   }
@@ -267,7 +292,7 @@ class _KeysViewState extends State<KeysView> {
               title: S.keyRecovery,
               where: _backupMethod == BackupMethod.file ? S.keyRecoveryWhereFile : S.keyRecoveryWhere,
               meta: _isAuthenticated ? _backupMetaText() : '••••••••',
-              actionLabel: _overallBackupStatus() != KeyStatus.ok
+              actionLabel: _isAuthenticated
                   ? (_backupMethod == BackupMethod.file ? S.keyRecoveryActionFile : S.keyRecoveryAction)
                   : null,
               onAction: _testBackupKey,

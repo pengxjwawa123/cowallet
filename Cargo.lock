@@ -77,6 +77,7 @@ dependencies = [
 name = "ai-bridge"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -747,6 +748,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "hex",
+ "hkdf",
  "jsonwebtoken",
  "k256",
  "metrics",
@@ -3082,23 +3084,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "indexer"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "chain-evm",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

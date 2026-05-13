@@ -16,6 +16,7 @@ abstract class TxService {
     BigInt? maxFeePerGas,
     BigInt? maxPriorityFeePerGas,
     String? data,
+    int? chainId,
   });
 
   Future<String> sendErc20({
@@ -25,6 +26,7 @@ abstract class TxService {
     BigInt? gasLimit,
     BigInt? maxFeePerGas,
     BigInt? maxPriorityFeePerGas,
+    int? chainId,
   });
 }
 
@@ -59,7 +61,15 @@ class MpcTxService implements TxService {
     BigInt? maxFeePerGas,
     BigInt? maxPriorityFeePerGas,
     String? data,
+    int? chainId,
   }) async {
+    final effectiveChainId = chainId ?? this.chainId;
+
+    // Switch chain RPC if targeting a different chain
+    if (_chain is JsonRpcChainService && effectiveChainId != this.chainId) {
+      (_chain as JsonRpcChainService).switchChain(ChainConfig.byId(effectiveChainId));
+    }
+
     final address = await _wallet.getAddress();
 
     final nonce = await _chain.getTransactionCount(address);
@@ -97,7 +107,7 @@ class MpcTxService implements TxService {
         hex.decode(to.toLowerCase().replaceFirst('0x', '')));
 
     final txFields = [
-      _rlpBigInt(BigInt.from(chainId)),
+      _rlpBigInt(BigInt.from(effectiveChainId)),
       _rlpBigInt(BigInt.from(nonce)),
       _rlpBigInt(maxPriority),
       _rlpBigInt(maxFee),
@@ -128,7 +138,7 @@ class MpcTxService implements TxService {
 
     // Build signed tx: 0x02 || RLP([...fields, v, r, s])
     final signedFields = [
-      _rlpBigInt(BigInt.from(chainId)),
+      _rlpBigInt(BigInt.from(effectiveChainId)),
       _rlpBigInt(BigInt.from(nonce)),
       _rlpBigInt(maxPriority),
       _rlpBigInt(maxFee),
@@ -152,7 +162,7 @@ class MpcTxService implements TxService {
     // Submit via backend (records tx in database + broadcasts to chain)
     final submitResult = await TxApi.submit(
       rawTx: rawHex,
-      chainId: chainId,
+      chainId: effectiveChainId,
       toAddr: to,
       value: value.toString(),
       token: 'ETH',
@@ -166,6 +176,11 @@ class MpcTxService implements TxService {
       );
     }
 
+    // Restore default chain RPC
+    if (_chain is JsonRpcChainService && effectiveChainId != this.chainId) {
+      (_chain as JsonRpcChainService).switchChain(ChainConfig.byId(this.chainId));
+    }
+
     return submitResult.data!['tx_hash'] as String;
   }
 
@@ -177,6 +192,7 @@ class MpcTxService implements TxService {
     BigInt? gasLimit,
     BigInt? maxFeePerGas,
     BigInt? maxPriorityFeePerGas,
+    int? chainId,
   }) async {
     // ERC-20 transfer(address,uint256) selector = 0xa9059cbb
     final toStripped = to.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
@@ -190,6 +206,7 @@ class MpcTxService implements TxService {
       gasLimit: gasLimit,
       maxFeePerGas: maxFeePerGas,
       maxPriorityFeePerGas: maxPriorityFeePerGas,
+      chainId: chainId,
     );
   }
 

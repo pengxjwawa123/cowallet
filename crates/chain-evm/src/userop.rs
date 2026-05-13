@@ -104,26 +104,33 @@ impl UserOperation {
         packed
     }
 
-    /// Calculate the UserOp hash for signing.
-    /// Note: This is a simplified version; the actual hash requires EntryPoint-specific calculation.
+    /// Calculate the UserOp hash for signing per EIP-4337 v0.6 spec.
+    ///
+    /// The correct formula is:
+    ///   userOpHash = keccak256(abi.encode(keccak256(pack(userOp)), entryPoint, chainId))
     pub fn hash(&self, entry_point: Address, chain_id: u64) -> B256 {
         use sha3::{Digest, Keccak256};
 
-        let mut hasher = Keccak256::new();
-        hasher.update(self.sender.as_slice());
-        hasher.update(self.nonce.to_be_bytes_vec());
-        hasher.update(Keccak256::digest(&self.init_code));
-        hasher.update(Keccak256::digest(&self.call_data));
-        hasher.update(self.call_gas_limit.to_be_bytes_vec());
-        hasher.update(self.verification_gas_limit.to_be_bytes_vec());
-        hasher.update(self.pre_verification_gas.to_be_bytes_vec());
-        hasher.update(self.max_fee_per_gas.to_be_bytes_vec());
-        hasher.update(self.max_priority_fee_per_gas.to_be_bytes_vec());
-        hasher.update(Keccak256::digest(&self.paymaster_and_data));
-        hasher.update(entry_point.as_slice());
-        hasher.update(chain_id.to_be_bytes());
+        // Step 1: Hash the packed UserOp
+        let packed = self.pack_for_hash();
+        let packed_hash = Keccak256::digest(&packed);
 
-        B256::from_slice(&hasher.finalize())
+        // Step 2: ABI-encode (packed_hash, entryPoint, chainId)
+        // ABI encoding: 32 bytes hash + 32 bytes address (left-padded) + 32 bytes uint256
+        let mut encoded = Vec::with_capacity(96);
+        encoded.extend_from_slice(&packed_hash);
+        encoded.extend_from_slice(&[0u8; 12]); // Pad address to 32 bytes
+        encoded.extend_from_slice(entry_point.as_slice());
+        encoded.extend_from_slice(&chain_id.to_be_bytes()); // u64 chain_id as bytes
+        encoded.extend_from_slice(&[0u8; 24]); // Pad chain_id to 32 bytes (right-justified)
+
+        // Reorder: chain_id should be big-endian u256
+        let chain_id_bytes = U256::from(chain_id).to_be_bytes::<32>();
+        encoded.truncate(64); // Keep hash + address
+        encoded.extend_from_slice(&chain_id_bytes);
+
+        // Step 3: Final keccak256
+        B256::from_slice(&Keccak256::digest(&encoded))
     }
 
     /// Format the UserOperation as a JSON object for `eth_sendUserOperation` RPC.
@@ -324,6 +331,77 @@ pub async fn submit_to_bundler(
     rpc_response
         .result
         .ok_or_else(|| UserOpError::BundlerRejected("no result in response".into()))
+}
+
+/// Request paymaster sponsorship for a UserOperation.
+///
+/// Calls the paymaster's JSON-RPC endpoint (pm_sponsorUserOperation) which returns
+/// paymasterAndData. On success, updates the UserOperation with the sponsorship data.
+pub async fn request_paymaster_sponsorship(
+    userop: &mut UserOperation,
+    paymaster_url: &str,
+    entry_point: Address,
+    chain_id: u64,
+) -> Result<(), UserOpError> {
+    #[derive(Debug, Serialize)]
+    struct PaymasterRequest<'a> {
+        jsonrpc: &'static str,
+        id: u64,
+        method: &'static str,
+        params: (&'a UserOperation, Address, String),
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct PaymasterResponse {
+        #[serde(rename = "paymasterAndData")]
+        paymaster_and_data: String,
+    }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| UserOpError::NetworkError(e.to_string()))?;
+
+    let request = PaymasterRequest {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "pm_sponsorUserOperation",
+        params: (userop, entry_point, format!("0x{:x}", chain_id)),
+    };
+
+    let response = client
+        .post(paymaster_url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| UserOpError::PaymasterError(format!("request failed: {}", e)))?;
+
+    let rpc_response: JsonRpcResponse<PaymasterResponse> = response
+        .json()
+        .await
+        .map_err(|e| UserOpError::PaymasterError(format!("invalid response: {}", e)))?;
+
+    if let Some(error) = rpc_response.error {
+        return Err(UserOpError::PaymasterError(format!(
+            "code {}: {}",
+            error.code, error.message
+        )));
+    }
+
+    let paymaster_data = rpc_response
+        .result
+        .ok_or_else(|| UserOpError::PaymasterError("no result in response".into()))?;
+
+    // Parse hex string and set paymaster_and_data
+    let hex_str = paymaster_data
+        .paymaster_and_data
+        .strip_prefix("0x")
+        .unwrap_or(&paymaster_data.paymaster_and_data);
+    let bytes = hex::decode(hex_str)
+        .map_err(|e| UserOpError::PaymasterError(format!("invalid hex: {}", e)))?;
+
+    userop.paymaster_and_data = Bytes::from(bytes);
+    Ok(())
 }
 
 /// Estimate UserOperation gas using eth_estimateUserOperationGas.

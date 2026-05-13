@@ -24,11 +24,19 @@ class KeyHealth {
 }
 
 class KeyHealthService {
-  final _cloudBackup = PlatformCloudBackup();
+  static const verifyExpiryDays = 30;
   final _backupService = BackupShardService(PlatformCloudBackup());
-  static const _lastUsedPhoneKey = 'key_phone_last_used';
-  static const _lastUsedServerKey = 'key_server_last_used';
-  static const _lastCheckedBackupKey = 'key_backup_last_checked';
+  static const _lastUsedPhonePrefix = 'key_phone_last_used_';
+  static const _lastUsedServerPrefix = 'key_server_last_used_';
+  static const _lastCheckedBackupPrefix = 'key_backup_last_checked_';
+
+  Future<String> _getWalletSuffix() async {
+    final addr = await SecureStorage.get('mpc_address');
+    if (addr != null && addr.length >= 10) return addr.toLowerCase().substring(0, 10);
+    return 'unknown';
+  }
+
+  Future<String> _getBackupCheckedKey() async => '$_lastCheckedBackupPrefix${await _getWalletSuffix()}';
 
   /// Check key 1: phone (Secure Enclave / StrongBox)
   Future<KeyHealth> checkPhoneKey() async {
@@ -43,7 +51,8 @@ class KeyHealthService {
         available = true;
       }
 
-      final lastUsedStr = await SecureStorage.get(_lastUsedPhoneKey);
+      final suffix = await _getWalletSuffix();
+      final lastUsedStr = await SecureStorage.get('$_lastUsedPhonePrefix$suffix');
       final lastUsed = lastUsedStr != null ? DateTime.tryParse(lastUsedStr) : null;
 
       return KeyHealth(
@@ -61,7 +70,8 @@ class KeyHealthService {
   Future<KeyHealth> checkServerKey() async {
     try {
       final result = await MpcApi.getServerShardStatus();
-      final lastUsedStr = await SecureStorage.get(_lastUsedServerKey);
+      final suffix = await _getWalletSuffix();
+      final lastUsedStr = await SecureStorage.get('$_lastUsedServerPrefix$suffix');
       final lastUsed = lastUsedStr != null ? DateTime.tryParse(lastUsedStr) : null;
 
       if (result.isSuccess) {
@@ -95,42 +105,41 @@ class KeyHealthService {
   /// Check key 3: backup (cloud or file)
   Future<KeyHealth> checkBackupKey() async {
     try {
-      final lastCheckedStr = await SecureStorage.get(_lastCheckedBackupKey);
+      final backupCheckedKey = await _getBackupCheckedKey();
+      final lastCheckedStr = await SecureStorage.get(backupCheckedKey);
       final lastChecked = lastCheckedStr != null ? DateTime.tryParse(lastCheckedStr) : null;
 
       final method = await _backupService.getBackupMethod();
 
-      // Local file backup cannot be auto-verified — always require manual confirmation
+      // Local file backup cannot be auto-verified
       if (method == BackupMethod.file) {
+        if (lastChecked != null) {
+          return KeyHealth(
+            status: KeyStatus.ok,
+            lastChecked: lastChecked,
+          );
+        }
         return KeyHealth(
           status: KeyStatus.warning,
-          lastChecked: lastChecked,
-          error: '点击验证本地备份文件',
+          lastChecked: null,
+          error: 'file_not_verified',
         );
       }
 
       // Cloud backup check
-      final cloudAvailable = await _cloudBackup.isAvailable();
-      if (!cloudAvailable) {
+      if (lastChecked != null) {
         return KeyHealth(
-          status: lastChecked != null ? KeyStatus.warning : KeyStatus.unknown,
+          status: KeyStatus.ok,
           lastChecked: lastChecked,
-          error: 'Cloud not available for verification',
         );
       }
 
-      final data = await _cloudBackup.retrieve('cowallet_backup_shard');
-      if (data != null && data.isNotEmpty) {
-        return KeyHealth(
-          status: KeyStatus.ok,
-          lastChecked: DateTime.now(),
-        );
-      } else {
-        return KeyHealth(
-          status: lastChecked != null ? KeyStatus.warning : KeyStatus.unknown,
-          lastChecked: lastChecked,
-        );
-      }
+      final hasBackup = await _backupService.hasCloudBackup();
+      return KeyHealth(
+        status: hasBackup ? KeyStatus.warning : KeyStatus.unknown,
+        lastChecked: null,
+        error: hasBackup ? 'cloud_not_verified' : 'cloud_not_found',
+      );
     } catch (e) {
       return KeyHealth(
         status: KeyStatus.error,
@@ -164,25 +173,11 @@ class KeyHealthService {
     return bytes;
   }
 
-  /// Test key 3 (cloud): retrieve the backup shard and verify it cryptographically
-  /// against the device shard by reconstructing the public key.
   Future<bool> testBackupKey() async {
     try {
-      final cloudAvailable = await _cloudBackup.isAvailable();
-      if (!cloudAvailable) {
-        print('[KeyHealth] cloud not available');
-        return false;
-      }
-
-      final data = await _cloudBackup.retrieve('cowallet_backup_shard');
-      if (data == null || data.isEmpty) {
-        print('[KeyHealth] cloud backup data is empty');
-        return false;
-      }
-
-      final shardBytes = _backupService.parseBackupFile(data);
+      final shardBytes = await _backupService.retrieveFromCloud();
       if (shardBytes == null || shardBytes.length != 32) {
-        print('[KeyHealth] cloud parseBackupFile failed: shardBytes=${shardBytes?.length}');
+        print('[KeyHealth] cloud backup not available or invalid: ${shardBytes?.length}');
         return false;
       }
       print('[KeyHealth] cloud parsed backup shard: ${shardBytes.length} bytes');
@@ -198,7 +193,7 @@ class KeyHealthService {
       print('[KeyHealth] cloud verifyBackupShard result: $valid');
       if (!valid) return false;
 
-      await SecureStorage.save(_lastCheckedBackupKey, DateTime.now().toIso8601String());
+      await SecureStorage.save(await _getBackupCheckedKey(), DateTime.now().toIso8601String());
       return true;
     } catch (e) {
       print('[KeyHealth] testBackupKey (cloud) error: $e');
@@ -228,7 +223,7 @@ class KeyHealthService {
       print('[KeyHealth] verifyBackupShard result: $valid');
       if (!valid) return false;
 
-      await SecureStorage.save(_lastCheckedBackupKey, DateTime.now().toIso8601String());
+      await SecureStorage.save(await _getBackupCheckedKey(), DateTime.now().toIso8601String());
       return true;
     } catch (e) {
       print('[KeyHealth] testBackupKeyWithFile error: $e');
@@ -236,13 +231,13 @@ class KeyHealthService {
     }
   }
 
-  /// Record phone key usage (call after signing)
   Future<void> recordPhoneKeyUsage() async {
-    await SecureStorage.save(_lastUsedPhoneKey, DateTime.now().toIso8601String());
+    final suffix = await _getWalletSuffix();
+    await SecureStorage.save('$_lastUsedPhonePrefix$suffix', DateTime.now().toIso8601String());
   }
 
-  /// Record server key usage (call after signing)
   Future<void> recordServerKeyUsage() async {
-    await SecureStorage.save(_lastUsedServerKey, DateTime.now().toIso8601String());
+    final suffix = await _getWalletSuffix();
+    await SecureStorage.save('$_lastUsedServerPrefix$suffix', DateTime.now().toIso8601String());
   }
 }

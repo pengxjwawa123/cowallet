@@ -269,4 +269,136 @@ mod tests {
         assert!(encoded.len() > 1);
         assert_ne!(tx_hash, B256::ZERO);
     }
+
+    #[test]
+    fn test_build_unsigned_eip1559_with_different_params() {
+        let tx_req = TransactionRequest {
+            to: "0x1234567890123456789012345678901234567890"
+                .parse()
+                .unwrap(),
+            value: U256::from(5_000_000_000_000_000_000u128), // 5 ETH
+            data: vec![0xde, 0xad, 0xbe, 0xef],
+            chain_id: 1,
+            gas_limit: Some(50000),
+            nonce: Some(42),
+        };
+        let gas = GasEstimate {
+            gas_limit: 50000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 500_000_000,
+            l1_data_fee: None,
+            estimated_cost_wei: U256::ZERO,
+            estimated_cost_usd: None,
+        };
+        let unsigned = build_unsigned_eip1559(&tx_req, &gas, 42);
+
+        assert_eq!(unsigned.chain_id, 1);
+        assert_eq!(unsigned.nonce, 42);
+        assert_eq!(unsigned.gas_limit, 50000);
+        assert_eq!(unsigned.value, U256::from(5_000_000_000_000_000_000u128));
+        assert_eq!(unsigned.input.len(), 4);
+    }
+
+    #[test]
+    fn test_build_unsigned_eip1559_with_zero_value() {
+        let tx_req = TransactionRequest {
+            to: Address::ZERO,
+            value: U256::ZERO,
+            data: vec![],
+            chain_id: 8453,
+            gas_limit: None,
+            nonce: None,
+        };
+        let gas = GasEstimate {
+            gas_limit: 21000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 100_000_000,
+            l1_data_fee: None,
+            estimated_cost_wei: U256::ZERO,
+            estimated_cost_usd: None,
+        };
+        let unsigned = build_unsigned_eip1559(&tx_req, &gas, 0);
+
+        assert_eq!(unsigned.value, U256::ZERO);
+        assert!(unsigned.input.is_empty());
+    }
+
+    #[test]
+    fn test_build_unsigned_eip1559_gas_estimates() {
+        let tx_req = TransactionRequest {
+            to: Address::ZERO,
+            value: U256::from(1_000_000_000_000_000_000u128),
+            data: vec![],
+            chain_id: 42161,
+            gas_limit: None,
+            nonce: None,
+        };
+        let gas = GasEstimate {
+            gas_limit: 100000,
+            max_fee_per_gas: 5_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            l1_data_fee: Some(50_000_000_000_000u128),
+            estimated_cost_wei: U256::from(550_000_000_000_000u128),
+            estimated_cost_usd: Some(1.2),
+        };
+        let unsigned = build_unsigned_eip1559(&tx_req, &gas, 5);
+
+        assert_eq!(unsigned.max_fee_per_gas, 5_000_000_000);
+        assert_eq!(unsigned.max_priority_fee_per_gas, 1_000_000_000);
+        assert_eq!(unsigned.gas_limit, 100000);
+    }
+
+    #[test]
+    fn test_transaction_request_with_contract_call() {
+        let tx_req = TransactionRequest {
+            to: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                .parse()
+                .unwrap(), // USDC
+            value: U256::ZERO,
+            data: vec![
+                0xa9, 0x05, 0x9c, 0xbb, // transfer(address,uint256)
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78,
+                0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34,
+                0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90,
+            ],
+            chain_id: 1,
+            gas_limit: Some(65000),
+            nonce: Some(10),
+        };
+
+        assert_eq!(tx_req.data.len(), 36);
+        assert_eq!(&tx_req.data[0..4], &[0xa9, 0x05, 0x9c, 0xbb]);
+    }
+
+    #[test]
+    fn test_sign_eip1559_tx_different_chains() {
+        let signer_base = test_signer();
+
+        for chain_id in [1u64, 8453, 42161, 10, 56] {
+            let tx_req = TransactionRequest {
+                to: Address::ZERO,
+                value: U256::from(100_000_000_000_000_000u128), // 0.1 ETH
+                data: vec![],
+                chain_id,
+                gas_limit: None,
+                nonce: None,
+            };
+            let gas = GasEstimate {
+                gas_limit: 21000,
+                max_fee_per_gas: 1_000_000_000,
+                max_priority_fee_per_gas: 100_000_000,
+                l1_data_fee: None,
+                estimated_cost_wei: U256::ZERO,
+                estimated_cost_usd: None,
+            };
+
+            let result = sign_eip1559_tx(&tx_req, &gas, 0, &signer_base);
+            assert!(result.is_ok(), "signing should work for chain {}", chain_id);
+
+            let (encoded, tx_hash) = result.unwrap();
+            assert_eq!(encoded[0], 0x02, "should be EIP-1559 type for chain {}", chain_id);
+            assert_ne!(tx_hash, B256::ZERO);
+        }
+    }
 }

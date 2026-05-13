@@ -267,3 +267,149 @@ impl ChainConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ethereum_mainnet_config() {
+        let chain = ChainConfig::ethereum_mainnet();
+        assert_eq!(chain.chain_id, 1);
+        assert_eq!(chain.name, "ethereum");
+        assert_eq!(chain.native_currency.symbol, "ETH");
+        assert_eq!(chain.native_currency.decimals, 18);
+        assert_eq!(chain.gas_model, GasModel::Eip1559);
+        assert!(!chain.is_testnet);
+        assert!(!chain.is_l2);
+        assert!(chain.erc4337_entrypoint.is_some());
+    }
+
+    #[test]
+    fn test_base_mainnet_config() {
+        let chain = ChainConfig::base_mainnet();
+        assert_eq!(chain.chain_id, 8453);
+        assert_eq!(chain.name, "base");
+        assert_eq!(chain.native_currency.symbol, "ETH");
+        assert_eq!(chain.gas_model, GasModel::OpBedrock);
+        assert!(!chain.is_testnet);
+        assert!(chain.is_l2);
+    }
+
+    #[test]
+    fn test_arbitrum_one_config() {
+        let chain = ChainConfig::arbitrum_one();
+        assert_eq!(chain.chain_id, 42161);
+        assert_eq!(chain.name, "arbitrum");
+        assert_eq!(chain.native_currency.symbol, "ETH");
+        assert_eq!(chain.gas_model, GasModel::ArbitrumNitro);
+        assert!(!chain.is_testnet);
+        assert!(chain.is_l2);
+    }
+
+    #[test]
+    fn test_optimism_mainnet_config() {
+        let chain = ChainConfig::optimism_mainnet();
+        assert_eq!(chain.chain_id, 10);
+        assert_eq!(chain.name, "optimism");
+        assert_eq!(chain.native_currency.symbol, "ETH");
+        assert_eq!(chain.gas_model, GasModel::OpBedrock);
+        assert!(!chain.is_testnet);
+        assert!(chain.is_l2);
+    }
+
+    #[test]
+    fn test_bnb_chain_config() {
+        let chain = ChainConfig::bnb_chain();
+        assert_eq!(chain.chain_id, 56);
+        assert_eq!(chain.name, "bsc");
+        assert_eq!(chain.native_currency.symbol, "BNB");
+        assert_eq!(chain.native_currency.decimals, 18);
+        assert_eq!(chain.gas_model, GasModel::Legacy);
+        assert!(!chain.is_testnet);
+        assert!(!chain.is_l2);
+    }
+
+    #[test]
+    fn test_polygon_via_chain_id() {
+        // Polygon is not yet implemented, should return None
+        let chain = ChainConfig::by_chain_id(137);
+        assert!(chain.is_none());
+    }
+
+    #[test]
+    fn test_by_chain_id_all_supported() {
+        let supported_chains = vec![1, 8453, 42161, 10, 56, 84532, 11155111];
+
+        for chain_id in supported_chains {
+            let chain = ChainConfig::by_chain_id(chain_id);
+            assert!(chain.is_some(), "chain_id {} should be supported", chain_id);
+            assert_eq!(chain.unwrap().chain_id, chain_id);
+        }
+    }
+
+    #[test]
+    fn test_by_chain_id_unsupported() {
+        let unsupported_chains = vec![137, 43114, 250, 100];
+
+        for chain_id in unsupported_chains {
+            let chain = ChainConfig::by_chain_id(chain_id);
+            assert!(chain.is_none(), "chain_id {} should not be supported", chain_id);
+        }
+    }
+
+    #[test]
+    fn test_all_mainnet_chains() {
+        let mainnets = ChainConfig::all_mainnet();
+        assert_eq!(mainnets.len(), 5);
+
+        for chain in mainnets {
+            assert!(!chain.is_testnet);
+            assert!(chain.chain_id > 0);
+        }
+    }
+
+    #[test]
+    fn test_all_testnet_chains() {
+        let testnets = ChainConfig::all_testnet();
+        assert_eq!(testnets.len(), 2);
+
+        for chain in testnets {
+            assert!(chain.is_testnet);
+        }
+    }
+
+    #[test]
+    fn test_rpc_urls_not_empty() {
+        let chains = ChainConfig::all_mainnet();
+
+        for chain in chains {
+            assert!(!chain.rpc_urls.is_empty(), "chain {} should have RPC URLs", chain.name);
+            assert!(chain.rpc_urls[0].starts_with("http"));
+        }
+    }
+
+    #[test]
+    fn test_entrypoint_addresses_consistent() {
+        let expected_entrypoint = "0x0000000071727De22E5E9d8BAf0edAc6f37da032"
+            .parse::<Address>()
+            .unwrap();
+
+        let chains = vec![
+            ChainConfig::ethereum_mainnet(),
+            ChainConfig::base_mainnet(),
+            ChainConfig::arbitrum_one(),
+            ChainConfig::optimism_mainnet(),
+            ChainConfig::bnb_chain(),
+        ];
+
+        for chain in chains {
+            assert_eq!(
+                chain.erc4337_entrypoint,
+                Some(expected_entrypoint),
+                "chain {} should have consistent EntryPoint v0.7 address",
+                chain.name
+            );
+        }
+    }
+}

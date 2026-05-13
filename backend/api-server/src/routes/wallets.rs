@@ -122,7 +122,7 @@ async fn create_wallet(
     let public_key_bytes = hex::decode(&body.public_key_hex)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let chain_ids = body.chain_ids.unwrap_or_else(|| vec![8453]); // Default: Base
+    let chain_ids = body.chain_ids.unwrap_or_else(|| vec![1, 8453, 42161, 10, 56, 137]);
 
     let row: (Uuid, String, Vec<u8>, Vec<i64>, String, DateTime<Utc>) = sqlx::query_as(
         "INSERT INTO wallets (user_id, name, public_key, eth_address, chain_ids, status)

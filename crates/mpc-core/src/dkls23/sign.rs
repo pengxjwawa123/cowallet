@@ -1235,4 +1235,65 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_sign_session_creation() {
+        use sha3::Digest;
+        let shares = dkg_shares();
+        let msg_hash: [u8; 32] = sha3::Keccak256::digest(b"test message").into();
+
+        let config = SessionConfig {
+            session_id: "sign-test-001".into(),
+            threshold: 2,
+            total_parties: 3,
+            party_index: 0,
+        };
+
+        let session = SignSession::new_distributed(config, shares[0].clone(), msg_hash);
+
+        // Verify session was created with correct parameters
+        assert_eq!(session.party_index, 0, "party_index should be 0");
+        assert_eq!(session.config.session_id, "sign-test-001", "session_id should match");
+        assert_eq!(session.config.threshold, 2, "threshold should be 2");
+        assert_eq!(session.config.total_parties, 3, "total_parties should be 3");
+        assert!(matches!(session.state, SignState::Initialized), "state should be Initialized");
+        assert_eq!(session.message_hash, msg_hash, "message_hash should match");
+    }
+
+    #[test]
+    fn test_sign_round1_generation() {
+        use sha3::Digest;
+        let shares = dkg_shares();
+        let msg_hash: [u8; 32] = sha3::Keccak256::digest(b"round1 test").into();
+
+        let config = SessionConfig {
+            session_id: "sign-round1-001".into(),
+            threshold: 2,
+            total_parties: 3,
+            party_index: 0,
+        };
+
+        let mut session = SignSession::new_distributed(config.clone(), shares[0].clone(), msg_hash);
+
+        // Generate round 1 message
+        let round1_msg = session.generate_round1().unwrap();
+
+        // Verify message structure
+        assert_eq!(round1_msg.session_id, config.session_id, "session_id should match");
+        assert_eq!(round1_msg.from, 0, "from should be party 0");
+        assert_eq!(round1_msg.to, 0xFFFF, "to should be broadcast (0xFFFF)");
+        assert_eq!(round1_msg.round, 1, "round should be 1");
+        assert!(!round1_msg.payload.is_empty(), "payload should not be empty");
+
+        // Deserialize and verify payload
+        let round1_data: SignRound1Message = bincode::deserialize(&round1_msg.payload).unwrap();
+        assert_eq!(round1_data.party_index, 0, "party_index should be 0");
+        assert_eq!(round1_data.k_public.len(), 33, "k_public should be 33 bytes (compressed point)");
+
+        // Verify ephemeral key was stored
+        assert!(session.my_k.is_some(), "ephemeral key should be stored");
+
+        // Verify round1 message was stored
+        assert_eq!(session.round1_messages.len(), 1, "should have 1 round1 message stored");
+    }
 }

@@ -11,7 +11,7 @@ class ChatTokenInfoWidget extends StatelessWidget {
     final token = data['token'] as Map<String, dynamic>? ?? {};
     final balance = data['balance'] as Map<String, dynamic>?;
     final priceUsd = data['price_usd'] as num?;
-    final chainId = data['chain_id'] as int? ?? 8453;
+    final chainId = data['chain_id'] as int?;
 
     final symbol = token['symbol'] as String? ?? '???';
     final name = token['name'] as String? ?? symbol;
@@ -122,7 +122,8 @@ class ChatTokenInfoWidget extends StatelessWidget {
           if (usdValue != null)
             _infoRow('Value', '\$$usdValue'),
           _infoRow('Decimals', '$decimals'),
-          _infoRow('Chain', _chainName(chainId)),
+          if (chainId != null)
+            _infoRow('Chain', _chainName(chainId)),
           if (issuer != null)
             _infoRow('Issuer', issuer),
           if (contractAddress != null && !isNative)

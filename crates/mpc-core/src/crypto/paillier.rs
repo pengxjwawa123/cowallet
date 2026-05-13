@@ -277,4 +277,101 @@ mod tests {
         let decrypted_mul = keypair.secret.decrypt(&keypair.public, &ct_mul) % &q;
         assert_eq!(decrypted_mul, expected);
     }
+
+    #[test]
+    fn test_paillier_keypair_generation() {
+        let keypair = PaillierKeypair::generate();
+
+        // Verify n = p * q
+        let n_computed = &keypair.secret.p * &keypair.secret.q;
+        assert_eq!(keypair.public.n, n_computed, "n should equal p * q");
+
+        // Verify n is the expected bit length (2048 bits)
+        let n_bits = keypair.public.n.bits();
+        assert!(n_bits >= 2040 && n_bits <= 2048, "n should be approximately 2048 bits, got {}", n_bits);
+
+        // Verify p and q are different
+        assert_ne!(keypair.secret.p, keypair.secret.q, "p and q should be different");
+
+        // Verify p and q are approximately half the size of n
+        let p_bits = keypair.secret.p.bits();
+        let q_bits = keypair.secret.q.bits();
+        assert!(p_bits >= 1020 && p_bits <= 1028, "p should be approximately 1024 bits, got {}", p_bits);
+        assert!(q_bits >= 1020 && q_bits <= 1028, "q should be approximately 1024 bits, got {}", q_bits);
+
+        // Verify lambda is non-zero
+        assert!(!keypair.secret.lambda.is_zero(), "lambda should not be zero");
+
+        // Verify mu is non-zero
+        assert!(!keypair.secret.mu.is_zero(), "mu should not be zero");
+    }
+
+    #[test]
+    fn test_paillier_encrypt_decrypt_roundtrip() {
+        let keypair = PaillierKeypair::generate();
+
+        // Test with various scalar values
+        let test_values = vec![
+            BigUint::from(0u64),
+            BigUint::from(1u64),
+            BigUint::from(42u64),
+            BigUint::from(123456789u64),
+            BigUint::from(u64::MAX),
+        ];
+
+        for val in test_values {
+            let ciphertext = keypair.public.encrypt(&val);
+            let decrypted = keypair.secret.decrypt(&keypair.public, &ciphertext);
+            assert_eq!(decrypted, val, "decrypt(encrypt({})) should equal {}", val, val);
+        }
+
+        // Test with a large value (near the curve order)
+        let q = secp256k1_order();
+        let large_val = &q - BigUint::from(1u64);
+        let ct = keypair.public.encrypt(&large_val);
+        let decrypted = keypair.secret.decrypt(&keypair.public, &ct);
+        assert_eq!(decrypted, large_val, "should handle large values near curve order");
+    }
+
+    #[test]
+    fn test_paillier_homomorphic_addition() {
+        let keypair = PaillierKeypair::generate();
+
+        // Test basic addition
+        let a = BigUint::from(100u64);
+        let b = BigUint::from(200u64);
+        let expected_sum = BigUint::from(300u64);
+
+        let c_a = keypair.public.encrypt(&a);
+        let c_b = keypair.public.encrypt(&b);
+
+        // Homomorphic addition: Enc(a) * Enc(b) = Enc(a + b)
+        let c_sum = keypair.public.add(&c_a, &c_b);
+        let decrypted_sum = keypair.secret.decrypt(&keypair.public, &c_sum);
+
+        assert_eq!(decrypted_sum, expected_sum, "Enc(100) + Enc(200) should decrypt to 300");
+
+        // Test multiple additions
+        let c1 = keypair.public.encrypt(&BigUint::from(10u64));
+        let c2 = keypair.public.encrypt(&BigUint::from(20u64));
+        let c3 = keypair.public.encrypt(&BigUint::from(30u64));
+
+        let c_sum_12 = keypair.public.add(&c1, &c2);
+        let c_sum_123 = keypair.public.add(&c_sum_12, &c3);
+        let decrypted_multi = keypair.secret.decrypt(&keypair.public, &c_sum_123);
+
+        assert_eq!(decrypted_multi, BigUint::from(60u64), "Enc(10) + Enc(20) + Enc(30) should decrypt to 60");
+
+        // Test addition with larger values
+        let x = BigUint::from(987654321u64);
+        let y = BigUint::from(123456789u64);
+        let expected = &x + &y;
+
+        let c_x = keypair.public.encrypt(&x);
+        let c_y = keypair.public.encrypt(&y);
+        let c_xy = keypair.public.add(&c_x, &c_y);
+        let decrypted_xy = keypair.secret.decrypt(&keypair.public, &c_xy);
+
+        assert_eq!(decrypted_xy, expected, "homomorphic addition should work with large values");
+    }
 }

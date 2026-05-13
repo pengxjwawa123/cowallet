@@ -478,7 +478,126 @@ async fn verify_recovery_otp(
     .await
     .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    // TODO: Implement actual reshare protocol — decrypt server shard and generate reshare messages
-    // Once implemented: decrypt shard, perform reshare, issue JWT, return public key + messages
-    Err(StatusCode::NOT_IMPLEMENTED)
+    // Get MPC participant service
+    let mpc_participant = state
+        .mpc_participant
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Create reshare MPC session in DB
+    let session_id = uuid::Uuid::new_v4();
+    let parties = vec![0i16, 1i16]; // Device (0) and Server (1)
+    let threshold = 2i16;
+
+    sqlx::query(
+        "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round)
+         VALUES ($1, $2, 'reshare', $3, $4, 'active', 0)"
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&parties)
+    .bind(threshold)
+    .execute(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create reshare session: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Initialize server's reshare protocol (loads shard, generates Round 1)
+    if let Err(e) = mpc_participant
+        .on_session_created(session_id, user_id, "reshare", &parties, threshold, None)
+        .await
+    {
+        tracing::error!("Server reshare init failed for session {}: {}", session_id, e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // Fetch server's Round 1 reshare messages (addressed to Party 0)
+    let messages: Vec<(i16, i16, i16, Vec<u8>)> = sqlx::query_as(
+        "SELECT from_party, to_party, round, payload
+         FROM mpc_messages
+         WHERE session_id = $1 AND from_party = 1 AND round = 1
+         ORDER BY created_at ASC"
+    )
+    .bind(session_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch reshare messages: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Serialize messages as JSON strings (client expects array of JSON-encoded messages)
+    let server_reshare_messages_json: Vec<String> = messages
+        .into_iter()
+        .map(|(from, to, round, payload)| {
+            serde_json::to_string(&serde_json::json!({
+                "from_party": from,
+                "to_party": to,
+                "round": round,
+                "payload": payload
+            }))
+            .unwrap_or_default()
+        })
+        .collect();
+
+    // Get public key from wallets table (use the first active wallet for this user)
+    let public_key: Vec<u8> = sqlx::query_scalar(
+        "SELECT public_key FROM wallets WHERE user_id = $1 AND status = 'active' ORDER BY created_at ASC LIMIT 1"
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch public key: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .ok_or_else(|| {
+        tracing::warn!("No active wallet found for user {}", user_id);
+        StatusCode::NOT_FOUND
+    })?;
+
+    let public_key_hex = hex::encode(&public_key);
+
+    // Issue JWT token pair
+    let token_pair = issue_token_pair(&user_id.to_string(), &body.device_id)
+        .map_err(|e| {
+            tracing::error!("Failed to issue token pair: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Audit log - successful recovery
+    let _ = state
+        .audit_logger
+        .log_with_details(
+            user_id,
+            "auth.recovery_success",
+            AuditResult::Success,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "device_id": body.device_id,
+                "reshare_session_id": session_id.to_string()
+            })),
+        )
+        .await;
+
+    tracing::info!(
+        "Recovery OTP verified for user {}, reshare session {} initiated",
+        user_id,
+        session_id
+    );
+
+    Ok(Json(VerifyRecoveryOtpResponse {
+        token: token_pair.access_token,
+        refresh_token: token_pair.refresh_token,
+        expires_in: token_pair.expires_in,
+        token_type: token_pair.token_type,
+        user_id: user_id.to_string(),
+        public_key_hex,
+        server_reshare_messages_json,
+    }))
 }

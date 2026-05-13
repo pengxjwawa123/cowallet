@@ -10,7 +10,7 @@ class S {
   static String _p(String zh, String en) => _lang == Lang.zh ? zh : en;
 
   // App
-  static String get appName => 'cowallet';
+  static String get appName => 'CoWallet';
   static String get tagline => _p('会听懂人话的钱包', 'the wallet that reads you back');
 
   // Tabs
@@ -29,26 +29,25 @@ class S {
     '就像给你家请了个管家——你说"帮我转 100 块给小明",它就去做;你不会说也没关系,它有按钮。',
     'Like hiring a butler for your money — say "send \$100 to Sarah" and it does it. Don\'t feel like talking? Buttons work too.',
   );
-  static String get heroFeat1h => _p('动钱需要两把钥匙', 'Two keys to move money');
-  static String get heroFeat1s => _p('三份钥匙分开存，任何单方都动不了', 'Three keys stored apart — no single party can act alone');
+  static String get heroFeat1h => _p('不用懂区块链', 'No crypto knowledge needed');
+  static String get heroFeat1s => _p('说句话就能转账、收款、理财', 'Send, receive, and earn just by saying so');
   static String get heroFeat2h => _p('100+ 个金融网络', '100+ financial networks');
   static String get heroFeat2s => _p('全世界通用', 'Works worldwide');
   static String get heroFeat3h => _p('AI 帮你跑腿', 'AI does the errands');
   static String get heroFeat3s => _p('你只需说一句话', 'Just say the word');
   static String get getStarted => _p('开始使用', 'Get started');
-  static String get haveWallet => _p('我已经有钱包了', 'I already have a wallet');
   static String get heroLegal => _p('继续即表示同意服务条款与隐私政策', 'By continuing you agree to our Terms and Privacy Policy');
 
-  // Onboarding — Start
-  static String get startH1 => _p('这是你的第一个钱包吗?', 'Is this your first wallet?');
-  static String get startSub => _p('两分钟就能开好。选一个最适合你的方式。', 'Takes two minutes. Pick what fits you.');
-  static String get pickCreateTitle => _p('我是新用户,帮我开一个', "I'm new — set one up for me");
-  static String get pickCreateDesc => _p('最简单。钥匙分成三份存在不同地方，动钱需要两份。不用背一长串词。', 'Easiest. Key split into 3 pieces stored separately — 2 needed to move money. No phrases to memorize.');
-  static String get pickCreateTag => _p('推荐', 'Best');
-  static String get pickImportTitle => _p('我已经有一个钱包', 'I have a wallet already');
-  static String get pickImportDesc => _p('用那 12 或 24 个单词的"找回密码"把它搬进来。', 'Bring it in using those 12 or 24 recovery words.');
-  static String get pickHwTitle => _p('我有一个硬件钱包', 'I have a hardware wallet');
-  static String get pickHwDesc => _p('Ledger、Trezor 之类的实物钥匙。', 'Ledger, Trezor — physical key devices.');
+  // Onboarding — Intro (MPC explanation)
+  static String get introH1 => _p('你的钱包如何保护你', 'How your wallet protects you');
+  static String get introSub => _p('CoWallet 用一种叫"门限签名"的技术，把钥匙拆成三份。', 'CoWallet uses threshold signatures to split your key into three pieces.');
+  static String get introBullet1h => _p('钥匙拆成三份', 'Key split into three');
+  static String get introBullet1s => _p('手机一份、服务器一份、你自己保管一份。完整钥匙从不出现在任何地方。', 'One on your phone, one on server, one kept by you. The full key never exists anywhere.');
+  static String get introBullet2h => _p('动钱需要两份', 'Two needed to transact');
+  static String get introBullet2s => _p('任何单方（包括 CoWallet）都无法单独动你的钱。', 'No single party — including CoWallet — can move your money alone.');
+  static String get introBullet3h => _p('没有助记词', 'No seed phrase');
+  static String get introBullet3s => _p('不用抄 12 个单词。丢了手机，用你的备份 + 服务器就能恢复。', 'No 12 words to write down. Lose your phone, your backup + server recovers everything.');
+  static String get introStart => _p('开始创建', 'Start creating');
 
   // Onboarding — Creating
   static String get creatingH1 => _p('正在帮你把钥匙分成三份', 'Splitting your key into three pieces');
@@ -59,23 +58,13 @@ class S {
   static String get createError => _p('钱包创建失败,请重试。', 'Wallet creation failed. Please try again.');
   static String get retry => _p('重试', 'Retry');
 
-  // Onboarding — Importing
-  static String get importH1 => _p('输入你的 12 或 24 个"找回词"', 'Enter your 12 or 24 recovery words');
-  static String get importSub => _p('就是当初创建钱包时写下来的那一串单词。用空格分开。', 'The words you wrote down when you first set up your wallet. Separated by spaces.');
-  static String get importWarn => _p('永远不要在网页上输入这些词', 'Never enter these on a website');
-  static String get importWarnBody => _p(
-    'cowallet 只在这个输入框里问你要。任何客服、空投网站都不会问。看到就是骗子。',
-    'cowallet only asks here. No support rep, no airdrop site will ever ask. If they do, it\'s a scam.',
-  );
-  static String get importPlaceholder => _p('一个词 一个词 空格隔开…', 'word word word word…');
-  static String get paste => _p('粘贴', 'Paste');
-  static String get importSubmit => _p('导入我的钱包', 'Import my wallet');
 
   // Onboarding — Bio
   static String get bioH1 => _p('开启生物识别', 'Enable biometric authentication');
   static String get bioSub => _p('就像手机解锁一样，用指纹或面容保护你的钱包。生物信息不会离开这台手机。', 'Just like unlocking your phone. Protect your wallet with fingerprint or face. Biometric data never leaves this device.');
   static String get bioActivate => _p('开启生物识别', 'Turn on biometrics');
   static String get bioSkip => _p('改用密码', 'Use a passcode instead');
+  static String get bioVerifying => _p('正在验证...', 'Verifying...');
   static String get bioDone => _p('生物识别已开启', 'Biometrics ready');
 
   // Onboarding — PIN
@@ -108,6 +97,9 @@ class S {
   static String get backupErrFileWriteFailed => _p('文件保存失败，请检查存储权限', 'File save failed, please check storage permissions');
   static String get backupErrShardNotAvailable => _p('备份数据不可用，请重新创建钱包', 'Backup data not available, please recreate wallet');
   static String backupFileSaved(String path) => _p('已保存到: $path', 'Saved to: $path');
+  static String get onboardingIncompleteBanner => _p('⚠ 钱包创建流程未完成', '⚠ Wallet setup incomplete');
+  static String get onboardingIncompleteAction => _p('继续完成', 'Continue setup');
+  static String get onboardingIncompleteUrgent => _p('钱包创建流程已超过 7 天未完成，请尽快完成', 'Wallet setup incomplete for over 7 days, please finish soon');
 
   // Onboarding — Ready
   static String get readyH1 => _p('都搞定了。', 'All set.');
@@ -161,7 +153,7 @@ class S {
   static String get actionPeople => _p('我的联系人', 'My contacts');
   static String get recentActivity => _p('最近发生的事', 'Recent activity');
   static String get seeAll => _p('全部', 'See all');
-  static String get onlyCowallet => _p('只有 cowallet 有的', 'Only cowallet does this');
+  static String get onlyCowallet => _p('只有 CoWallet 有的', 'Only CoWallet does this');
   static String get today => _p('今天', 'today');
 
   // Home — Try prompts
@@ -211,8 +203,8 @@ class S {
   static String get confirm => _p('确定', 'Confirm');
   static String get chatEmpty => _p('说点什么?', "What's on your mind?");
   static String get chatEmptySub => _p('说话、打字、拍张照都行。', 'Talk, type, or send a photo.');
-  static String get askCowallet => _p('问 cowallet', 'Ask cowallet');
-  static String get composerHint => _p('跟 cowallet 说点什么…', 'Tell cowallet what you need…');
+  static String get askCowallet => _p('问 CoWallet', 'Ask CoWallet');
+  static String get composerHint => _p('跟 CoWallet 说点什么…', 'Tell CoWallet what you need…');
   static String get intentHeader => _p('我听到的是', "What I'm hearing");
   static String get intentConfirming => _p('让我确认一下…', "Let me make sure I got this…");
   static String get intentMisread => _p('好,我刚理解错了。能再说一次吗?', "Got it, I misread. Say it again?");
@@ -283,6 +275,8 @@ class S {
   static String get keysCheckup => _p('三份钥匙体检', 'Three-key checkup');
   static String get keysCheckupSub => _p('动你的钱需要任意两份钥匙', 'Any 2 of 3 keys needed to move your money');
   static String get allSafe => _p('都在', 'safe');
+  static String get keyStatusError => _p('异常', 'error');
+  static String get keyStatusWarning => _p('待验证', 'verify');
   static String get onPhone => _p('手机里', 'On phone');
   static String get inCloud => _p('云端', 'In cloud');
   static String get recovery => _p('第 3 份钥匙', '3rd Key');
@@ -308,7 +302,7 @@ class S {
   static String get general => _p('一般', 'General');
   static String get language => _p('语言', 'Language');
   static String get weeklyReport => _p('每周透明度报告', 'Weekly transparency report');
-  static String get weeklyReportSub => _p('cowallet 自我体检 · 公开', 'cowallet self-audits · public');
+  static String get weeklyReportSub => _p('CoWallet 自我体检 · 公开', 'CoWallet self-audits · public');
   static String get redoOnboarding => _p('重置引导流程', 'Redo onboarding');
   static String get redoOnboardingSub => _p('从头看一遍', 'See it from the start');
   static String get off => _p('关', 'off');
@@ -321,19 +315,19 @@ class S {
   static String get emergencyFreezeActivated => _p('紧急冻结已激活', 'Emergency freeze activated');
   static String get emergencyFreezeDeactivated => _p('紧急冻结已解除', 'Emergency freeze deactivated');
   static String get frozenBanner => _p('⚠ 所有交易和助手已冻结', '⚠ All transactions and agents frozen');
-  static String get signoff1 => _p('cowallet · 2026', 'cowallet · 2026');
+  static String get signoff1 => _p('CoWallet · 2026', 'CoWallet · 2026');
   static String get signoff2 => _p('会听懂人话的钱包', 'A wallet that listens');
 
   // Keys
   static String get keysH1a => _p('三份钥匙', 'Three keys,');
   static String get keysH1b => _p('两份即可', 'any two to');
   static String get keysH1em => _p('动钱', 'move money');
-  static String get keysSub => _p('没人能单独动你的钱 —— 连 cowallet 公司都进不来。丢了一份，剩下两份照样恢复。', "Nobody can move your money alone — not even cowallet. Lose one key, the other two still recover everything.");
+  static String get keysSub => _p('没人能单独动你的钱 —— 连 CoWallet 公司都进不来。丢了一份，剩下两份照样恢复。', "Nobody can move your money alone — not even CoWallet. Lose one key, the other two still recover everything.");
   static String get keyPhone => _p('第 1 份 · 手机', '1st key · Phone');
   static String get keyPhoneWhere => _p('存在手机安全芯片里 (Secure Enclave / StrongBox)', "In your phone's secure chip (Secure Enclave / StrongBox)");
   static String get keyPhoneMeta => _p('✓ 完整 · 12 分钟前刚用过', '✓ Intact · used 12 min ago');
   static String get keyCloud => _p('第 2 份 · 服务器', '2nd key · Server');
-  static String get keyCloudWhere => _p('cowallet 服务器 · HSM 保护', 'cowallet server · HSM protected');
+  static String get keyCloudWhere => _p('CoWallet 服务器 · HSM 保护', 'CoWallet server · HSM protected');
   static String get keyCloudMeta => _p('✓ 心跳 2 分钟前 · 加密完整', '✓ Heartbeat 2 min ago · encrypted');
   static String get keyRecovery => _p('第 3 份 · 你保管', '3rd key · Yours');
   static String get keyRecoveryWhere => _p('由你存在 iCloud / Google Drive', 'Stored by you in iCloud / Google Drive');
@@ -362,8 +356,8 @@ class S {
 
   static String get keysExplainLabel => _p('这是怎么回事?', 'How does this work?');
   static String get keysExplainBody => _p(
-    '想象家门有三把锁 —— 手机里一把、服务器一把、你自己保管一把。开门只需要任意两把。就算 cowallet 服务器被黑，攻击者也只拿到一把，开不了你的门。丢了手机？用你保管的 + 服务器就能恢复。',
-    "Imagine three locks on your door — one on your phone, one on the server, one kept by you. Opening only needs any two. Even if cowallet's server gets hacked, attackers only have one — your door stays shut. Lost your phone? Your backup + server recovers everything.",
+    '想象家门有三把锁 —— 手机里一把、服务器一把、你自己保管一把。开门只需要任意两把。就算 CoWallet 服务器被黑，攻击者也只拿到一把，开不了你的门。丢了手机？用你保管的 + 服务器就能恢复。',
+    "Imagine three locks on your door — one on your phone, one on the server, one kept by you. Opening only needs any two. Even if CoWallet's server gets hacked, attackers only have one — your door stays shut. Lost your phone? Your backup + server recovers everything.",
   );
   static String get keysTechLabel => _p('技术细节 · 给懂行的', 'Tech detail · for pros');
   static String get keysTechBody => _p(

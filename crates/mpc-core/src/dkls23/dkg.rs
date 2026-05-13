@@ -556,4 +556,66 @@ mod tests {
         let session = DkgSession::new(test_config(0));
         assert!(session.finalize().is_err());
     }
+
+    #[test]
+    fn test_dkg_local_generates_valid_shares() {
+        let mut session = DkgSession::new(test_config(0));
+        let shares = session.run_local().unwrap();
+
+        // Verify 3 shares generated
+        assert_eq!(shares.len(), 3, "should generate 3 shares");
+
+        // All shares have same public key
+        assert_eq!(shares[0].public_key, shares[1].public_key, "shares 0 and 1 should have same public key");
+        assert_eq!(shares[1].public_key, shares[2].public_key, "shares 1 and 2 should have same public key");
+
+        // Different secret shares
+        assert_ne!(shares[0].secret_share.as_bytes(), shares[1].secret_share.as_bytes(), "shares 0 and 1 should have different secrets");
+        assert_ne!(shares[1].secret_share.as_bytes(), shares[2].secret_share.as_bytes(), "shares 1 and 2 should have different secrets");
+        assert_ne!(shares[0].secret_share.as_bytes(), shares[2].secret_share.as_bytes(), "shares 0 and 2 should have different secrets");
+
+        // Verify each share has correct parameters
+        for (i, share) in shares.iter().enumerate() {
+            assert_eq!(share.party, i as u16, "share {} should have party index {}", i, i);
+            assert_eq!(share.threshold, 2, "share {} should have threshold 2", i);
+            assert_eq!(share.total_parties, 3, "share {} should have total_parties 3", i);
+            assert_eq!(share.secret_share.len(), 32, "share {} should have 32-byte secret", i);
+        }
+    }
+
+    #[test]
+    fn test_dkg_eth_address_consistency() {
+        let mut session = DkgSession::new(test_config(0));
+        let shares = session.run_local().unwrap();
+
+        // All shares should produce the same Ethereum address
+        let addr0 = shares[0].eth_address();
+        let addr1 = shares[1].eth_address();
+        let addr2 = shares[2].eth_address();
+
+        assert_eq!(addr0, addr1, "shares 0 and 1 should produce same eth address");
+        assert_eq!(addr1, addr2, "shares 1 and 2 should produce same eth address");
+
+        // Address should be 20 bytes
+        assert_eq!(addr0.len(), 20, "eth address should be 20 bytes");
+
+        // Address should not be all zeros (vanishingly improbable)
+        let is_nonzero = addr0.iter().any(|&b| b != 0);
+        assert!(is_nonzero, "eth address should not be all zeros");
+    }
+
+    #[test]
+    fn test_dkg_threshold_parameters() {
+        let mut session = DkgSession::new(test_config(0));
+        let shares = session.run_local().unwrap();
+
+        // Verify all shares have correct threshold parameters
+        for share in &shares {
+            assert_eq!(share.threshold, 2, "threshold should be 2");
+            assert_eq!(share.total_parties, 3, "total_parties should be 3");
+        }
+
+        // Verify the DKG produced exactly total_parties shares
+        assert_eq!(shares.len(), 3, "should generate total_parties (3) shares");
+    }
 }

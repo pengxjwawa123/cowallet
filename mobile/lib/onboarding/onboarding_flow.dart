@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../theme/colors.dart';
 import '../widgets/cw_orb.dart';
 import '../widgets/top_toast.dart';
@@ -13,12 +13,11 @@ import '../services/mpc_session_manager.dart';
 import '../platform/se_manager.dart';
 import '../platform/sb_manager.dart';
 import '../utils/device_id.dart';
-import '../bridge/mpc_bridge.dart';
-import '../services/backup_shard_service.dart';
 import '../utils/secure_storage.dart';
+import '../services/backup_shard_service.dart';
 
 /// The 10 stages of the cowallet onboarding, matching the H5 prototype.
-enum _Stage { hero, start, creating, importing, bio, pin, name, backup, ready, persona }
+enum _Stage { hero, intro, creating, bio, pin, name, backup, ready, persona }
 
 class OnboardingFlow extends StatefulWidget {
   const OnboardingFlow({super.key});
@@ -27,9 +26,12 @@ class OnboardingFlow extends StatefulWidget {
   State<OnboardingFlow> createState() => _OnboardingFlowState();
 }
 
-class _OnboardingFlowState extends State<OnboardingFlow>
-    with TickerProviderStateMixin {
+class _OnboardingFlowState extends State<OnboardingFlow> {
   _Stage _stage = _Stage.hero;
+
+  // --- Intro PageView state ---
+  final PageController _pageCtrl = PageController();
+  int _guidePage = 0;
 
   // --- Creating stage state ---
   double _createProgress = 0;
@@ -38,19 +40,15 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   bool _isResuming = false; // New: flag for resuming interrupted session
 
   // --- Bio stage state ---
-  bool _bioScanning = false;
+  bool _bioAuthenticating = false;
   bool _bioDone = false;
   bool _bioError = false;
-  late AnimationController _bioRingCtrl;
 
   // --- Name stage state ---
   final _nameCtrl = TextEditingController();
 
   bool _createError = false;
 
-  // --- Importing stage state ---
-  final _importCtrl = TextEditingController();
-  int _wordCount = 0;
 
   // --- Persona stage state ---
   String? _selectedPersona;
@@ -69,39 +67,43 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   // Keep track of navigation history for back button
   final List<_Stage> _history = [];
 
+
   @override
   void initState() {
     super.initState();
-    _bioRingCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-    _importCtrl.addListener(_updateWordCount);
+    _restoreStep();
+  }
+
+  Future<void> _restoreStep() async {
+    final saved = await SecureStorage.get(SecureStorage.keyOnboardingStep);
+    if (saved == null || saved.isEmpty) return;
+
+    final stage = _Stage.values.where((s) => s.name == saved).firstOrNull;
+    if (stage == null) return;
+
+    // Don't restore to 'creating' — that needs a fresh DKG run
+    if (stage == _Stage.creating) return;
+
+    if (mounted) {
+      setState(() => _stage = stage);
+    }
   }
 
   @override
   void dispose() {
     _createTimer?.cancel();
-    _bioRingCtrl.dispose();
     _nameCtrl.dispose();
-    _importCtrl.removeListener(_updateWordCount);
-    _importCtrl.dispose();
+    _pageCtrl.dispose();
     super.dispose();
   }
 
-  void _updateWordCount() {
-    final text = _importCtrl.text.trim();
-    final count = text.isEmpty ? 0 : text.split(RegExp(r'\s+')).length;
-    if (count != _wordCount) {
-      setState(() => _wordCount = count);
-    }
-  }
 
   void _goTo(_Stage next) {
     setState(() {
       _history.add(_stage);
       _stage = next;
     });
+    SecureStorage.save(SecureStorage.keyOnboardingStep, next.name);
     if (next == _Stage.creating) _startCreating();
   }
 
@@ -179,6 +181,15 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         final walletInfo = await sessionManager.runDkgWithRecovery();
         generatedAddress = walletInfo.address;
 
+        // Save pending backup shard to SecureStorage
+        final backupShard = mpcService.lastBackupShard;
+        if (backupShard != null && backupShard.isNotEmpty) {
+          final base64Shard = base64Encode(backupShard);
+          await SecureStorage.save(SecureStorage.keyPendingBackupShard, base64Shard);
+          await SecureStorage.save(SecureStorage.keyPendingBackupCreatedAt, DateTime.now().toIso8601String());
+          print('[OnboardingFlow] Saved pending backup shard to SecureStorage');
+        }
+
         if (mounted) {
           setState(() {
             _createChecksDone = 3; // ✅ 密钥分片完成
@@ -222,46 +233,37 @@ class _OnboardingFlowState extends State<OnboardingFlow>
 
   // ---- Real biometric authentication ----
   Future<void> _startBioScan() async {
-    print('[OnboardingBio] Starting biometric scan...');
-    setState(() => _bioScanning = true);
-    _bioRingCtrl.repeat();
+    // Immediately update UI before any async work
+    setState(() {
+      _bioAuthenticating = true;
+      _bioError = false;
+    });
 
     try {
-      // First check if biometric is available
       final available = await Services.biometrics.isAvailable();
-      print('[OnboardingBio] isAvailable: $available');
-
       if (!mounted) return;
 
-      // If biometric not available, skip this step
       if (!available) {
-        print('[OnboardingBio] Biometric not available, skipping');
-        _bioRingCtrl.stop();
         await Services.biometrics.setEnabled(false);
+        setState(() => _bioAuthenticating = false);
         _goTo(_Stage.name);
         return;
       }
 
       final hasEnrolled = await Services.biometrics.hasEnrolledBiometrics();
-      print('[OnboardingBio] hasEnrolledBiometrics: $hasEnrolled');
-
       if (!hasEnrolled) {
-        print('[OnboardingBio] No biometric enrolled, skipping');
-        _bioRingCtrl.stop();
         await Services.biometrics.setEnabled(false);
+        setState(() => _bioAuthenticating = false);
         _goTo(_Stage.name);
         return;
       }
 
-      // Real biometric authentication (Face ID / Touch ID / Fingerprint)
-      print('[OnboardingBio] Calling authenticate...');
       final authenticated = await Services.biometrics.authenticate(
         reason: 'Enable biometric protection for your wallet',
       );
-      print('[OnboardingBio] authenticated: $authenticated');
 
       if (!mounted) return;
-      _bioRingCtrl.stop();
+      setState(() => _bioAuthenticating = false);
 
       if (authenticated) {
         // Save biometric enabled status
@@ -275,25 +277,16 @@ class _OnboardingFlowState extends State<OnboardingFlow>
         } else if (await sbManager.isAvailable()) {
           await sbManager.initializeWallet('onboarding');
         } else {
-          setState(() {
-            _bioScanning = false;
-            _bioError = true;
-          });
+          setState(() => _bioError = true);
           return;
         }
 
-        setState(() {
-          _bioScanning = false;
-          _bioDone = true;
-        });
+        setState(() => _bioDone = true);
         Future.delayed(const Duration(milliseconds: 600), () {
           if (mounted) _goTo(_Stage.name);
         });
       } else {
-        setState(() {
-          _bioScanning = false;
-          _bioError = true;
-        });
+        setState(() => _bioError = true);
         // Show retry option with skip button
         await showDialog(
           context: context,
@@ -321,9 +314,8 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       }
     } catch (e) {
       if (!mounted) return;
-      _bioRingCtrl.stop();
       setState(() {
-        _bioScanning = false;
+        _bioAuthenticating = false;
         _bioError = true;
       });
     }
@@ -345,13 +337,27 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     setState(() => _backupSaving = true);
     try {
       final walletService = Services.wallet as MpcWalletService;
-      final backupBytes = walletService.lastBackupShard;
+      var backupBytes = walletService.lastBackupShard;
+
+      // If not in memory, try loading from pending storage
+      if (backupBytes == null || backupBytes.isEmpty) {
+        final pendingShard = await SecureStorage.get(SecureStorage.keyPendingBackupShard);
+        if (pendingShard != null && pendingShard.isNotEmpty) {
+          backupBytes = base64Decode(pendingShard);
+          print('[OnboardingFlow] Loaded backup shard from pending storage');
+        }
+      }
 
       if (backupBytes == null || backupBytes.length != 32) {
         throw BackupException(BackupError.shardNotAvailable);
       }
 
       final result = await walletService.storeBackupShard(backupBytes, useCloud: useCloud);
+
+      // Delete pending backup shard after successful backup
+      await SecureStorage.delete(SecureStorage.keyPendingBackupShard);
+      await SecureStorage.delete(SecureStorage.keyPendingBackupCreatedAt);
+      print('[OnboardingFlow] Deleted pending backup shard after successful backup');
 
       if (!mounted) return;
 
@@ -389,53 +395,6 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     _goTo(_Stage.bio);
   }
 
-  // ---- Importing ----
-  Future<void> _submitImport() async {
-    if (_wordCount != 12 && _wordCount != 24) return;
-
-    try {
-      // Convert mnemonic words back to bytes
-      final words = _importCtrl.text.trim().split(RegExp(r'\s+'));
-      final backupBytes = _mnemonicToBytes(words);
-
-      // TODO: Wire to RecoveryService for full recovery flow
-      // This requires backend API integration for OTP verification
-      // For now, just import the backup shard into FFI layer
-      await MpcBridge.recoveryImportBackupShard(backupBytes);
-
-      // Store mnemonic in secure storage for recovery completion later
-      await SecureStorage.saveMnemonic(words.join(' '));
-
-      _goTo(_Stage.bio);
-    } catch (e) {
-      print('[OnboardingImport] Failed to import backup: $e');
-      if (!mounted) return;
-      showTopToast(context, 'Failed to import recovery phrase: $e', backgroundColor: CwColors.danger);
-    }
-  }
-
-  List<int> _mnemonicToBytes(List<String> words) {
-    // Convert words back to bytes
-    // Simplified implementation - in production use full BIP-39 decoding
-    final bytes = <int>[];
-
-    // For now, create a deterministic 32-byte output from word hashes
-    // This is a placeholder until full BIP-39 wordlist is integrated
-    for (var i = 0; i < 32; i++) {
-      final wordIndex = i % words.length;
-      final word = words[wordIndex];
-      bytes.add((word.codeUnitAt(0) + i) % 256);
-    }
-
-    return bytes;
-  }
-
-  Future<void> _pasteWords() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data?.text != null) {
-      _importCtrl.text = data!.text!;
-    }
-  }
 
   // ---- Persona ----
   void _pickPersona(String id) {
@@ -451,6 +410,9 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     final appState = CowalletApp.of(context);
     appState.completeOnboarding();
     final addr = appState.walletAddress;
+
+    // Clear persisted onboarding step
+    await SecureStorage.delete(SecureStorage.keyOnboardingStep);
 
     // Persist onboarding metadata
     await SecureStorage.save('onboarding_completed_at', DateTime.now().toIso8601String());
@@ -472,6 +434,22 @@ class _OnboardingFlowState extends State<OnboardingFlow>
       body: SafeArea(
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
+          transitionBuilder: (child, animation) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          layoutBuilder: (currentChild, previousChildren) {
+            return Stack(
+              alignment: Alignment.topCenter,
+              fit: StackFit.expand,
+              children: [
+                ...previousChildren,
+                if (currentChild != null) currentChild,
+              ],
+            );
+          },
           child: _buildStage(),
         ),
       ),
@@ -481,13 +459,10 @@ class _OnboardingFlowState extends State<OnboardingFlow>
   Widget _buildStage() {
     switch (_stage) {
       case _Stage.hero:
+      case _Stage.intro:
         return _heroStage();
-      case _Stage.start:
-        return _startStage();
       case _Stage.creating:
         return _creatingStage();
-      case _Stage.importing:
-        return _importingStage();
       case _Stage.bio:
         return _bioStage();
       case _Stage.pin:
@@ -590,18 +565,81 @@ class _OnboardingFlowState extends State<OnboardingFlow>
     );
   }
 
-  // ===================== STAGE 1: HERO =====================
+  // ===================== STAGE 1+2: HERO + INTRO (PageView) =====================
 
   Widget _heroStage() {
-    return SingleChildScrollView(
+    return Column(
       key: const ValueKey('hero'),
+      children: [
+        Expanded(
+          child: PageView(
+            controller: _pageCtrl,
+            onPageChanged: (i) => setState(() => _guidePage = i),
+            children: [
+              _heroPage(),
+              _introPageContent(),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 32, left: 28, right: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Page indicator dots
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(2, (i) {
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: i == _guidePage ? 20 : 8,
+                    height: 8,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color: i == _guidePage ? CwColors.accent : CwColors.line,
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 24),
+              // CTA button
+              _primaryButton(
+                _guidePage == 0 ? S.getStarted : S.introStart,
+                () {
+                  if (_guidePage == 0) {
+                    _pageCtrl.animateToPage(1,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut);
+                  } else {
+                    _goTo(_Stage.creating);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                S.heroLegal,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: CwColors.ink4,
+                      fontSize: 11,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _heroPage() {
+    return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 28),
       child: Column(
         children: [
-          const SizedBox(height: 40),
+          const SizedBox(height: 48),
           const CwOrb(size: 140, breathing: true),
           const SizedBox(height: 28),
-          // Kicker
           Text(
             S.heroKicker,
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -611,7 +649,6 @@ class _OnboardingFlowState extends State<OnboardingFlow>
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),
-          // H1 with italic emphasis
           RichText(
             textAlign: TextAlign.center,
             text: TextSpan(
@@ -634,7 +671,6 @@ class _OnboardingFlowState extends State<OnboardingFlow>
             ),
           ),
           const SizedBox(height: 16),
-          // Explain paragraph
           Text(
             S.heroExplain,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -643,28 +679,34 @@ class _OnboardingFlowState extends State<OnboardingFlow>
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
-          // 3 feature rows
-          _featureRow(Icons.shield_outlined, S.heroFeat1h, S.heroFeat1s),
+          _featureRow(Icons.touch_app_outlined, S.heroFeat1h, S.heroFeat1s),
           const SizedBox(height: 16),
           _featureRow(Icons.public, S.heroFeat2h, S.heroFeat2s),
           const SizedBox(height: 16),
           _featureRow(Icons.auto_awesome, S.heroFeat3h, S.heroFeat3s),
-          const SizedBox(height: 36),
-          // CTA
-          _primaryButton(S.getStarted, () => _goTo(_Stage.start)),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _introPageContent() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      child: Column(
+        children: [
+          const SizedBox(height: 48),
+          Icon(Icons.lock_outline, size: 64, color: CwColors.accent),
+          const SizedBox(height: 24),
+          _heading(S.introH1),
           const SizedBox(height: 12),
-          // Secondary link
-          _secondaryLink(S.haveWallet, () => _goTo(_Stage.start)),
+          _subtitle(S.introSub),
+          const SizedBox(height: 32),
+          _featureRow(Icons.call_split, S.introBullet1h, S.introBullet1s),
           const SizedBox(height: 16),
-          // Legal text
-          Text(
-            S.heroLegal,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: CwColors.ink4,
-                  fontSize: 11,
-                ),
-            textAlign: TextAlign.center,
-          ),
+          _featureRow(Icons.verified_user_outlined, S.introBullet2h, S.introBullet2s),
+          const SizedBox(height: 16),
+          _featureRow(Icons.hide_source_outlined, S.introBullet3h, S.introBullet3s),
           const SizedBox(height: 24),
         ],
       ),
@@ -704,135 +746,6 @@ class _OnboardingFlowState extends State<OnboardingFlow>
           ),
         ),
       ],
-    );
-  }
-
-  // ===================== STAGE 2: START =====================
-
-  Widget _startStage() {
-    return SingleChildScrollView(
-      key: const ValueKey('start'),
-      child: Column(
-        children: [
-          _topBar(showBack: true, step: 0, total: 3),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 12),
-                _heading(S.startH1),
-                const SizedBox(height: 8),
-                _subtitle(S.startSub),
-                const SizedBox(height: 28),
-                // Option cards
-                _optionCard(
-                  icon: Icons.add_circle_outline,
-                  title: S.pickCreateTitle,
-                  desc: S.pickCreateDesc,
-                  tag: S.pickCreateTag,
-                  onTap: () => _goTo(_Stage.creating),
-                ),
-                const SizedBox(height: 12),
-                _optionCard(
-                  icon: Icons.downloading,
-                  title: S.pickImportTitle,
-                  desc: S.pickImportDesc,
-                  onTap: () => _goTo(_Stage.importing),
-                ),
-                const SizedBox(height: 12),
-                _optionCard(
-                  icon: Icons.usb,
-                  title: S.pickHwTitle,
-                  desc: S.pickHwDesc,
-                  onTap: () {}, // Hardware wallet — not implemented in prototype
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _optionCard({
-    required IconData icon,
-    required String title,
-    required String desc,
-    String? tag,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: CwColors.bgCard,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: CwColors.line),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: CwColors.accentSoft,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, size: 20, color: CwColors.accent),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(title,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(
-                                    color: CwColors.ink1,
-                                    fontWeight: FontWeight.w600)),
-                      ),
-                      if (tag != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: CwColors.accentSoft,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(tag,
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: CwColors.accent,
-                                  fontWeight: FontWeight.w600)),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(desc,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(color: CwColors.ink3)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Icon(Icons.chevron_right, size: 20, color: CwColors.ink4),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -952,118 +865,6 @@ class _OnboardingFlowState extends State<OnboardingFlow>
 
   // ===================== STAGE 4: IMPORTING =====================
 
-  Widget _importingStage() {
-    final valid = _wordCount == 12 || _wordCount == 24;
-    return SingleChildScrollView(
-      key: const ValueKey('importing'),
-      child: Column(
-        children: [
-          _topBar(showBack: true, step: 1, total: 3),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 12),
-                _heading(S.importH1),
-                const SizedBox(height: 8),
-                _subtitle(S.importSub),
-                const SizedBox(height: 20),
-                // Warning box
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: CwColors.warnSoft,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: CwColors.warn.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.warning_amber_rounded,
-                          size: 20, color: CwColors.warn),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(S.importWarn,
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: CwColors.warn)),
-                            const SizedBox(height: 4),
-                            Text(S.importWarnBody,
-                                style: TextStyle(
-                                    fontSize: 12, color: CwColors.ink2)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // Textarea
-                Container(
-                  decoration: BoxDecoration(
-                    color: CwColors.bgCard,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: CwColors.line),
-                  ),
-                  child: TextField(
-                    controller: _importCtrl,
-                    maxLines: 5,
-                    style: const TextStyle(
-                      fontFamily: 'JetBrainsMono',
-                      fontSize: 14,
-                      color: CwColors.ink1,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: S.importPlaceholder,
-                      hintStyle: TextStyle(
-                          fontFamily: 'JetBrainsMono',
-                          fontSize: 14,
-                          color: CwColors.ink4),
-                      contentPadding: const EdgeInsets.all(16),
-                      border: InputBorder.none,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Word counter + paste
-                Row(
-                  children: [
-                    Text(
-                      '$_wordCount ${_wordCount == 1 ? 'word' : 'words'}',
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: valid ? CwColors.success : CwColors.ink4,
-                          ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: _pasteWords,
-                      icon: Icon(Icons.paste, size: 16, color: CwColors.ink3),
-                      label: Text(S.paste,
-                          style:
-                              TextStyle(fontSize: 13, color: CwColors.ink3)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                // Submit
-                _primaryButton(
-                  S.importSubmit,
-                  valid ? _submitImport : null,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   // ===================== STAGE 5: BIO =====================
 
@@ -1078,59 +879,33 @@ class _OnboardingFlowState extends State<OnboardingFlow>
             child: Column(
               children: [
                 const SizedBox(height: 40),
-                SizedBox(
-                  width: 120,
-                  height: 120,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      AnimatedBuilder(
-                        animation: _bioRingCtrl,
-                        builder: (_, _) {
-                          final scale =
-                              _bioScanning ? 1.0 + _bioRingCtrl.value * 0.08 : 1.0;
-                          final opacity =
-                              _bioScanning ? 0.6 - _bioRingCtrl.value * 0.3 : 0.25;
-                          return Transform.scale(
-                            scale: scale,
-                            child: Container(
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: (_bioDone ? CwColors.success : CwColors.accent)
-                                      .withValues(alpha: opacity),
-                                  width: 3,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                      Icon(
-                        _bioDone ? Icons.check_circle : Icons.fingerprint,
-                        size: 56,
-                        color: _bioDone ? CwColors.success : CwColors.accent,
-                      ),
-                    ],
-                  ),
+                Icon(
+                  _bioDone ? Icons.check_circle : Icons.fingerprint,
+                  size: 64,
+                  color: _bioDone ? CwColors.success : CwColors.accent,
                 ),
                 const SizedBox(height: 32),
                 _heading(_bioDone ? S.bioDone : S.bioH1),
                 const SizedBox(height: 8),
                 _subtitle(S.bioSub),
                 const SizedBox(height: 40),
-                if (!_bioDone && !_bioScanning) ...[
+                if (!_bioDone && !_bioAuthenticating) ...[
                   _primaryButton(S.bioActivate, _startBioScan),
                   const SizedBox(height: 12),
                   _secondaryLink(S.bioSkip, _skipBio),
                 ],
-                if (_bioScanning)
-                  Text(
-                    '...',
-                    style: TextStyle(fontSize: 18, color: CwColors.ink4),
+                if (_bioAuthenticating) ...[
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
                   ),
+                  const SizedBox(height: 12),
+                  Text(
+                    S.bioVerifying,
+                    style: TextStyle(fontSize: 14, color: CwColors.ink3),
+                  ),
+                ],
               ],
             ),
           ),

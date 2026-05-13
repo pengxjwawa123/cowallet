@@ -329,7 +329,7 @@ impl MpcParticipant {
                 .unwrap_or(0);
 
                 let wallet_name = format!("Wallet {}", wallet_count + 1);
-                let default_chain_ids: Vec<i64> = vec![8453]; // Base
+                let default_chain_ids: Vec<i64> = vec![1, 8453, 42161, 10, 56, 137];
 
                 // Create wallet entry in the wallets table
                 let wallet_id: Uuid = sqlx::query_scalar(

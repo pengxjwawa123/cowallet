@@ -136,10 +136,11 @@ where
                 ),
             );
 
-            // X-XSS-Protection - Basic XSS protection
+            // X-XSS-Protection - Disable legacy XSS auditor (modern approach)
+            // Setting to 0 is recommended as the feature can introduce security vulnerabilities
             headers.insert(
                 HeaderName::from_static("x-xss-protection"),
-                HeaderValue::from_static("1; mode=block"),
+                HeaderValue::from_static("0"),
             );
 
             // CSP - Content Security Policy (API focused, minimal)

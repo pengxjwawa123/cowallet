@@ -49,6 +49,8 @@ class IntentExecutor {
         return _executeBalance();
       case 'transfer':
         return _executeTransfer(params);
+      case 'swap':
+        return _executeSwap(params);
       default:
         return ActionResult.ok(
           S.lang == Lang.zh ? '好,这就办。' : 'On it.',
@@ -116,6 +118,8 @@ class IntentExecutor {
       final to = params['to'] ?? '';
       final amountStr = params['amount'] ?? '0';
       final token = (params['token'] ?? 'ETH').toUpperCase();
+      final chainIdStr = params['chain_id'];
+      final chainId = chainIdStr != null ? int.tryParse(chainIdStr) : null;
 
       if (to.isEmpty || !to.startsWith('0x') || to.length != 42) {
         return ActionResult.fail(
@@ -134,14 +138,21 @@ class IntentExecutor {
       final address = await _wallet.getAddress();
       if (address.isEmpty) return ActionResult.fail(S.noWallet);
 
+      // Switch chain RPC for balance/gas queries if needed
+      final targetChainId = chainId ?? _resolveChainId(token);
+      if (_chain is JsonRpcChainService) {
+        (_chain as JsonRpcChainService).switchChain(ChainConfig.byId(targetChainId));
+      }
+
       final String txHash;
 
-      if (token == 'ETH') {
-        // Native ETH transfer via MPC signing
-        txHash = await _tx.signAndSend(to: to, value: amount);
+      final isNativeToken = _isNativeToken(token, targetChainId);
+      if (isNativeToken) {
+        txHash = await _tx.signAndSend(to: to, value: amount, chainId: targetChainId);
       } else {
         // ERC-20 token transfer (USDC, USDT, etc.)
-        final tokenContract = _chain.tokenContract(token);
+        final config = ChainConfig.byId(targetChainId);
+        final tokenContract = config.tokenContract(token);
         if (tokenContract.isEmpty) {
           return ActionResult.fail(
             S.lang == Lang.zh
@@ -153,6 +164,7 @@ class IntentExecutor {
           to: to,
           tokenContract: tokenContract,
           amount: amount,
+          chainId: targetChainId,
         );
       }
 
@@ -201,11 +213,69 @@ class IntentExecutor {
     }
   }
 
+  Future<ActionResult> _executeSwap(Map<String, String> params) async {
+    try {
+      final fromToken = (params['from_token'] ?? '').toUpperCase();
+      final toToken = (params['to_token'] ?? '').toUpperCase();
+      final amountStr = params['amount'] ?? '0';
+      if (fromToken.isEmpty || toToken.isEmpty) {
+        return ActionResult.fail(
+          S.lang == Lang.zh ? '请指定兑换的代币' : 'Please specify swap tokens',
+        );
+      }
+
+      final amount = _parseAmount(amountStr, fromToken);
+      if (amount == BigInt.zero) {
+        return ActionResult.fail(
+          S.lang == Lang.zh ? '无效的金额' : 'Invalid amount',
+        );
+      }
+
+      // Swap is not yet implemented on-chain — return informative message
+      return ActionResult.fail(
+        S.lang == Lang.zh
+            ? 'DEX 兑换功能开发中，暂时请使用外部 DEX 完成 $fromToken → $toToken 兑换'
+            : 'DEX swap is under development. Please use an external DEX for $fromToken → $toToken swap.',
+      );
+    } catch (e) {
+      return ActionResult.fail(
+        S.lang == Lang.zh ? '兑换失败: $e' : 'Swap failed: $e',
+      );
+    }
+  }
+
+  bool _isNativeToken(String token, int chainId) {
+    switch (token) {
+      case 'ETH':
+        return chainId == 1 || chainId == 8453 || chainId == 42161 || chainId == 10;
+      case 'POL':
+      case 'MATIC':
+        return chainId == 137;
+      case 'BNB':
+        return chainId == 56;
+      default:
+        return false;
+    }
+  }
+
+  int _resolveChainId(String token) {
+    switch (token) {
+      case 'POL':
+      case 'MATIC':
+        return 137;
+      case 'BNB':
+        return 56;
+      case 'ETH':
+      default:
+        return 8453;
+    }
+  }
+
   BigInt _parseAmount(String input, String token) {
     final value = double.tryParse(input) ?? 0;
-    if (token == 'ETH') {
+    if (token == 'ETH' || token == 'POL' || token == 'MATIC' || token == 'BNB') {
       return BigInt.from(value * 1e18);
     }
-    return BigInt.from(value * 1e6); // USDC 6 decimals
+    return BigInt.from(value * 1e6); // USDC/USDT 6 decimals
   }
 }

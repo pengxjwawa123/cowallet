@@ -483,4 +483,219 @@ mod tests {
         let status = limiter.check_rate_limit("user1", limit);
         assert!(!status.allowed);
     }
+
+    #[test]
+    fn test_rate_limiter_allows_within_limit() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 5,
+            window_secs: 60,
+        };
+
+        // All requests within limit should be allowed
+        for i in 0..5 {
+            let status = limiter.check_rate_limit("user_123", limit);
+            assert!(status.allowed, "Request {} should be allowed", i + 1);
+            assert_eq!(status.remaining, 5 - i - 1);
+            limiter.record_request("user_123".to_string());
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_over_limit() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 3,
+            window_secs: 60,
+        };
+
+        // Use up the quota
+        for _ in 0..3 {
+            let status = limiter.check_rate_limit("user_456", limit);
+            assert!(status.allowed);
+            limiter.record_request("user_456".to_string());
+        }
+
+        // Next request should be blocked
+        let status = limiter.check_rate_limit("user_456", limit);
+        assert!(!status.allowed);
+        assert_eq!(status.remaining, 0);
+        assert!(status.retry_after > 0);
+        assert!(status.retry_after <= limit.window_secs);
+    }
+
+    #[test]
+    fn test_rate_limit_presets() {
+        let strict = RateLimit::strict();
+        assert_eq!(strict.max_requests, 10);
+        assert_eq!(strict.window_secs, 60);
+
+        let standard = RateLimit::standard();
+        assert_eq!(standard.max_requests, 100);
+        assert_eq!(standard.window_secs, 60);
+
+        let auth = RateLimit::auth();
+        assert_eq!(auth.max_requests, 5);
+        assert_eq!(auth.window_secs, 60);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_rate_limiter_trait_check_and_record() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 2,
+            window_secs: 60,
+        };
+
+        // First request should succeed
+        let status = limiter.check_and_record("test_key", limit).await;
+        assert!(status.allowed);
+        assert_eq!(status.remaining, 1);
+
+        // Second request should succeed
+        let status = limiter.check_and_record("test_key", limit).await;
+        assert!(status.allowed);
+        assert_eq!(status.remaining, 0);
+
+        // Third request should be blocked
+        let status = limiter.check_and_record("test_key", limit).await;
+        assert!(!status.allowed);
+        assert_eq!(status.remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_rate_limiter_trait_check_without_record() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 2,
+            window_secs: 60,
+        };
+
+        // Check without recording should not consume quota
+        let status = limiter.check("test_check", limit).await;
+        assert!(status.allowed);
+
+        let status = limiter.check("test_check", limit).await;
+        assert!(status.allowed);
+
+        // Should still have full quota
+        let status = limiter.check_and_record("test_check", limit).await;
+        assert!(status.allowed);
+        assert_eq!(status.remaining, 1);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_rate_limiter_trait_record() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 2,
+            window_secs: 60,
+        };
+
+        // Explicitly record requests
+        limiter.record("test_record").await;
+        limiter.record("test_record").await;
+
+        // Should be at limit
+        let status = limiter.check("test_record", limit).await;
+        assert!(!status.allowed);
+    }
+
+    #[test]
+    fn test_rate_limit_isolation_between_keys() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 1,
+            window_secs: 60,
+        };
+
+        // Max out user1
+        limiter.record_request("user1".to_string());
+        let status = limiter.check_rate_limit("user1", limit);
+        assert!(!status.allowed);
+
+        // user2 should be unaffected
+        let status = limiter.check_rate_limit("user2", limit);
+        assert!(status.allowed);
+
+        // user3 should be unaffected
+        let status = limiter.check_rate_limit("user3", limit);
+        assert!(status.allowed);
+    }
+
+    #[test]
+    fn test_rate_limit_window_cleanup() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 2,
+            window_secs: 1, // 1 second window
+        };
+
+        // Use up quota
+        limiter.record_request("user_window".to_string());
+        limiter.record_request("user_window".to_string());
+
+        // Should be blocked
+        let status = limiter.check_rate_limit("user_window", limit);
+        assert!(!status.allowed);
+
+        // Wait for window to expire
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Should be allowed again (old requests outside window)
+        let status = limiter.check_rate_limit("user_window", limit);
+        assert!(status.allowed);
+    }
+
+    #[test]
+    fn test_any_rate_limiter_in_memory_mode() {
+        let limiter = AnyRateLimiter::in_memory();
+
+        match limiter {
+            AnyRateLimiter::InMemory(_) => { /* expected */ }
+            AnyRateLimiter::Redis(_) => panic!("Expected InMemory variant"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_error_response_format() {
+        let rejection = RateLimitRejection::RateLimited(60);
+        let response = rejection.into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Check retry-after header
+        let headers = response.headers();
+        let retry_after = headers.get("Retry-After");
+        assert!(retry_after.is_some());
+    }
+
+    #[test]
+    fn test_rate_limit_unauthenticated_response() {
+        let rejection = RateLimitRejection::Unauthenticated;
+        let response = rejection.into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_remaining_count_accuracy() {
+        let limiter = InMemoryRateLimiter::new();
+        let limit = RateLimit {
+            max_requests: 5,
+            window_secs: 60,
+        };
+
+        // Check remaining count decreases correctly
+        for i in 0..5 {
+            let status = limiter.check_and_record("accuracy_test", limit).await;
+            assert!(status.allowed);
+            assert_eq!(status.remaining, 5 - i - 1, "Remaining count mismatch at iteration {}", i);
+        }
+
+        // Over limit should have 0 remaining
+        let status = limiter.check("accuracy_test", limit).await;
+        assert!(!status.allowed);
+        assert_eq!(status.remaining, 0);
+    }
 }

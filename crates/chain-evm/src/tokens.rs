@@ -121,3 +121,116 @@ pub enum TokenError {
     #[error("contract call failed: {0}")]
     ContractCallFailed(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_usdc_address_ethereum() {
+        let addr = usdc_address(1);
+        assert!(addr.is_some());
+        let expected: Address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+            .parse()
+            .unwrap();
+        assert_eq!(addr.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_usdc_address_base() {
+        let addr = usdc_address(8453);
+        assert!(addr.is_some());
+        let expected: Address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+            .parse()
+            .unwrap();
+        assert_eq!(addr.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_usdc_address_arbitrum() {
+        let addr = usdc_address(42161);
+        assert!(addr.is_some());
+        let expected: Address = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+            .parse()
+            .unwrap();
+        assert_eq!(addr.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_usdc_address_optimism() {
+        let addr = usdc_address(10);
+        assert!(addr.is_some());
+        let expected: Address = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
+            .parse()
+            .unwrap();
+        assert_eq!(addr.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_usdc_address_bsc() {
+        let addr = usdc_address(56);
+        assert!(addr.is_some());
+        let expected: Address = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
+            .parse()
+            .unwrap();
+        assert_eq!(addr.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_usdc_address_unsupported_chain() {
+        let addr = usdc_address(137); // Polygon
+        assert!(addr.is_none());
+
+        let addr = usdc_address(43114); // Avalanche
+        assert!(addr.is_none());
+    }
+
+    #[test]
+    fn test_usdc_addresses_all_chains() {
+        let supported_chains = vec![1, 8453, 42161, 10, 56];
+
+        for chain_id in supported_chains {
+            let addr = usdc_address(chain_id);
+            assert!(addr.is_some(), "USDC should exist on chain {}", chain_id);
+            assert_ne!(addr.unwrap(), Address::ZERO);
+        }
+    }
+
+    #[test]
+    fn test_token_info_creation() {
+        let token = TokenInfo {
+            address: Address::ZERO,
+            symbol: "TEST".into(),
+            name: "Test Token".into(),
+            decimals: 18,
+            chain_id: 1,
+            logo_uri: Some("https://example.com/logo.png".into()),
+        };
+
+        assert_eq!(token.symbol, "TEST");
+        assert_eq!(token.decimals, 18);
+        assert!(token.logo_uri.is_some());
+    }
+
+    #[test]
+    fn test_token_balance_creation() {
+        let token = TokenInfo {
+            address: Address::ZERO,
+            symbol: "USDC".into(),
+            name: "USD Coin".into(),
+            decimals: 6,
+            chain_id: 1,
+            logo_uri: None,
+        };
+
+        let balance = TokenBalance {
+            token: token.clone(),
+            balance: U256::from(1_000_000u64), // 1 USDC
+            balance_formatted: "1.0".into(),
+            value_usd: Some(1.0),
+        };
+
+        assert_eq!(balance.balance, U256::from(1_000_000u64));
+        assert_eq!(balance.value_usd, Some(1.0));
+    }
+}

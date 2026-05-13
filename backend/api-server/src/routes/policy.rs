@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
     routing::{delete, get, post, put},
 };
-use policy_engine::{Decision, Policy, PolicyAction, Rule};
+use policy_engine::{Decision, Policy, PolicyAction, Rule, TransactionHistory};
 use serde::{Deserialize, Serialize};
 
 use crate::middleware::auth::Claims;
@@ -278,6 +278,7 @@ async fn delete_policy(
 
 #[derive(Deserialize)]
 struct EvaluateRequest {
+    from: String,
     to: String,
     value: String,
     token: Option<String>,
@@ -327,23 +328,81 @@ async fn evaluate_transaction(
         .parse()
         .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid to address"))?;
 
+    let from_addr: alloy_primitives::Address = body
+        .from
+        .parse()
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid from address"))?;
+
     let value = alloy_primitives::U256::from_str_radix(
         body.value.strip_prefix("0x").unwrap_or(&body.value),
         if body.value.starts_with("0x") { 16 } else { 10 },
     )
     .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid value"))?;
 
+    let chain_id = body.chain_id.unwrap_or(8453);
+
+    // Compute transaction history for daily-limit / rate-limit rules
+    let history = compute_tx_history(&state, &body.from, chain_id).await;
+
     let tx_ctx = policy_engine::types::TransactionContext {
         user_id: user_id.to_string(),
-        from: alloy_primitives::Address::ZERO,
+        from: from_addr,
         to: to_addr,
         value,
         token: body.token,
-        chain_id: body.chain_id.unwrap_or(8453),
+        chain_id,
         is_contract_interaction: body.is_contract.unwrap_or(false),
         timestamp: chrono::Utc::now(),
+        history,
     };
 
     let decision = policy_engine::rules::evaluate(&tx_ctx, &policies);
     Ok(Json(decision))
+}
+
+/// Fetch recent transaction history from Covalent and compute aggregates
+/// for policy evaluation (daily total, tx count in window).
+async fn compute_tx_history(
+    state: &AppState,
+    from_address: &str,
+    chain_id: u64,
+) -> Option<TransactionHistory> {
+    use crate::services::covalent;
+
+    let api_key = state.covalent_api_key.as_ref()?;
+    let txs = covalent::get_transactions(&state.http, api_key, from_address, chain_id)
+        .await
+        .ok()?;
+
+    let now = chrono::Utc::now();
+    let day_ago = now - chrono::Duration::hours(24);
+    let hour_ago = now - chrono::Duration::hours(1);
+
+    let mut daily_total = alloy_primitives::U256::ZERO;
+    let mut hourly_count: u32 = 0;
+
+    for tx in &txs {
+        let ts = chrono::DateTime::parse_from_rfc3339(&tx.timestamp)
+            .or_else(|_| chrono::DateTime::parse_from_str(&tx.timestamp, "%Y-%m-%dT%H:%M:%S%.fZ"))
+            .ok();
+
+        if let Some(ts) = ts {
+            let ts_utc = ts.with_timezone(&chrono::Utc);
+
+            if ts_utc > day_ago && tx.from.eq_ignore_ascii_case(from_address) {
+                let val = tx.value.parse::<u128>().unwrap_or(0);
+                daily_total += alloy_primitives::U256::from(val);
+            }
+
+            if ts_utc > hour_ago && tx.from.eq_ignore_ascii_case(from_address) {
+                hourly_count += 1;
+            }
+        }
+    }
+
+    Some(TransactionHistory {
+        daily_total,
+        window_tx_count: hourly_count,
+        window_secs: 3600,
+    })
 }

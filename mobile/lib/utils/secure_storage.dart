@@ -11,8 +11,11 @@ class SecureStorage {
   static const String keyRefreshToken = "refresh_token";
   static const String keyUserId = "user_id";
   static const String keyWalletAddress = "wallet_address";
-  static const String keyMnemonic = "wallet_mnemonic";
+
   static const String keyDeviceId = "device_id";
+  static const String keyPendingBackupShard = "pending_backup_shard";
+  static const String keyPendingBackupCreatedAt = "pending_backup_created_at";
+  static const String keyOnboardingStep = "onboarding_step";
 
   // 存token
   static Future<void> saveToken(String token) async {
@@ -45,15 +48,6 @@ class SecureStorage {
     await _storage.delete(key: keyRefreshToken);
   }
 
-  // 存助记词（加密存储，钱包必备）
-  static Future<void> saveMnemonic(String mnemonic) async {
-    await _storage.write(key: keyMnemonic, value: mnemonic);
-  }
-
-  // 取助记词
-  static Future<String?> getMnemonic() async {
-    return await _storage.read(key: keyMnemonic);
-  }
 
   // 存设备ID
   static Future<void> saveDeviceId(String deviceId) async {

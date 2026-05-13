@@ -131,4 +131,172 @@ mod tests {
         req.add_approval("bob", false);
         assert_eq!(req.status, ApprovalStatus::Rejected);
     }
+
+    #[test]
+    fn test_pending_approval_creation() {
+        let approvers = vec!["alice".into(), "bob".into()];
+        let req = ApprovalRequest::new("tx-123".into(), approvers.clone(), 1, 24);
+
+        assert_eq!(req.transaction_id, "tx-123");
+        assert_eq!(req.required_approvals, 1);
+        assert_eq!(req.approvers, approvers);
+        assert_eq!(req.received_approvals.len(), 0);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+        assert!(!req.is_approved());
+    }
+
+    #[test]
+    fn test_1_of_1_approval() {
+        let approvers = vec!["alice".into()];
+        let mut req = ApprovalRequest::new("tx-003".into(), approvers, 1, 24);
+
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("alice", true);
+        assert_eq!(req.status, ApprovalStatus::Approved);
+        assert!(req.is_approved());
+    }
+
+    #[test]
+    fn test_3_of_5_approval() {
+        let approvers = vec![
+            "alice".into(),
+            "bob".into(),
+            "carol".into(),
+            "dave".into(),
+            "eve".into(),
+        ];
+        let mut req = ApprovalRequest::new("tx-004".into(), approvers, 3, 24);
+
+        req.add_approval("alice", true);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("bob", true);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("carol", true);
+        assert_eq!(req.status, ApprovalStatus::Approved);
+    }
+
+    #[test]
+    fn test_cannot_approve_twice() {
+        let approvers = vec!["alice".into(), "bob".into()];
+        let mut req = ApprovalRequest::new("tx-005".into(), approvers, 2, 24);
+
+        let result1 = req.add_approval("alice", true);
+        assert!(result1);
+        assert_eq!(req.received_approvals.len(), 1);
+
+        // Try to approve again
+        let result2 = req.add_approval("alice", true);
+        assert!(!result2);
+        assert_eq!(req.received_approvals.len(), 1);
+    }
+
+    #[test]
+    fn test_non_approver_cannot_approve() {
+        let approvers = vec!["alice".into(), "bob".into()];
+        let mut req = ApprovalRequest::new("tx-006".into(), approvers, 2, 24);
+
+        let result = req.add_approval("mallory", true);
+        assert!(!result);
+        assert_eq!(req.received_approvals.len(), 0);
+    }
+
+    #[test]
+    fn test_mixed_approvals_and_rejections() {
+        let approvers = vec!["alice".into(), "bob".into(), "carol".into()];
+        let mut req = ApprovalRequest::new("tx-007".into(), approvers, 2, 24);
+
+        req.add_approval("alice", true);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("bob", false);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("carol", true);
+        assert_eq!(req.status, ApprovalStatus::Approved);
+    }
+
+    #[test]
+    fn test_rejection_when_not_enough_approvers_left() {
+        let approvers = vec![
+            "alice".into(),
+            "bob".into(),
+            "carol".into(),
+            "dave".into(),
+        ];
+        let mut req = ApprovalRequest::new("tx-008".into(), approvers, 3, 24);
+
+        req.add_approval("alice", false);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("bob", false);
+        // Only 2 approvers left, but need 3 approvals
+        assert_eq!(req.status, ApprovalStatus::Rejected);
+    }
+
+    #[test]
+    fn test_approval_timestamp_recorded() {
+        let approvers = vec!["alice".into()];
+        let mut req = ApprovalRequest::new("tx-009".into(), approvers, 1, 24);
+
+        let before = Utc::now();
+        req.add_approval("alice", true);
+        let after = Utc::now();
+
+        assert_eq!(req.received_approvals.len(), 1);
+        let approval = &req.received_approvals[0];
+        assert_eq!(approval.approver_id, "alice");
+        assert!(approval.approved);
+        assert!(approval.timestamp >= before && approval.timestamp <= after);
+    }
+
+    #[test]
+    fn test_approval_expiration_tracking() {
+        let approvers = vec!["alice".into()];
+        let req = ApprovalRequest::new("tx-010".into(), approvers, 1, 48);
+
+        let expected_expiry = req.created_at + chrono::Duration::hours(48);
+        assert_eq!(req.expires_at, expected_expiry);
+    }
+
+    #[test]
+    fn test_approval_request_fields() {
+        let approvers = vec!["alice".into(), "bob".into()];
+        let tx_id = "tx-special-001".to_string();
+        let req = ApprovalRequest::new(tx_id.clone(), approvers.clone(), 2, 12);
+
+        assert_eq!(req.transaction_id, tx_id);
+        assert_eq!(req.required_approvals, 2);
+        assert_eq!(req.approvers.len(), 2);
+        assert!(req.approvers.contains(&"alice".to_string()));
+        assert!(req.approvers.contains(&"bob".to_string()));
+    }
+
+    #[test]
+    fn test_rejection_flag_recorded() {
+        let approvers = vec!["alice".into(), "bob".into()];
+        let mut req = ApprovalRequest::new("tx-011".into(), approvers, 2, 24);
+
+        req.add_approval("alice", false);
+
+        assert_eq!(req.received_approvals.len(), 1);
+        let rejection = &req.received_approvals[0];
+        assert_eq!(rejection.approver_id, "alice");
+        assert!(!rejection.approved);
+    }
+
+    #[test]
+    fn test_unanimous_approval_required() {
+        let approvers = vec!["alice".into(), "bob".into(), "carol".into()];
+        let mut req = ApprovalRequest::new("tx-012".into(), approvers, 3, 24);
+
+        req.add_approval("alice", true);
+        req.add_approval("bob", true);
+        assert_eq!(req.status, ApprovalStatus::Pending);
+
+        req.add_approval("carol", true);
+        assert_eq!(req.status, ApprovalStatus::Approved);
+    }
 }

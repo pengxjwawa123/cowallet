@@ -163,7 +163,6 @@ local-stop:
 	@echo "⛔ 停止所有服务..."
 	@pkill -f "api-server" || true
 	@pkill -f "mpc-relay" || true
-	@pkill -f "indexer" || true
 	@pkill -f "worker" || true
 	@echo "✅ 应用已停止"
 	@echo ""
@@ -191,6 +190,5 @@ dev-run:
 	@echo "▶️  启动开发服务..."
 	cargo run -p api-server &
 	cargo run -p mpc-relay &
-	cargo run -p indexer &
 	cargo run -p worker &
 	wait

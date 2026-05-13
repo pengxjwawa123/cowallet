@@ -3,6 +3,18 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Pre-computed aggregates from recent transaction history.
+/// Populated by the caller (backend) before policy evaluation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TransactionHistory {
+    /// Total value sent in the last 24 hours (in wei/smallest unit).
+    pub daily_total: U256,
+    /// Number of transactions in the specified rate-limit window.
+    pub window_tx_count: u32,
+    /// Duration of the window in seconds (matches `RateLimit::window_secs`).
+    pub window_secs: u64,
+}
+
 /// A transaction context to evaluate against policies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionContext {
@@ -14,6 +26,9 @@ pub struct TransactionContext {
     pub chain_id: u64,
     pub is_contract_interaction: bool,
     pub timestamp: DateTime<Utc>,
+    /// Recent history for daily-limit / rate-limit rules. None = rules skipped.
+    #[serde(default)]
+    pub history: Option<TransactionHistory>,
 }
 
 /// A policy is a named collection of rules with an action.

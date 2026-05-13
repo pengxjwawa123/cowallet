@@ -22,6 +22,7 @@ use uuid::Uuid;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/chat", post(chat_stream))
+        .route("/action", post(ai_action))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{session_id}/messages", get(get_session_messages))
         .route("/sessions/{session_id}", axum::routing::delete(delete_session))
@@ -127,12 +128,12 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                 tool_type: "function".into(),
                 function: FunctionDefinition {
                     name: "get_token_info".into(),
-                    description: "Get detailed token information including contract address, price, balance, and basic market data for a specific token in the user's wallet.".into(),
+                    description: "Get detailed token information including contract address, price, balance, and basic market data for a specific token in the user's wallet. MUST set chain_id for non-Base tokens.".into(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
-                            "token": { "type": "string", "description": "Token symbol (ETH, USDC, USDT, etc.)" },
-                            "chain_id": { "type": "integer", "description": "Chain ID. Default: 8453." }
+                            "token": { "type": "string", "description": "Token symbol (ETH, USDC, USDT, POL, BNB, etc.)" },
+                            "chain_id": { "type": "integer", "description": "Chain ID matching the token's native chain: ETH→1 or 8453, POL/MATIC→137, BNB→56. Default: 8453" }
                         },
                         "required": ["token"]
                     }),
@@ -162,13 +163,14 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                 tool_type: "function".into(),
                 function: FunctionDefinition {
                     name: "send_transaction".into(),
-                    description: "Prepare a token or ETH transfer. Requires user confirmation before signing.".into(),
+                    description: "Prepare a token or ETH transfer. Requires user confirmation before signing. IMPORTANT: You MUST set chain_id based on the token. POL/MATIC → 137 (Polygon), ETH → 1 or 8453 (Base), BNB → 56 (BSC). Never default to Base for non-Base tokens.".into(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
                             "to_address": { "type": "string", "description": "Recipient 0x address" },
                             "value": { "type": "string", "description": "Amount to send (human readable, e.g. '0.1')" },
-                            "token": { "type": "string", "description": "Token symbol: ETH, USDC, etc. Default: ETH" }
+                            "token": { "type": "string", "description": "Token symbol: ETH, USDC, POL, BNB, etc. Default: ETH" },
+                            "chain_id": { "type": "integer", "description": "Target chain ID. MUST match the token's native chain: ETH→1, Base ETH→8453, POL/MATIC→137, BNB→56, ARB ETH→42161, OP ETH→10. Required for non-ETH native tokens." }
                         },
                         "required": ["to_address", "value"]
                     }),
@@ -182,14 +184,15 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                 tool_type: "function".into(),
                 function: FunctionDefinition {
                     name: "swap_token".into(),
-                    description: "Swap one token for another via DEX. Requires user confirmation.".into(),
+                    description: "Swap one token for another via DEX. Requires user confirmation. MUST set chain_id based on the source token's native chain.".into(),
                     parameters: serde_json::json!({
                         "type": "object",
                         "properties": {
-                            "from_token": { "type": "string", "description": "Source token symbol (ETH, USDC, etc.)" },
+                            "from_token": { "type": "string", "description": "Source token symbol (ETH, USDC, POL, BNB, etc.)" },
                             "to_token": { "type": "string", "description": "Destination token symbol" },
                             "amount": { "type": "string", "description": "Amount of from_token to swap (human readable)" },
-                            "slippage": { "type": "number", "description": "Max slippage tolerance in percent. Default: 0.5" }
+                            "slippage": { "type": "number", "description": "Max slippage tolerance in percent. Default: 0.5" },
+                            "chain_id": { "type": "integer", "description": "Target chain ID for the swap. ETH→1 or 8453, POL/MATIC→137, BNB→56, ARB→42161, OP→10. Default: 8453" }
                         },
                         "required": ["from_token", "to_token", "amount"]
                     }),
@@ -274,8 +277,15 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，一个 AI 驱动的多链 MPC �
 
 ## 使用规则
 - 用户意图不明确时，优先用 clarify 工具提供选项让用户选择，不要猜测
-- 用户提到"转账"/"发送"/"send"时，用 send_transaction
-- 用户提到"兑换"/"swap"/"换"时，用 swap_token
+- 用户提到"转账"/"发送"/"send"时，用 send_transaction。必须根据代币确定 chain_id：
+  - ETH (以太坊主网) → chain_id: 1
+  - ETH (Base) → chain_id: 8453
+  - POL / MATIC → chain_id: 137 (Polygon)
+  - BNB → chain_id: 56 (BSC)
+  - ETH (Arbitrum) → chain_id: 42161
+  - ETH (Optimism) → chain_id: 10
+  - 如果用户未指定链，根据代币的原生链推断。USDC/USDT 等多链代币默认 Base (8453)
+- 用户提到"兑换"/"swap"/"换"时，用 swap_token。必须根据代币确定 chain_id（同 send_transaction 规则）
 - 用户提到"余额"/"balance"时，用 get_balance（默认返回所有链的余额）
 - 用户提到"地址"/"收款"/"receive"时，用 get_wallet_address
 - 用户提到"记录"/"历史"/"交易"时，用 get_transaction_history（默认返回所有链的交易）
@@ -298,6 +308,38 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，一个 AI 驱动的多链 MPC �
 // ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ActionRequest {
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "action")]
+#[serde(rename_all = "snake_case")]
+pub enum ActionResponse {
+    Transfer {
+        params: TransferParams,
+        confidence: f32,
+        confirm_text: String,
+    },
+    Balance {
+        confidence: f32,
+    },
+    Chat {
+        message: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct TransferParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // Threat detection
@@ -384,6 +426,127 @@ pub struct SessionInfo {
     pub title: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+// ---------------------------------------------------------------------------
+// Structured AI action endpoint — POST /ai/action
+//
+// Returns either a structured action (transfer, balance) or falls back to chat
+// ---------------------------------------------------------------------------
+
+async fn ai_action(
+    State(state): State<AppState>,
+    Json(req): Json<ActionRequest>,
+) -> Result<Json<ActionResponse>, (StatusCode, Json<serde_json::Value>)> {
+    use ai_bridge::intent::{classify, IntentKind, EntityKind};
+
+    // First, check for threats
+    if let Some(warning) = detect_threat(&req.message) {
+        return Ok(Json(ActionResponse::Chat {
+            message: warning.to_string(),
+        }));
+    }
+
+    // Classify intent using local regex classifier
+    let intent = classify(&req.message);
+
+    // If high confidence and sufficient entities, return structured action
+    if intent.confidence >= 0.7 {
+        match intent.kind {
+            IntentKind::CheckBalance => {
+                return Ok(Json(ActionResponse::Balance {
+                    confidence: intent.confidence,
+                }));
+            }
+            IntentKind::Transfer => {
+                // Extract entities
+                let amount = intent.entities.iter()
+                    .find(|e| e.kind == EntityKind::Amount)
+                    .map(|e| e.value.clone());
+
+                let token = intent.entities.iter()
+                    .find(|e| e.kind == EntityKind::Token)
+                    .map(|e| e.value.clone());
+
+                let to = intent.entities.iter()
+                    .find(|e| e.kind == EntityKind::Address)
+                    .map(|e| e.value.clone())
+                    .or_else(|| {
+                        intent.entities.iter()
+                            .find(|e| e.kind == EntityKind::Contact)
+                            .map(|e| e.value.clone())
+                    });
+
+                // Check if we have sufficient info for execution
+                let has_sufficient_info = amount.is_some() && (to.is_some() || token.is_some());
+
+                if has_sufficient_info {
+                    let confirm_text = format!(
+                        "Send {} {} to {}?",
+                        amount.as_deref().unwrap_or("?"),
+                        token.as_deref().unwrap_or("ETH"),
+                        to.as_deref().unwrap_or("?")
+                    );
+
+                    return Ok(Json(ActionResponse::Transfer {
+                        params: TransferParams {
+                            to,
+                            amount,
+                            token: token.or_else(|| Some("ETH".to_string())),
+                        },
+                        confidence: intent.confidence,
+                        confirm_text,
+                    }));
+                }
+            }
+            _ => {
+                // Other intent types don't have structured actions yet
+            }
+        }
+    }
+
+    // Fall back to AI chat if confidence is low or entities insufficient
+    let ai = state.claude.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "AI service not configured"})),
+        )
+    })?;
+
+    let messages = vec![
+        Message {
+            role: "system".into(),
+            content: Some("You are CoWallet, an AI crypto wallet assistant. Answer the user's question concisely.".into()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+        Message {
+            role: "user".into(),
+            content: Some(req.message.clone()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+    ];
+
+    // Use non-streaming chat for simple response
+    let response = ai.chat(&messages, &[], None).await.map_err(|e| {
+        tracing::error!("AI chat failed: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("AI request failed: {}", e)})),
+        )
+    })?;
+
+    let text = extract_text(&response);
+    let message = if text.is_empty() {
+        "Sorry, I couldn't process that request.".to_string()
+    } else {
+        text
+    };
+
+    Ok(Json(ActionResponse::Chat { message }))
 }
 
 // ---------------------------------------------------------------------------

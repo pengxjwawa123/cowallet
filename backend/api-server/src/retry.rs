@@ -388,4 +388,297 @@ mod tests {
         assert_eq!(cb.current_state().await, CircuitState::Closed);
         assert!(cb.is_allowed().await);
     }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_starts_closed() {
+        let config = CircuitBreakerConfig::default();
+        let cb = CircuitBreaker::new(config);
+
+        assert_eq!(cb.current_state().await, CircuitState::Closed);
+        assert!(cb.is_allowed().await);
+
+        let stats = cb.stats().await;
+        assert_eq!(stats.state, CircuitState::Closed);
+        assert_eq!(stats.failures, 0);
+        assert_eq!(stats.successes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_opens_after_failures() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 5,
+            recovery_timeout: Duration::from_secs(30),
+            success_threshold: 2,
+        };
+
+        let cb = CircuitBreaker::new(config);
+
+        // Circuit should be closed initially
+        assert_eq!(cb.current_state().await, CircuitState::Closed);
+
+        // Record failures up to threshold - 1
+        for _ in 0..4 {
+            cb.record_failure().await;
+            assert_eq!(cb.current_state().await, CircuitState::Closed);
+            assert!(cb.is_allowed().await);
+        }
+
+        // One more failure should open the circuit
+        cb.record_failure().await;
+        assert_eq!(cb.current_state().await, CircuitState::Open);
+        assert!(!cb.is_allowed().await);
+
+        let stats = cb.stats().await;
+        assert_eq!(stats.state, CircuitState::Open);
+        assert_eq!(stats.failures, 5);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_half_open_after_timeout() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            recovery_timeout: Duration::from_millis(100),
+            success_threshold: 2,
+        };
+
+        let cb = CircuitBreaker::new(config);
+
+        // Trip the circuit
+        cb.record_failure().await;
+        cb.record_failure().await;
+
+        assert_eq!(cb.current_state().await, CircuitState::Open);
+        assert!(!cb.is_allowed().await);
+
+        // Wait for recovery timeout
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // First call to is_allowed should transition to HalfOpen
+        assert!(cb.is_allowed().await);
+        assert_eq!(cb.current_state().await, CircuitState::HalfOpen);
+
+        let stats = cb.stats().await;
+        assert_eq!(stats.state, CircuitState::HalfOpen);
+        assert!(stats.last_failure_elapsed >= Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_resets_failures_on_success_when_closed() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 3,
+            recovery_timeout: Duration::from_secs(1),
+            success_threshold: 2,
+        };
+
+        let cb = CircuitBreaker::new(config);
+
+        // Record some failures (but not enough to open)
+        cb.record_failure().await;
+        cb.record_failure().await;
+
+        let stats = cb.stats().await;
+        assert_eq!(stats.failures, 2);
+
+        // Success should reset failure count
+        cb.record_success().await;
+
+        let stats = cb.stats().await;
+        assert_eq!(stats.failures, 0);
+        assert_eq!(cb.current_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_half_open_reopens_on_failure() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            recovery_timeout: Duration::from_millis(50),
+            success_threshold: 2,
+        };
+
+        let cb = CircuitBreaker::new(config);
+
+        // Open the circuit
+        cb.record_failure().await;
+        cb.record_failure().await;
+        assert_eq!(cb.current_state().await, CircuitState::Open);
+
+        // Wait for recovery
+        tokio::time::sleep(Duration::from_millis(75)).await;
+
+        // Transition to half-open
+        assert!(cb.is_allowed().await);
+        assert_eq!(cb.current_state().await, CircuitState::HalfOpen);
+
+        // Failure in half-open should re-open circuit
+        cb.record_failure().await;
+        assert_eq!(cb.current_state().await, CircuitState::Open);
+        assert!(!cb.is_allowed().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_call_method() {
+        let config = CircuitBreakerConfig {
+            failure_threshold: 2,
+            recovery_timeout: Duration::from_millis(50),
+            success_threshold: 1,
+        };
+
+        let cb = CircuitBreaker::new(config);
+
+        // Successful call
+        let result = cb.call(|| async { Ok::<_, String>(42) }).await;
+        assert_eq!(result, Ok(42));
+
+        // Failed calls
+        let result = cb.call(|| async { Err::<i32, _>("error1".to_string()) }).await;
+        assert_eq!(result, Err(Some("error1".to_string())));
+
+        let result = cb.call(|| async { Err::<i32, _>("error2".to_string()) }).await;
+        assert_eq!(result, Err(Some("error2".to_string())));
+
+        // Circuit should be open now
+        assert_eq!(cb.current_state().await, CircuitState::Open);
+
+        // Call should be rejected (circuit open)
+        let result = cb.call(|| async { Ok::<_, String>(100) }).await;
+        assert_eq!(result, Err(None)); // None indicates circuit is open
+    }
+
+    #[tokio::test]
+    async fn test_retry_with_backoff_succeeds_immediately() {
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter_factor: 0.1,
+        };
+
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        let result = retry_with_backoff(
+            config,
+            move || {
+                let a = attempts_clone.clone();
+                async move {
+                    a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok::<_, String>(42)
+                }
+            },
+            |_| true,
+            "test_operation",
+        )
+        .await;
+
+        assert_eq!(result, Ok(42));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_retry_with_backoff_retries_on_failure() {
+        let config = RetryConfig {
+            max_retries: 3,
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter_factor: 0.1,
+        };
+
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        let result = retry_with_backoff(
+            config,
+            move || {
+                let a = attempts_clone.clone();
+                async move {
+                    let count = a.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    if count < 3 {
+                        Err("temporary error")
+                    } else {
+                        Ok(42)
+                    }
+                }
+            },
+            |_| true,
+            "test_operation",
+        )
+        .await;
+
+        assert_eq!(result, Ok(42));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_retry_with_backoff_respects_max_retries() {
+        let config = RetryConfig {
+            max_retries: 2,
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter_factor: 0.1,
+        };
+
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        let result = retry_with_backoff(
+            config,
+            move || {
+                let a = attempts_clone.clone();
+                async move {
+                    a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Err::<i32, _>("persistent error")
+                }
+            },
+            |_| true,
+            "test_operation",
+        )
+        .await;
+
+        assert_eq!(result, Err("persistent error"));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_retry_with_backoff_respects_should_retry() {
+        let config = RetryConfig {
+            max_retries: 5,
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter_factor: 0.1,
+        };
+
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        let result = retry_with_backoff(
+            config,
+            move || {
+                let a = attempts_clone.clone();
+                async move {
+                    a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Err::<i32, _>("non-retryable error")
+                }
+            },
+            |_| false,
+            "test_operation",
+        )
+        .await;
+
+        assert_eq!(result, Err("non-retryable error"));
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_retry_config_presets() {
+        let aggressive = RetryConfig::aggressive();
+        assert_eq!(aggressive.max_retries, 5);
+        assert!(aggressive.initial_delay < Duration::from_millis(100));
+
+        let conservative = RetryConfig::conservative();
+        assert_eq!(conservative.max_retries, 2);
+        assert!(conservative.initial_delay >= Duration::from_millis(100));
+
+        let default = RetryConfig::default();
+        assert_eq!(default.max_retries, 3);
+    }
 }

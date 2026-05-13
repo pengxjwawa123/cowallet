@@ -8,6 +8,7 @@ import '../platform/cloud_backup.dart';
 import '../platform/secure_hardware.dart';
 import '../utils/secure_storage.dart';
 import 'backup_shard_service.dart';
+import 'key_health_service.dart';
 import 'wallet_service.dart';
 import 'mpc_session_store.dart';
 
@@ -280,6 +281,11 @@ class MpcWalletService implements WalletService {
       // Clear session state on success
       await MpcSessionStore.clearSession();
 
+      // Record key usage for health tracking
+      final health = KeyHealthService();
+      health.recordPhoneKeyUsage();
+      health.recordServerKeyUsage();
+
       return signature;
     } catch (e) {
       print('[MpcWalletService] Sign error: $e');
@@ -486,6 +492,10 @@ class MpcWalletService implements WalletService {
   /// 用户选择存储方式后调用此方法
   Future<BackupResult> storeBackupShard(List<int> shardBytes, {required bool useCloud}) async {
     final backupService = BackupShardService(PlatformCloudBackup());
+    final addr = await getAddress();
+    if (addr.isNotEmpty) {
+      backupService.setWalletAddress(addr);
+    }
     _lastBackupResult = await backupService.storeBackupShard(shardBytes, useCloud: useCloud);
     _lastBackupShard = null;
     return _lastBackupResult!;

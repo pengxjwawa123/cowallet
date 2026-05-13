@@ -60,6 +60,17 @@ fn usdc_address_for_chain(chain_id: u64) -> Option<Address> {
     }
 }
 
+/// Infer chain ID from token symbol when not explicitly provided.
+fn infer_chain_id_from_token(token: &str) -> u64 {
+    match token.to_uppercase().as_str() {
+        "POL" | "MATIC" => 137,
+        "BNB" => 56,
+        "ETH" => 8453,
+        // Stablecoins default to Base
+        _ => 8453,
+    }
+}
+
 /// Format U256 value with given decimals (simplified version)
 fn format_units(value: alloy_primitives::U256, decimals: u32) -> String {
     // Very basic formatting - just divide by 10^decimals
@@ -248,8 +259,8 @@ impl ToolContext {
             }
         }
 
-        // Fallback: direct RPC query for single chain
-        let chain_id = chain_id_filter.unwrap_or(8453);
+        // Fallback: direct RPC query — default to Ethereum mainnet for native balance
+        let chain_id = chain_id_filter.unwrap_or(1);
         let rpc_url = self.app_state.rpc_for_chain(chain_id);
         let result = match chain_evm::tokens::query_native_balance(owner, rpc_url).await {
             Ok(balance) => {
@@ -289,7 +300,8 @@ impl ToolContext {
     // --- get_token_info ---
     async fn execute_get_token_info(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
         let token_symbol: String = parse_param(&params, "token").unwrap_or_else(|| "ETH".into());
-        let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
+        let chain_id: u64 = parse_param(&params, "chain_id")
+            .unwrap_or_else(|| infer_chain_id_from_token(&token_symbol));
         let symbol_upper = token_symbol.to_uppercase();
 
         let owner = parse_wallet_address(self.wallet_address.as_deref());
@@ -415,7 +427,9 @@ impl ToolContext {
             }
         };
 
-        let chain_id: u64 = parse_param(&params, "chain_id").unwrap_or(8453);
+        let token_str: String = parse_param(&params, "token").unwrap_or_else(|| "ETH".into());
+        let chain_id: u64 = parse_param(&params, "chain_id")
+            .unwrap_or_else(|| infer_chain_id_from_token(&token_str));
         let from_address = match parse_wallet_address(self.wallet_address.as_deref()) {
             Some(a) => a,
             None => return ToolExecutionResult {
@@ -939,7 +953,7 @@ impl ToolContext {
             serde_json::json!({
                 "chain_id": 137,
                 "name": "Polygon",
-                "symbol": "MATIC",
+                "symbol": "POL",
                 "type": "mainnet"
             }),
         ];

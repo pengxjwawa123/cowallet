@@ -30,6 +30,8 @@ pub struct AppState {
     pub mpc_participant: Option<Arc<MpcParticipant>>,
     pub presign_manager: Option<Arc<PresignManager>>,
     pub covalent_api_key: Option<String>,
+    pub bundler_url: Option<String>,
+    pub paymaster_url: Option<String>,
 }
 
 impl AppState {
@@ -131,6 +133,22 @@ impl AppState {
             tracing::warn!("COVALENT_API_KEY not set — balance and tx-history endpoints will return 503");
         }
 
+        let bundler_url = std::env::var("BUNDLER_URL")
+            .ok()
+            .filter(|s| !s.is_empty());
+        if let Some(ref url) = bundler_url {
+            tracing::info!("Bundler configured at {}", url);
+        } else {
+            tracing::info!("BUNDLER_URL not set — ERC-4337 account abstraction disabled");
+        }
+
+        let paymaster_url = std::env::var("PAYMASTER_URL")
+            .ok()
+            .filter(|s| !s.is_empty());
+        if let Some(ref url) = paymaster_url {
+            tracing::info!("Paymaster configured at {}", url);
+        }
+
         Ok(Self {
             db: Some(db.clone()),
             rpc_url,
@@ -148,6 +166,8 @@ impl AppState {
             mpc_participant: Some(participant),
             presign_manager: Some(presign_manager),
             covalent_api_key,
+            bundler_url,
+            paymaster_url,
         })
     }
 

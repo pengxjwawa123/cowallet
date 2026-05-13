@@ -11,7 +11,7 @@ class BalanceApi {
   /// - total_usd: String
   static Future<Result<Map<String, dynamic>>> getBalance({
     required String address,
-    int chainId = 8453,
+    required int chainId,
   }) async {
     return await DioClient.get<Map<String, dynamic>>(
       '/balance',

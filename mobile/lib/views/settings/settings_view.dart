@@ -7,6 +7,7 @@ import '../../widgets/top_toast.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../services/settings_service.dart';
+import '../../services/key_health_service.dart';
 import '../../utils/secure_storage.dart';
 
 class SettingsView extends StatefulWidget {
@@ -25,6 +26,10 @@ class _SettingsViewState extends State<SettingsView> {
   String? _lastRotationDate;
   bool _isRotating = false;
 
+  KeyStatus _phoneStatus = KeyStatus.unknown;
+  KeyStatus _serverStatus = KeyStatus.unknown;
+  KeyStatus _backupStatus = KeyStatus.unknown;
+
   SettingsService get _settings => Services.settings;
 
   @override
@@ -32,6 +37,7 @@ class _SettingsViewState extends State<SettingsView> {
     super.initState();
     _loadBiometricStatus();
     _loadKeySecuritySettings();
+    _loadKeyHealth();
     _settings.addListener(_onSettingsChanged);
   }
 
@@ -43,6 +49,38 @@ class _SettingsViewState extends State<SettingsView> {
 
   void _onSettingsChanged() {
     if (mounted) setState(() {});
+  }
+
+
+  Future<void> _loadKeyHealth() async {
+    final addr = await SecureStorage.get('mpc_address');
+    final suffix = (addr != null && addr.length >= 10) ? addr.toLowerCase().substring(0, 10) : 'unknown';
+    final phoneStr = await SecureStorage.get('key_phone_status_$suffix');
+    final serverStr = await SecureStorage.get('key_server_status_$suffix');
+    final backupStr = await SecureStorage.get('key_backup_status_$suffix');
+    final lastCheckedStr = await SecureStorage.get('key_backup_last_checked_$suffix');
+
+    final expired = _isExpired(lastCheckedStr);
+
+    if (mounted) {
+      setState(() {
+        _phoneStatus = _parseStatus(phoneStr);
+        _serverStatus = _parseStatus(serverStr);
+        _backupStatus = expired ? KeyStatus.warning : _parseStatus(backupStr);
+      });
+    }
+  }
+
+  bool _isExpired(String? lastCheckedStr) {
+    if (lastCheckedStr == null) return true;
+    final lastChecked = DateTime.tryParse(lastCheckedStr);
+    if (lastChecked == null) return true;
+    return DateTime.now().difference(lastChecked).inDays >= KeyHealthService.verifyExpiryDays;
+  }
+
+  KeyStatus _parseStatus(String? value) {
+    if (value == null) return KeyStatus.unknown;
+    return KeyStatus.values.where((e) => e.name == value).firstOrNull ?? KeyStatus.unknown;
   }
 
   Future<void> _loadBiometricStatus() async {
@@ -302,7 +340,7 @@ class _SettingsViewState extends State<SettingsView> {
   // ── Keys health card ──
   Widget _keysCard(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.pushNamed(context, '/keys'),
+      onTap: () => Navigator.pushNamed(context, '/keys').then((_) => _loadKeyHealth()),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -341,8 +379,8 @@ class _SettingsViewState extends State<SettingsView> {
                   ),
                 ),
                 CwChip(
-                  label: S.allSafe,
-                  variant: ChipVariant.green,
+                  label: _keysChipLabel(),
+                  variant: _keysChipVariant(),
                   showDot: true,
                 ),
               ],
@@ -354,22 +392,22 @@ class _SettingsViewState extends State<SettingsView> {
                 _keyIndicator(
                   icon: Icons.phone_iphone,
                   label: S.onPhone,
-                  color: CwColors.success,
-                  bgColor: CwColors.successSoft,
+                  color: _statusColor(_phoneStatus),
+                  bgColor: _statusBgColor(_phoneStatus),
                 ),
                 const SizedBox(width: 10),
                 _keyIndicator(
                   icon: Icons.cloud_outlined,
                   label: S.inCloud,
-                  color: CwColors.success,
-                  bgColor: CwColors.successSoft,
+                  color: _statusColor(_serverStatus),
+                  bgColor: _statusBgColor(_serverStatus),
                 ),
                 const SizedBox(width: 10),
                 _keyIndicator(
                   icon: Icons.lock_outline,
                   label: S.recovery,
-                  color: CwColors.warn,
-                  bgColor: CwColors.warnSoft,
+                  color: _statusColor(_backupStatus),
+                  bgColor: _statusBgColor(_backupStatus),
                 ),
               ],
             ),
@@ -377,6 +415,44 @@ class _SettingsViewState extends State<SettingsView> {
         ),
       ),
     );
+  }
+
+  Color _statusColor(KeyStatus status) {
+    switch (status) {
+      case KeyStatus.ok: return CwColors.success;
+      case KeyStatus.warning: return CwColors.warn;
+      case KeyStatus.error: return CwColors.danger;
+      case KeyStatus.unknown: return CwColors.ink3;
+    }
+  }
+
+  Color _statusBgColor(KeyStatus status) {
+    switch (status) {
+      case KeyStatus.ok: return CwColors.successSoft;
+      case KeyStatus.warning: return CwColors.warnSoft;
+      case KeyStatus.error: return CwColors.dangerSoft;
+      case KeyStatus.unknown: return CwColors.bgSubtle;
+    }
+  }
+
+  String _keysChipLabel() {
+    if (_phoneStatus == KeyStatus.ok && _serverStatus == KeyStatus.ok && _backupStatus == KeyStatus.ok) {
+      return S.allSafe;
+    }
+    if (_phoneStatus == KeyStatus.error || _serverStatus == KeyStatus.error || _backupStatus == KeyStatus.error) {
+      return S.keyStatusError;
+    }
+    return S.keyStatusWarning;
+  }
+
+  ChipVariant _keysChipVariant() {
+    if (_phoneStatus == KeyStatus.ok && _serverStatus == KeyStatus.ok && _backupStatus == KeyStatus.ok) {
+      return ChipVariant.green;
+    }
+    if (_phoneStatus == KeyStatus.error || _serverStatus == KeyStatus.error || _backupStatus == KeyStatus.error) {
+      return ChipVariant.danger;
+    }
+    return ChipVariant.amber;
   }
 
   Widget _keyIndicator({

@@ -226,4 +226,206 @@ mod tests {
         assert_eq!(est.gas_limit, ERC20_TRANSFER_GAS);
         assert!(est.gas_limit > TRANSFER_GAS);
     }
+
+    #[test]
+    fn test_gas_strategy_multipliers() {
+        assert_eq!(GasStrategy::Slow.multiplier(), 1.0);
+        assert_eq!(GasStrategy::Normal.multiplier(), 1.2);
+        assert_eq!(GasStrategy::Fast.multiplier(), 1.5);
+    }
+
+    #[test]
+    fn test_gas_strategy_apply_to_fee() {
+        let base_fee = 1_000_000_000u128; // 1 gwei
+
+        assert_eq!(GasStrategy::Slow.apply_to_fee(base_fee), 1_000_000_000);
+        assert_eq!(GasStrategy::Normal.apply_to_fee(base_fee), 1_200_000_000);
+        assert_eq!(GasStrategy::Fast.apply_to_fee(base_fee), 1_500_000_000);
+    }
+
+    #[test]
+    fn test_gas_strategy_default() {
+        let default_strategy = GasStrategy::default();
+        assert_eq!(default_strategy, GasStrategy::Normal);
+    }
+
+    #[test]
+    fn test_estimate_gas_with_slow_strategy() {
+        let est = estimate_gas_with_strategy(
+            GasModel::Eip1559,
+            false,
+            10_000_000_000,
+            1_000_000_000,
+            None,
+            GasStrategy::Slow,
+        );
+
+        // Slow strategy uses 1.0x multiplier
+        let expected_base = 10_000_000_000u128;
+        let expected_priority = 1_000_000_000u128;
+        let expected_max_fee = expected_base * 2 + expected_priority;
+
+        assert_eq!(est.max_fee_per_gas, Some(expected_max_fee));
+        assert_eq!(est.max_priority_fee_per_gas, Some(expected_priority));
+    }
+
+    #[test]
+    fn test_estimate_gas_with_fast_strategy() {
+        let est = estimate_gas_with_strategy(
+            GasModel::Eip1559,
+            false,
+            10_000_000_000,
+            1_000_000_000,
+            None,
+            GasStrategy::Fast,
+        );
+
+        // Fast strategy uses 1.5x multiplier
+        let expected_base = 15_000_000_000u128; // 10 gwei * 1.5
+        let expected_priority = 1_500_000_000u128; // 1 gwei * 1.5
+        let expected_max_fee = expected_base * 2 + expected_priority;
+
+        assert_eq!(est.max_fee_per_gas, Some(expected_max_fee));
+        assert_eq!(est.max_priority_fee_per_gas, Some(expected_priority));
+    }
+
+    #[test]
+    fn test_estimate_gas_bounds() {
+        let est = estimate_gas(
+            GasModel::Eip1559,
+            false,
+            30_000_000_000,
+            1_500_000_000,
+            None,
+        );
+
+        // Gas limit should be within reasonable bounds
+        assert!(est.gas_limit >= TRANSFER_GAS);
+        assert!(est.gas_limit <= 10_000_000); // Block gas limit sanity check
+
+        // Fees should be positive
+        assert!(est.max_fee_per_gas.unwrap() > 0);
+        assert!(est.estimated_cost_wei > 0);
+    }
+
+    #[test]
+    fn test_erc20_gas_limit_bounds() {
+        let est = estimate_gas(
+            GasModel::Eip1559,
+            true,
+            30_000_000_000,
+            1_500_000_000,
+            None,
+        );
+
+        // ERC-20 transfers need more gas than native transfers
+        assert!(est.gas_limit > TRANSFER_GAS);
+        assert_eq!(est.gas_limit, ERC20_TRANSFER_GAS);
+    }
+
+    #[test]
+    fn test_gas_multiplier_increases_cost() {
+        let base_fee = 10_000_000_000u128;
+        let priority = 1_000_000_000u128;
+
+        let slow = estimate_gas_with_strategy(
+            GasModel::Eip1559,
+            false,
+            base_fee,
+            priority,
+            None,
+            GasStrategy::Slow,
+        );
+        let normal = estimate_gas_with_strategy(
+            GasModel::Eip1559,
+            false,
+            base_fee,
+            priority,
+            None,
+            GasStrategy::Normal,
+        );
+        let fast = estimate_gas_with_strategy(
+            GasModel::Eip1559,
+            false,
+            base_fee,
+            priority,
+            None,
+            GasStrategy::Fast,
+        );
+
+        // Faster strategies should cost more
+        assert!(slow.estimated_cost_wei < normal.estimated_cost_wei);
+        assert!(normal.estimated_cost_wei < fast.estimated_cost_wei);
+    }
+
+    #[test]
+    fn test_estimate_gas_for_chain_ethereum() {
+        let est = estimate_gas_for_chain(1, false, 30_000_000_000, 1_500_000_000, None, GasStrategy::Normal);
+        assert!(est.is_ok());
+        let est = est.unwrap();
+        assert_eq!(est.gas_limit, TRANSFER_GAS);
+        assert!(est.max_fee_per_gas.is_some());
+        assert!(est.l1_data_fee.is_none()); // Ethereum is not an L2
+    }
+
+    #[test]
+    fn test_estimate_gas_for_chain_base() {
+        let l1_fee = 50_000_000_000_000u128;
+        let est = estimate_gas_for_chain(
+            8453,
+            false,
+            100_000_000,
+            1_000_000,
+            Some(l1_fee),
+            GasStrategy::Normal,
+        );
+        assert!(est.is_ok());
+        let est = est.unwrap();
+        assert_eq!(est.l1_data_fee, Some(l1_fee)); // Base is OpBedrock L2
+        assert!(est.estimated_cost_wei > l1_fee); // Total includes L1 fee
+    }
+
+    #[test]
+    fn test_estimate_gas_for_chain_unsupported() {
+        let est = estimate_gas_for_chain(
+            999999,
+            false,
+            30_000_000_000,
+            1_500_000_000,
+            None,
+            GasStrategy::Normal,
+        );
+        assert!(est.is_err());
+        assert!(est.unwrap_err().contains("unsupported chain_id"));
+    }
+
+    #[test]
+    fn test_legacy_gas_model() {
+        let est = estimate_gas(GasModel::Legacy, false, 5_000_000_000, 0, None);
+
+        // Legacy model should use gas_price, not EIP-1559 fields
+        assert!(est.gas_price.is_some());
+        assert!(est.max_fee_per_gas.is_none());
+        assert!(est.max_priority_fee_per_gas.is_none());
+    }
+
+    #[test]
+    fn test_l1_data_fee_calculation() {
+        let l1_fee = 100_000_000_000_000u128;
+        let base_fee = 100_000_000u128;
+        let priority = 1_000_000u128;
+
+        let est = estimate_gas(
+            GasModel::OpBedrock,
+            false,
+            base_fee,
+            priority,
+            Some(l1_fee),
+        );
+
+        // L1 fee should be added to the total cost
+        assert_eq!(est.l1_data_fee, Some(l1_fee));
+        let l2_cost = est.gas_limit as u128 * est.max_fee_per_gas.unwrap();
+        assert_eq!(est.estimated_cost_wei, l2_cost + l1_fee);
+    }
 }

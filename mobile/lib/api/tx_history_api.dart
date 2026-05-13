@@ -9,7 +9,7 @@ class TxHistoryApi {
   /// - total: int
   static Future<Result<Map<String, dynamic>>> getHistory({
     required String address,
-    int chainId = 8453,
+    required int chainId,
   }) async {
     return await DioClient.get<Map<String, dynamic>>(
       '/tx/tx-history',

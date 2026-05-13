@@ -7,6 +7,7 @@ import '../../services/locator.dart';
 import '../../router/app_router.dart';
 import '../../api/tx_history_api.dart';
 import '../../config/api_config.dart';
+import '../../utils/secure_storage.dart';
 
 class HomeView extends StatefulWidget {
   const HomeView({super.key});
@@ -19,13 +20,39 @@ class _HomeViewState extends State<HomeView> {
   List<Map<String, dynamic>> _transactions = [];
   bool _txLoading = true;
   String? _txError;
+  bool _hasIncompleteOnboarding = false;
+  bool _isBackupUrgent = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchTransactions();
+      _checkPendingBackup();
     });
+  }
+
+  Future<void> _checkPendingBackup() async {
+    final savedStep = await SecureStorage.get(SecureStorage.keyOnboardingStep);
+    final createdAt = await SecureStorage.get(SecureStorage.keyPendingBackupCreatedAt);
+
+    if (savedStep != null && savedStep.isNotEmpty) {
+      bool isUrgent = false;
+      if (createdAt != null) {
+        try {
+          final created = DateTime.parse(createdAt);
+          final daysSince = DateTime.now().difference(created).inDays;
+          isUrgent = daysSince >= 7;
+        } catch (_) {}
+      }
+
+      if (mounted) {
+        setState(() {
+          _hasIncompleteOnboarding = true;
+          _isBackupUrgent = isUrgent;
+        });
+      }
+    }
   }
 
   Future<void> _fetchTransactions() async {
@@ -86,19 +113,82 @@ class _HomeViewState extends State<HomeView> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(child: _appHeader(context)),
-          SliverToBoxAdapter(child: _statusBar(context)),
-          SliverToBoxAdapter(child: _greeting(context)),
-          SliverToBoxAdapter(child: _slogan(context)),
-          SliverToBoxAdapter(child: _balanceCard(context)),
-          SliverToBoxAdapter(child: _actionButtons(context)),
-          SliverToBoxAdapter(child: _tryTalkingSection(context)),
-          SliverToBoxAdapter(child: _recentActivitySection(context)),
-          SliverToBoxAdapter(child: _showcaseSection(context)),
-          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+      child: Column(
+        children: [
+          _appHeader(context),
+          if (_hasIncompleteOnboarding) _pendingBackupBanner(context),
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: _statusBar(context)),
+                SliverToBoxAdapter(child: _greeting(context)),
+                SliverToBoxAdapter(child: _slogan(context)),
+                SliverToBoxAdapter(child: _balanceCard(context)),
+                SliverToBoxAdapter(child: _actionButtons(context)),
+                SliverToBoxAdapter(child: _tryTalkingSection(context)),
+                SliverToBoxAdapter(child: _recentActivitySection(context)),
+                SliverToBoxAdapter(child: _showcaseSection(context)),
+                const SliverToBoxAdapter(child: SizedBox(height: 32)),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  // ── Pending backup banner ──────────────────────────────────────────────
+
+  Widget _pendingBackupBanner(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: GestureDetector(
+        onTap: () => Navigator.pushNamed(context, AppRouter.onboarding),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _isBackupUrgent ? CwColors.dangerSoft : CwColors.warnSoft,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: (_isBackupUrgent ? CwColors.danger : CwColors.warn).withValues(alpha: 0.3),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                size: 20,
+                color: _isBackupUrgent ? CwColors.danger : CwColors.warn,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _isBackupUrgent ? S.onboardingIncompleteUrgent : S.onboardingIncompleteBanner,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: CwColors.ink1,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                S.onboardingIncompleteAction,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: _isBackupUrgent ? CwColors.danger : CwColors.warn,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: _isBackupUrgent ? CwColors.danger : CwColors.warn,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -264,68 +354,9 @@ class _HomeViewState extends State<HomeView> {
                 bal.error!,
                 style: tt.bodySmall?.copyWith(color: CwColors.danger),
               ),
-            ] else if (!bal.loading && bal.allTokens.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Divider(height: 1),
-              const SizedBox(height: 12),
-              ...bal.allTokens.take(3).map((token) => _tokenRow(context, token)),
             ],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _tokenRow(BuildContext context, token) {
-    final symbol = token.symbol as String;
-    final balance = token.balance as String;
-    final usd = token.usd as String;
-
-    String emoji = '🪙';
-    if (symbol == 'ETH') emoji = 'Ⓔ';
-    if (symbol == 'USDC') emoji = 'Ⓤ';
-    if (symbol == 'USDT') emoji = 'Ⓣ';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Text(
-            emoji,
-            style: const TextStyle(fontSize: 16),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            symbol,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                balance,
-                style: const TextStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: CwColors.ink1,
-                ),
-              ),
-              Text(
-                '\$$usd',
-                style: const TextStyle(
-                  fontFamily: 'JetBrainsMono',
-                  fontSize: 11,
-                  color: CwColors.ink3,
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }

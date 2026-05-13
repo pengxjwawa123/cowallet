@@ -34,6 +34,10 @@ mobile/*.iml
 *.p12
 *.jks
 
+# Firebase config files (use .example templates instead)
+mobile/ios/Runner/GoogleService-Info.plist
+mobile/android/app/google-services.json
+
 # Build artifacts
 *.so
 *.dylib

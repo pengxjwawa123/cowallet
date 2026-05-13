@@ -231,6 +231,7 @@ class ChatViewState extends State<ChatView> {
                     'to_address': params['to_address'] ?? '',
                     'amount': params['value'] ?? '0',
                     'token': params['token'] ?? 'ETH',
+                    'chain_id': params['chain_id'],
                   },
                   toolCallId: id,
                 ));
@@ -419,6 +420,7 @@ class ChatViewState extends State<ChatView> {
       'to': msg.widgetData['to_address'] as String? ?? '',
       'amount': msg.widgetData['amount'] as String? ?? '0',
       'token': msg.widgetData['token'] as String? ?? 'ETH',
+      if (msg.widgetData['chain_id'] != null) 'chain_id': msg.widgetData['chain_id'].toString(),
     };
 
     final result = await Services.intent.execute('transfer', params);
@@ -463,6 +465,7 @@ class ChatViewState extends State<ChatView> {
       'from_token': msg.widgetData['from_token'] as String? ?? '',
       'to_token': msg.widgetData['to_token'] as String? ?? '',
       'amount': msg.widgetData['amount'] as String? ?? '0',
+      if (msg.widgetData['chain_id'] != null) 'chain_id': msg.widgetData['chain_id'].toString(),
     };
 
     final result = await Services.intent.execute('swap', params);
@@ -802,6 +805,7 @@ class ChatViewState extends State<ChatView> {
           amount: msg.widgetData['amount'] ?? '0',
           token: msg.widgetData['token'] ?? 'ETH',
           gasEstimate: msg.widgetData['gas_estimate'],
+          chainId: msg.widgetData['chain_id'] as int?,
           loading: msg.loading,
           resolved: msg.confirmed,
           onConfirm: () => _onSendConfirm(index),

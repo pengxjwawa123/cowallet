@@ -55,8 +55,16 @@ class _CowalletAppState extends State<CowalletApp> {
       final addr = await Services.wallet.getAddress();
       appState.setWalletAddress(addr);
       appState.completeOnboarding();
-      _initialRoute = AppRouter.home;
 
+      // Check if onboarding was interrupted mid-flow
+      final savedStep = await SecureStorage.get(SecureStorage.keyOnboardingStep);
+      if (savedStep != null && savedStep.isNotEmpty) {
+        _initialRoute = AppRouter.onboarding;
+        setState(() => _ready = true);
+        return;
+      }
+
+      _initialRoute = AppRouter.home;
 
       // Ensure valid token before rendering home (prevents 401 cascades)
       await _refreshSessionInBackground();
@@ -121,7 +129,7 @@ class _CowalletAppState extends State<CowalletApp> {
     return ListenableBuilder(
       listenable: appState,
       builder: (context, _) => MaterialApp(
-        title: 'cowallet',
+        title: 'CoWallet',
         debugShowCheckedModeBanner: false,
         theme: cwTheme(),
         initialRoute: _initialRoute,

@@ -6,6 +6,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
   final String amount;
   final String token;
   final String? gasEstimate;
+  final int? chainId;
   final bool loading;
   final bool resolved;
   final VoidCallback? onConfirm;
@@ -17,6 +18,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
     required this.amount,
     required this.token,
     this.gasEstimate,
+    this.chainId,
     this.loading = false,
     this.resolved = false,
     this.onConfirm,
@@ -73,6 +75,10 @@ class ChatSendConfirmWidget extends StatelessWidget {
           const SizedBox(height: 8),
           _infoRow('收款地址', shortTo),
           const SizedBox(height: 4),
+          if (chainId != null)
+            _infoRow('网络', _chainName(chainId!)),
+          if (chainId != null)
+            const SizedBox(height: 4),
           if (gasEstimate != null)
             _infoRow('预估 Gas', gasEstimate!)
           else if (!resolved)
@@ -143,6 +149,18 @@ class ChatSendConfirmWidget extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String _chainName(int chainId) {
+    switch (chainId) {
+      case 1: return 'Ethereum';
+      case 8453: return 'Base';
+      case 42161: return 'Arbitrum';
+      case 10: return 'Optimism';
+      case 56: return 'BNB Chain';
+      case 137: return 'Polygon';
+      default: return 'Chain $chainId';
+    }
   }
 
   Widget _gasLoadingRow() {
