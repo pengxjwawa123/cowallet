@@ -422,6 +422,13 @@ impl MpcParticipant {
                         .ok_or_else(|| format!("no server shard for user {}", user_id))?
                 };
 
+                tracing::info!(
+                    "[MPC Sign] session={} user={} wallet={:?} msg_hash={} eth_address=0x{}",
+                    session_id, user_id, wallet_id,
+                    hex::encode(&msg_hash),
+                    hex::encode(key_share.eth_address()),
+                );
+
                 let mut sign = SignSession::new_distributed(config, key_share, msg_hash);
 
                 // Use reserved presignature if available, otherwise generate fresh
@@ -479,6 +486,11 @@ impl MpcParticipant {
                 let server_sig_payload = sign.get_server_response()
                     .ok_or_else(|| "server did not produce ServerSignature".to_string())?;
 
+                tracing::info!(
+                    "[MPC Sign] session={} COMPLETE, server_sig_payload_len={}",
+                    session_id, server_sig_payload.len()
+                );
+
                 outbound.push((SERVER_PARTY_INDEX as i16, 0i16, server_sig_payload));
 
                 if let Some(mut meta) = self.session_meta.get_mut(&session_id) {
@@ -503,8 +515,6 @@ impl MpcParticipant {
                         }
                     }
                 }
-
-                tracing::info!("Sign session {} COMPLETE", session_id);
             }
             _ => {
                 return Err(format!("unexpected sign round {}", round));

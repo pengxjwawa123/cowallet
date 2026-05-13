@@ -54,6 +54,33 @@ async fn submit(
     let chain_id = body.chain_id.unwrap_or(8453);
 
     let rpc_url = state.rpc_for_chain(chain_id);
+
+    tracing::info!(
+        "[tx.submit] chain_id={} rpc_url={} from={:?} to={:?} value={:?} token={:?}",
+        chain_id, rpc_url,
+        body.from_addr, body.to_addr, body.value, body.token
+    );
+
+    // Query on-chain balance for diagnostics
+    if let Some(from_addr) = &body.from_addr {
+        let balance_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getBalance",
+            "params": [from_addr, "latest"],
+            "id": 1
+        });
+        match state.http.post(rpc_url).json(&balance_body).send().await {
+            Ok(bal_resp) => {
+                if let Ok(bal_json) = bal_resp.json::<serde_json::Value>().await {
+                    tracing::info!("[tx.submit] eth_getBalance response: {:?}", bal_json);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[tx.submit] eth_getBalance failed: {}", e);
+            }
+        }
+    }
+
     let raw_bytes = body.raw_tx.strip_prefix("0x").unwrap_or(&body.raw_tx);
 
     let rpc_body = serde_json::json!({

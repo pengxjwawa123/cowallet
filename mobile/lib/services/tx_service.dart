@@ -160,12 +160,13 @@ class MpcTxService implements TxService {
     final rawHex = '0x${hex.encode(raw)}';
 
     // Submit via backend (records tx in database + broadcasts to chain)
+    final nativeSymbol = _nativeSymbolForChain(effectiveChainId);
     final submitResult = await TxApi.submit(
       rawTx: rawHex,
       chainId: effectiveChainId,
       toAddr: to,
       value: value.toString(),
-      token: 'ETH',
+      token: nativeSymbol,
       fromAddr: address,
       mpcSessionId: signResult.sessionId,
     );
@@ -216,6 +217,18 @@ class MpcTxService implements TxService {
       result = (result << 8) | BigInt.from(b);
     }
     return result;
+  }
+
+  static String _nativeSymbolForChain(int chainId) {
+    switch (chainId) {
+      case 137:
+      case 80002:
+        return 'POL';
+      case 56:
+        return 'BNB';
+      default:
+        return 'ETH';
+    }
   }
 }
 

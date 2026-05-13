@@ -171,8 +171,8 @@ class IntentExecutor {
         final maxFee = baseFee * BigInt.two + maxPriority;
         final gasCost = maxFee * BigInt.from(21000);
         if (balance < amount + gasCost) {
-          final nativeSymbol = _isNativeToken('POL', targetChainId) ? 'POL'
-              : _isNativeToken('BNB', targetChainId) ? 'BNB' : 'ETH';
+          final nativeSymbol = (targetChainId == 137 || targetChainId == 80002) ? 'POL'
+              : targetChainId == 56 ? 'BNB' : 'ETH';
           return ActionResult.fail(
             S.lang == Lang.zh
                 ? '余额不足: 需要 ${(amount + gasCost).toString()} wei，当前 $nativeSymbol 余额 ${balance.toString()} wei'
@@ -281,17 +281,17 @@ class IntentExecutor {
   }
 
   bool _isNativeToken(String token, int chainId) {
-    switch (token) {
-      case 'ETH':
-        return chainId == 1 || chainId == 8453 || chainId == 42161 || chainId == 10;
-      case 'POL':
-      case 'MATIC':
-        return chainId == 137;
-      case 'BNB':
-        return chainId == 56;
-      default:
-        return false;
+    final t = token.toUpperCase();
+    // Known native symbols for specific chains
+    if (t == 'POL' || t == 'MATIC') return chainId == 137 || chainId == 80002;
+    if (t == 'BNB') return chainId == 56;
+    if (t == 'ETH') {
+      // ETH is native on EVM L1/L2s (not Polygon/BSC)
+      // But if AI mistakenly says "ETH" on Polygon/BSC, treat as native transfer
+      // because it's clearly a native coin transfer intent (no contract given)
+      return true;
     }
+    return false;
   }
 
   int _resolveChainId(String token) {
