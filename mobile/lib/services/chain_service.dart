@@ -18,7 +18,7 @@ class ChainConfig {
   static const ethereum = ChainConfig(
     chainId: 1,
     name: 'Ethereum',
-    rpcUrl: 'https://eth.llamarpc.com',
+    rpcUrl: 'https://1rpc.io/eth',
     usdcContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     usdtContract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
   );
@@ -58,7 +58,7 @@ class ChainConfig {
   static const polygon = ChainConfig(
     chainId: 137,
     name: 'Polygon',
-    rpcUrl: 'https://polygon-rpc.com',
+    rpcUrl: 'https://1rpc.io/matic',
     usdcContract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     usdtContract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
   );

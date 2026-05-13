@@ -35,7 +35,7 @@ pub enum GasModel {
 
 impl ChainConfig {
     pub fn ethereum_mainnet() -> Self {
-        let default_rpc = "https://eth.llamarpc.com".to_string();
+        let default_rpc = "https://1rpc.io/eth".to_string();
         let rpc_url = env::var("ETH_MAINNET_RPC_URL").unwrap_or(default_rpc);
         let bundler_url = env::var("BUNDLER_URL_ETH").ok();
 

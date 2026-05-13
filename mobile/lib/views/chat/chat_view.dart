@@ -162,7 +162,8 @@ class ChatViewState extends State<ChatView> {
     _doStream(text, aiMsgIndex);
   }
 
-  Future<void> _doStream(String text, int aiMsgIndex) async {
+  Future<void> _doStream(String text, int _initialAiMsgIndex) async {
+    var aiMsgIndex = _initialAiMsgIndex;
     final walletAddress = CowalletApp.of(context).walletAddress;
     final userId = await SecureStorage.getUserId();
 
@@ -224,6 +225,9 @@ class ChatViewState extends State<ChatView> {
 
             if (kind == 'write' && name == 'send_transaction') {
               setState(() {
+                if (_messages[aiMsgIndex].text.isEmpty) {
+                  _messages.removeAt(aiMsgIndex);
+                }
                 _messages.add(ChatMsg(
                   kind: ChatMsgKind.widget,
                   widgetType: WidgetType.sendConfirm,
@@ -235,10 +239,15 @@ class ChatViewState extends State<ChatView> {
                   },
                   toolCallId: id,
                 ));
+                _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
+                aiMsgIndex = _messages.length - 1;
               });
               _scrollToBottom();
             } else if (kind == 'write' && name == 'swap_token') {
               setState(() {
+                if (_messages[aiMsgIndex].text.isEmpty) {
+                  _messages.removeAt(aiMsgIndex);
+                }
                 _messages.add(ChatMsg(
                   kind: ChatMsgKind.widget,
                   widgetType: WidgetType.swapConfirm,
@@ -251,6 +260,8 @@ class ChatViewState extends State<ChatView> {
                   },
                   toolCallId: id,
                 ));
+                _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
+                aiMsgIndex = _messages.length - 1;
               });
               _scrollToBottom();
             }
@@ -321,75 +332,74 @@ class ChatViewState extends State<ChatView> {
             }
 
             // Read tools: render widget based on widget_type
+            void _insertWidget(ChatMsg widget) {
+              setState(() {
+                // If current AI message is empty, remove it before widget
+                if (_messages[aiMsgIndex].text.isEmpty) {
+                  _messages.removeAt(aiMsgIndex);
+                }
+                _messages.add(widget);
+                // New AI message placeholder after widget for subsequent tokens
+                _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
+                aiMsgIndex = _messages.length - 1;
+              });
+              _scrollToBottom();
+            }
+
             switch (widgetType ?? toolName) {
               case 'balance':
               case 'get_balance':
-                setState(() {
-                  _messages.add(ChatMsg(
-                    kind: ChatMsgKind.widget,
-                    widgetType: WidgetType.balance,
-                    widgetData: result,
-                  ));
-                });
-                _scrollToBottom();
+                _insertWidget(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.balance,
+                  widgetData: result,
+                ));
                 break;
               case 'receive':
               case 'get_wallet_address':
                 final addr = result['address'] as String? ??
                     CowalletApp.of(context).walletAddress;
                 if (addr.isNotEmpty) {
-                  setState(() {
-                    _messages.add(ChatMsg(
-                      kind: ChatMsgKind.widget,
-                      widgetType: WidgetType.receive,
-                      widgetData: {'address': addr},
-                    ));
-                  });
-                  _scrollToBottom();
+                  _insertWidget(ChatMsg(
+                    kind: ChatMsgKind.widget,
+                    widgetType: WidgetType.receive,
+                    widgetData: {'address': addr},
+                  ));
                 }
                 break;
               case 'history':
               case 'get_transaction_history':
                 final transactions = (result['transactions'] as List<dynamic>?) ?? [];
                 final total = result['total'] as int? ?? transactions.length;
-                setState(() {
-                  _messages.add(ChatMsg(
-                    kind: ChatMsgKind.widget,
-                    widgetType: WidgetType.history,
-                    widgetData: {'transactions': transactions, 'total': total},
-                  ));
-                });
-                _scrollToBottom();
+                _insertWidget(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.history,
+                  widgetData: {'transactions': transactions, 'total': total},
+                ));
                 break;
               case 'audit':
               case 'security_audit':
-                setState(() {
-                  _messages.add(ChatMsg(
-                    kind: ChatMsgKind.widget,
-                    widgetType: WidgetType.audit,
-                    widgetData: result,
-                  ));
-                });
-                _scrollToBottom();
+                _insertWidget(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.audit,
+                  widgetData: result,
+                ));
                 break;
               case 'token_info':
               case 'get_token_info':
-                setState(() {
-                  _messages.add(ChatMsg(
-                    kind: ChatMsgKind.widget,
-                    widgetType: WidgetType.tokenInfo,
-                    widgetData: result,
-                  ));
-                });
-                _scrollToBottom();
+                _insertWidget(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.tokenInfo,
+                  widgetData: result,
+                ));
                 break;
             }
             break;
 
           case 'done':
-            // Remove empty AI message if no text was streamed
+            // Remove trailing empty AI message if no text was streamed after last widget
             setState(() {
-              if (_messages[aiMsgIndex].text.isEmpty) {
+              if (aiMsgIndex < _messages.length && _messages[aiMsgIndex].text.isEmpty) {
                 _messages.removeAt(aiMsgIndex);
               }
             });

@@ -82,13 +82,13 @@ async fn main() {
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost/cowallet".into());
     let rpc_url =
-        std::env::var("RPC_URL").unwrap_or_else(|_| "https://eth.llamarpc.com".into());
+        std::env::var("RPC_URL").unwrap_or_else(|_| "https://1rpc.io/eth".into());
 
     // Build per-chain RPC URL map
     let mut rpc_urls = std::collections::HashMap::new();
     rpc_urls.insert(
         1,
-        std::env::var("ETH_MAINNET_RPC_URL").unwrap_or_else(|_| "https://eth.llamarpc.com".into()),
+        std::env::var("ETH_MAINNET_RPC_URL").unwrap_or_else(|_| "https://1rpc.io/eth".into()),
     );
     rpc_urls.insert(
         8453,
@@ -108,7 +108,7 @@ async fn main() {
     );
     rpc_urls.insert(
         137,
-        std::env::var("POLYGON_MAINNET_RPC_URL").unwrap_or_else(|_| "https://polygon-rpc.com".into()),
+        std::env::var("POLYGON_MAINNET_RPC_URL").unwrap_or_else(|_| "https://1rpc.io/matic".into()),
     );
     rpc_urls.insert(
         11155111,
