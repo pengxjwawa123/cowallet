@@ -90,50 +90,36 @@ async fn submit(
         "id": 1
     });
 
-    // Use circuit breaker and retry for RPC calls
-    let resp_result = state
-        .rpc_circuit_breaker
-        .call(|| async {
-            retry_with_backoff(
-                RetryConfig::default(),
-                || async {
-                    state
-                        .http
-                        .post(rpc_url)
-                        .json(&rpc_body)
-                        .send()
-                        .await
-                        .and_then(|r| r.error_for_status())
-                },
-                is_retryable_error,
-                "eth_sendRawTransaction",
-            )
-            .await
-        })
-        .await;
+    // Send raw transaction to RPC (no retry for tx broadcast — retrying can cause nonce issues)
+    let resp = state
+        .http
+        .post(rpc_url)
+        .json(&rpc_body)
+        .send()
+        .await
+        .map_err(|e| {
+            tracing::error!("[tx.submit] RPC request failed: {}", e);
+            rpc_error(&format!("RPC request failed: {e}"))
+        })?;
 
-    let resp = match resp_result {
-        Ok(r) => r,
-        Err(None) => {
-            return Err(rpc_error(
-                "RPC service unavailable - circuit breaker open",
-            ));
-        }
-        Err(Some(e)) => {
-            return Err(rpc_error(&format!("RPC request failed: {e}")));
-        }
-    };
-
+    let status = resp.status();
     let rpc_resp: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| rpc_error(&format!("Invalid RPC response: {e}")))?;
+        .map_err(|e| {
+            tracing::error!("[tx.submit] Failed to parse RPC response (HTTP {}): {}", status, e);
+            rpc_error(&format!("Invalid RPC response (HTTP {}): {e}", status))
+        })?;
+
+    tracing::info!("[tx.submit] eth_sendRawTransaction response: {:?}", rpc_resp);
 
     if let Some(err) = rpc_resp.get("error") {
         let msg = err
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("unknown RPC error");
+
+        tracing::error!("[tx.submit] RPC error: {} (full: {:?})", msg, err);
 
         // Audit log - transaction submission failed
         let _ = state

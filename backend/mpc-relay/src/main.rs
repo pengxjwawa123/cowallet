@@ -298,7 +298,7 @@ pub async fn run_relay(nats_url: &str) -> Result<(), Box<dyn std::error::Error>>
 
                 tokio::spawn(async move {
                     if let Err(e) = handle_nats_message(state_clone, subject, payload).await {
-                        tracing::error!("Error handling NATS message: {}", e);
+                        tracing::warn!("Failed to handle NATS message: {}", e);
                     }
                 });
             }

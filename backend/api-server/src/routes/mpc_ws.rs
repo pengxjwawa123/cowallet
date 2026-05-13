@@ -282,7 +282,18 @@ async fn handle_client_message(
     // Publish to NATS for the target party (real-time push)
     if let Some(nats) = &state.nats {
         let target_subject = format!("cowallet.mpc.{}.{}", session_id, ws_msg.to_party);
-        let payload = match serde_json::to_vec(&ws_msg) {
+        let nats_msg = serde_json::json!({
+            "session_id": session_id.to_string(),
+            "from_party": ws_msg.from_party,
+            "to_party": ws_msg.to_party,
+            "round": ws_msg.round,
+            "payload": ws_msg.payload,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+        let payload = match serde_json::to_vec(&nats_msg) {
             Ok(p) => p,
             Err(_) => return,
         };
@@ -305,15 +316,20 @@ async fn handle_client_message(
                     for (from, to, payload) in responses {
                         // to == -1 means broadcast; deliver to the requesting party
                         let target_party = if to == -1 { ws_msg.from_party } else { to };
-                        let response_msg = WsMessage {
-                            from_party: from,
-                            to_party: target_party,
-                            round: ws_msg.round + 1,
-                            payload,
-                        };
                         if let Some(nats) = &state.nats {
                             let subject = format!("cowallet.mpc.{}.{}", session_id, target_party);
-                            if let Ok(data) = serde_json::to_vec(&response_msg) {
+                            let nats_msg = serde_json::json!({
+                                "session_id": session_id.to_string(),
+                                "from_party": from,
+                                "to_party": target_party,
+                                "round": ws_msg.round + 1,
+                                "payload": payload,
+                                "timestamp": std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                            });
+                            if let Ok(data) = serde_json::to_vec(&nats_msg) {
                                 let _ = nats.publish(subject, data.into()).await;
                             }
                         }

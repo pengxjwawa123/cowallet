@@ -302,11 +302,18 @@ async fn reshare_completion_task(db: PgPool) {
     }
 }
 
-/// Price Updater Task: pre-fetches prices every 30 seconds for common tokens
+/// Price Updater Task: pre-fetches prices every 60 seconds for common tokens
 async fn price_updater_task(http: reqwest::Client) {
-    let mut interval = tokio::time::interval(Duration::from_secs(30));
-    let coingecko_api = "https://api.coingecko.com/api/v3";
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
 
+    let api_key = std::env::var("COINGECKO_API_KEY").ok();
+    if api_key.is_none() {
+        tracing::warn!("COINGECKO_API_KEY not set, price feed disabled");
+        return;
+    }
+    let api_key = api_key.unwrap();
+
+    let coingecko_api = "https://api.coingecko.com/api/v3";
     let common_tokens = ["ethereum", "usd-coin", "bitcoin", "tether", "dai"];
     let ids_param = common_tokens.join(",");
 
@@ -318,7 +325,7 @@ async fn price_updater_task(http: reqwest::Client) {
             coingecko_api, ids_param
         );
 
-        match http.get(&url).send().await {
+        match http.get(&url).header("x-cg-demo-api-key", &api_key).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     tracing::debug!("price feed updated successfully");
