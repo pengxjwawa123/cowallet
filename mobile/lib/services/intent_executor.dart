@@ -163,6 +163,24 @@ class IntentExecutor {
         );
       }
 
+      // Pre-check: verify sufficient balance before signing
+      if (isNativeToken) {
+        final balance = await _chain.getEthBalance(address);
+        final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
+        final maxPriority = await _chain.getMaxPriorityFeePerGas();
+        final maxFee = baseFee * BigInt.two + maxPriority;
+        final gasCost = maxFee * BigInt.from(21000);
+        if (balance < amount + gasCost) {
+          final nativeSymbol = _isNativeToken('POL', targetChainId) ? 'POL'
+              : _isNativeToken('BNB', targetChainId) ? 'BNB' : 'ETH';
+          return ActionResult.fail(
+            S.lang == Lang.zh
+                ? '余额不足: 需要 ${(amount + gasCost).toString()} wei，当前 $nativeSymbol 余额 ${balance.toString()} wei'
+                : 'Insufficient balance on chain $targetChainId',
+          );
+        }
+      }
+
       final String txHash;
 
       if (isNativeToken) {

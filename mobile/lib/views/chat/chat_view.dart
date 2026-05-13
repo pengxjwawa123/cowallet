@@ -315,7 +315,9 @@ class ChatViewState extends State<ChatView> {
                 if (gasEstimate != null) {
                   final costEth = gasEstimate['cost_eth'] as String? ?? '';
                   final costUsd = gasEstimate['cost_usd'] as String?;
-                  String gasDisplay = '~$costEth ETH';
+                  final gasChainId = result['chain_id'] as int? ?? 1;
+                  final gasSymbol = _nativeSymbol(gasChainId);
+                  String gasDisplay = '~$costEth $gasSymbol';
                   if (costUsd != null) {
                     gasDisplay += ' ($costUsd)';
                   }
@@ -812,9 +814,11 @@ class ChatViewState extends State<ChatView> {
       case WidgetType.receive:
         return ChatReceiveWidget(address: msg.widgetData['address'] ?? '');
       case WidgetType.sendConfirm:
+        final isSendAll = msg.widgetData['send_all'] == true;
+        final displayAmount = isSendAll ? '全部' : (msg.widgetData['amount'] ?? '0');
         return ChatSendConfirmWidget(
           toAddress: msg.widgetData['to_address'] ?? '',
-          amount: msg.widgetData['amount'] ?? '0',
+          amount: displayAmount,
           token: msg.widgetData['token'] ?? 'ETH',
           gasEstimate: msg.widgetData['gas_estimate'],
           chainId: msg.widgetData['chain_id'] as int?,
@@ -921,6 +925,14 @@ class ChatViewState extends State<ChatView> {
         ),
       ),
     );
+  }
+}
+
+String _nativeSymbol(int chainId) {
+  switch (chainId) {
+    case 137: return 'POL';
+    case 56: return 'BNB';
+    default: return 'ETH';
   }
 }
 
