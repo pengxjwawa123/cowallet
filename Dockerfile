@@ -17,7 +17,7 @@ COPY backend ./backend
 COPY backend/migrations ./migrations
 
 # 构建二进制文件
-RUN cargo build --release --bin api-server --bin mpc-relay --bin indexer --bin worker
+RUN cargo build --release --bin api-server --bin mpc-relay --bin worker
 
 # 运行层 - 使用相同的 Debian bookworm 版本
 FROM debian:bookworm-slim
@@ -34,7 +34,6 @@ RUN apt-get update && apt-get install -y \
 # 从构建层复制二进制文件
 COPY --from=builder /app/target/release/api-server /usr/local/bin/
 COPY --from=builder /app/target/release/mpc-relay /usr/local/bin/
-COPY --from=builder /app/target/release/indexer /usr/local/bin/
 COPY --from=builder /app/target/release/worker /usr/local/bin/
 COPY --from=builder /app/migrations ./migrations
 
