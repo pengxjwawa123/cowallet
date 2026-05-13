@@ -791,10 +791,12 @@ impl SignSession {
         let s = s_ct.unwrap();
 
         // Normalize s to low-S form
-        let s_normalized = if s.is_high().into() { -s } else { s };
+        let s_was_high: bool = s.is_high().into();
+        let s_normalized = if s_was_high { -s } else { s };
         let s_final_bytes: [u8; 32] = s_normalized.to_bytes().into();
 
-        let v = self.compute_recovery_id(&aggregate_r, &s_normalized)?;
+        // Determine correct recovery id by trying both and verifying against known public key
+        let v = self.determine_recovery_id(&r_bytes, &s_final_bytes)?;
 
         let signature = EcdsaSignature {
             r: r_bytes,
@@ -844,6 +846,44 @@ impl SignSession {
         // Bit 0: y parity, Bit 1: x overflow
         let recovery_id = (x_overflow << 1) | (y_is_odd as u8);
         Ok(27 + recovery_id)
+    }
+
+    /// Determine the correct recovery ID by trying both v=27 and v=28
+    /// and verifying which one recovers to our known public key.
+    fn determine_recovery_id(&self, r_bytes: &[u8; 32], s_bytes: &[u8; 32]) -> Result<u8> {
+        use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
+
+        let msg_hash = self.message_hash;
+
+        let public_key = self.my_share.as_ref()
+            .ok_or_else(|| MpcError::SigningFailed("no key share for recovery id check".into()))?
+            .public_key.clone();
+
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[..32].copy_from_slice(r_bytes);
+        sig_bytes[32..].copy_from_slice(s_bytes);
+
+        let signature = K256Signature::from_bytes((&sig_bytes).into())
+            .map_err(|e| MpcError::SigningFailed(format!("invalid signature for recovery: {}", e)))?;
+
+        // Try recovery id 0 (v=27) and 1 (v=28)
+        for recid_byte in 0u8..2u8 {
+            let recid = RecoveryId::from_byte(recid_byte)
+                .ok_or_else(|| MpcError::SigningFailed("invalid recid".into()))?;
+
+            if let Ok(recovered_key) = VerifyingKey::recover_from_prehash(&msg_hash, &signature, recid) {
+                let recovered_bytes = recovered_key.to_encoded_point(false);
+                if recovered_bytes.as_bytes() == public_key.as_slice() {
+                    return Ok(27 + recid_byte);
+                }
+            }
+        }
+
+        // Fallback: use computed recovery id if ecrecover didn't match
+        // (shouldn't happen if signature is correct)
+        let aggregate_r = self.aggregate_r_point
+            .ok_or_else(|| MpcError::SigningFailed("aggregate R not set for fallback".into()))?;
+        self.compute_recovery_id(&aggregate_r, &Scalar::ONE)
     }
 
     /// Local/simulated signing (for testing only, reconstructs full key).
