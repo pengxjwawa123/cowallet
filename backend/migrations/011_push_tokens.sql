@@ -1,7 +1,7 @@
 -- Push notification tokens table
 CREATE TABLE IF NOT EXISTS push_tokens (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT NOT NULL UNIQUE,
     platform TEXT NOT NULL CHECK (platform IN ('ios', 'android')),
     device_id TEXT NOT NULL,
