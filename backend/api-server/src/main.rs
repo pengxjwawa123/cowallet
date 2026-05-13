@@ -80,7 +80,7 @@ async fn main() {
     setup_panic_hook();
 
     let database_url =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost/cowallet".into());
+        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let rpc_url =
         std::env::var("RPC_URL").unwrap_or_else(|_| "https://1rpc.io/eth".into());
 
