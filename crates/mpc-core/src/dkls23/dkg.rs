@@ -341,7 +341,7 @@ impl DkgSession {
             }
         }
 
-        let public_key = pubkey_point.to_encoded_point(true).as_bytes().to_vec();
+        let public_key = pubkey_point.to_encoded_point(false).as_bytes().to_vec();
         self.public_key = Some(public_key.clone());
 
         let key_share = KeyShare {

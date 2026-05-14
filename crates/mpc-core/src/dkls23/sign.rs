@@ -852,9 +852,24 @@ impl SignSession {
 
         let msg_hash = self.message_hash;
 
-        let public_key = self.my_share.as_ref()
+        let stored_pk = self.my_share.as_ref()
             .ok_or_else(|| MpcError::SigningFailed("no key share for recovery id check".into()))?
             .public_key.clone();
+
+        // Ensure we have the uncompressed public key for comparison
+        let uncompressed_pk = if stored_pk.len() == 65 && stored_pk[0] == 0x04 {
+            stored_pk
+        } else if stored_pk.len() == 33 && (stored_pk[0] == 0x02 || stored_pk[0] == 0x03) {
+            let encoded = EncodedPoint::from_bytes(&stored_pk)
+                .map_err(|_| MpcError::SigningFailed("invalid compressed pubkey".into()))?;
+            let point = AffinePoint::from_encoded_point(&encoded);
+            if bool::from(point.is_none()) {
+                return Err(MpcError::SigningFailed("pubkey decompression failed".into()));
+            }
+            point.unwrap().to_encoded_point(false).as_bytes().to_vec()
+        } else {
+            stored_pk
+        };
 
         let mut sig_bytes = [0u8; 64];
         sig_bytes[..32].copy_from_slice(r_bytes);
@@ -870,7 +885,7 @@ impl SignSession {
 
             if let Ok(recovered_key) = VerifyingKey::recover_from_prehash(&msg_hash, &signature, recid) {
                 let recovered_bytes = recovered_key.to_encoded_point(false);
-                if recovered_bytes.as_bytes() == public_key.as_slice() {
+                if recovered_bytes.as_bytes() == uncompressed_pk.as_slice() {
                     return Ok(27 + recid_byte);
                 }
             }

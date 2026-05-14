@@ -52,17 +52,34 @@ impl Zeroize for KeyShare {
 impl KeyShare {
     /// Derive the Ethereum address from the joint public key.
     ///
-    /// Takes the uncompressed SEC1 public key (65 bytes, 0x04 || x || y),
-    /// hashes the 64-byte x||y payload with Keccak-256, and returns the
-    /// last 20 bytes.
+    /// Handles both compressed (33 bytes, 0x02/0x03 prefix) and
+    /// uncompressed (65 bytes, 0x04 prefix) SEC1 encodings.
+    /// Ethereum address = keccak256(uncompressed_x_y)[12..32].
     pub fn eth_address(&self) -> [u8; 20] {
+        use k256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+        use k256::{AffinePoint, EncodedPoint};
         use sha3::{Digest, Keccak256};
-        let pk_bytes = if self.public_key.len() == 65 && self.public_key[0] == 0x04 {
-            &self.public_key[1..]
+
+        let uncompressed_xy = if self.public_key.len() == 65 && self.public_key[0] == 0x04 {
+            // Already uncompressed: skip the 0x04 prefix
+            self.public_key[1..].to_vec()
+        } else if (self.public_key.len() == 33)
+            && (self.public_key[0] == 0x02 || self.public_key[0] == 0x03)
+        {
+            // Compressed: decompress via k256
+            let encoded = EncodedPoint::from_bytes(&self.public_key)
+                .expect("invalid compressed pubkey");
+            let point = AffinePoint::from_encoded_point(&encoded)
+                .expect("decompression failed");
+            let uncompressed = point.to_encoded_point(false);
+            // uncompressed is 65 bytes (0x04 || x || y), skip prefix
+            uncompressed.as_bytes()[1..].to_vec()
         } else {
-            &self.public_key
+            // Fallback: assume raw x||y (64 bytes)
+            self.public_key.clone()
         };
-        let hash = Keccak256::digest(pk_bytes);
+
+        let hash = Keccak256::digest(&uncompressed_xy);
         let mut addr = [0u8; 20];
         addr.copy_from_slice(&hash[12..32]);
         addr
