@@ -6,11 +6,13 @@ import '../../../widgets/top_toast.dart';
 class ChatHistoryWidget extends StatelessWidget {
   final List<dynamic> transactions;
   final int total;
+  final ValueChanged<Map<String, dynamic>>? onTxTap;
 
   const ChatHistoryWidget({
     super.key,
     required this.transactions,
     this.total = 0,
+    this.onTxTap,
   });
 
   @override
@@ -78,10 +80,11 @@ class ChatHistoryWidget extends StatelessWidget {
     final map = tx is Map<String, dynamic> ? tx : <String, dynamic>{};
     final status = map['status'] as String? ?? 'unknown';
     final value = map['value'] as String? ?? '0';
-    final token = map['token'] as String? ?? 'ETH';
-    final toAddr = map['to_addr'] as String? ?? '';
+    final token = (map['token'] ?? map['token_symbol'] ?? 'ETH') as String;
+    final toAddr = (map['to_addr'] ?? map['to'] ?? '') as String;
     final txHash = map['tx_hash'] as String?;
-    final createdAt = map['created_at'] as String? ?? '';
+    final chainName = map['chain_name'] as String?;
+    final createdAt = (map['created_at'] ?? map['timestamp'] ?? '') as String;
 
     final isSuccess = status == 'confirmed' || status == 'success';
     final isFailed = status == 'failed';
@@ -90,15 +93,17 @@ class ChatHistoryWidget extends StatelessWidget {
         ? '${toAddr.substring(0, 6)}...${toAddr.substring(toAddr.length - 4)}'
         : toAddr;
 
-    final dateStr = createdAt.length >= 10 ? createdAt.substring(0, 10) : createdAt;
+    final dateStr = _formatDate(createdAt);
 
     return GestureDetector(
-      onTap: txHash != null
-          ? () {
-              Clipboard.setData(ClipboardData(text: txHash));
-              showTopToast(context, '交易哈希已复制');
-            }
-          : null,
+      onTap: () {
+        if (onTxTap != null) {
+          onTxTap!(map);
+        } else if (txHash != null) {
+          Clipboard.setData(ClipboardData(text: txHash));
+          showTopToast(context, '交易哈希已复制');
+        }
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: const BoxDecoration(
@@ -133,9 +138,20 @@ class ChatHistoryWidget extends StatelessWidget {
                     style: const TextStyle(fontSize: 13, color: CwColors.ink1),
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    dateStr,
-                    style: const TextStyle(fontSize: 11, color: CwColors.ink4),
+                  Row(
+                    children: [
+                      if (chainName != null) ...[
+                        Text(
+                          chainName,
+                          style: const TextStyle(fontSize: 11, color: CwColors.accent, fontWeight: FontWeight.w500),
+                        ),
+                        const Text(' · ', style: TextStyle(fontSize: 11, color: CwColors.ink4)),
+                      ],
+                      Text(
+                        dateStr,
+                        style: const TextStyle(fontSize: 11, color: CwColors.ink4),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -167,5 +183,15 @@ class ChatHistoryWidget extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _formatDate(String raw) {
+    if (raw.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(raw);
+      return '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return raw.length >= 10 ? raw.substring(0, 10) : raw;
+    }
   }
 }

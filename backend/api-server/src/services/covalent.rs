@@ -4,6 +4,8 @@
 //!
 //! Single request returns native coin + all ERC-20 balances with USD quotes.
 
+use std::collections::HashMap;
+
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::warn;
@@ -78,40 +80,70 @@ struct CovalentResponse {
 
 #[derive(Debug, Deserialize)]
 struct CovalentData {
-    address: String,
-    chain_id: u64,
+    #[allow(dead_code)]
+    address: Option<String>,
+    chain_id: Option<u64>,
     items: Vec<CovalentBalanceItem>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CovalentBalanceItem {
     contract_decimals: Option<u32>,
+    contract_name: Option<String>,
     contract_ticker_symbol: Option<String>,
     contract_address: Option<String>,
     balance: Option<String>,
+    balance_24h: Option<String>,
     quote: Option<f64>,
+    quote_24h: Option<f64>,
+    quote_rate: Option<f64>,
+    quote_rate_24h: Option<f64>,
+    pretty_quote: Option<String>,
     #[serde(rename = "is_native_token")]
     native_token: Option<bool>,
+    is_spam: Option<bool>,
     #[serde(rename = "type")]
     item_type: Option<String>,
+    last_transferred_at: Option<String>,
     logo_urls: Option<CovalentLogoUrls>,
+    chain_id: Option<u64>,
+    chain_name: Option<String>,
+    chain_display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CovalentLogoUrls {
     token_logo_url: Option<String>,
+    chain_logo_url: Option<String>,
 }
 
+/// All token balance fields needed for display and business logic.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TokenBalance {
     pub symbol: String,
+    pub name: String,
     pub balance: String,
     pub balance_formatted: String,
+    pub balance_24h: Option<String>,
     pub usd: String,
+    pub usd_24h: Option<String>,
+    pub quote_rate: Option<f64>,
+    pub quote_rate_24h: Option<f64>,
+    pub pretty_quote: Option<String>,
     pub contract_address: Option<String>,
     pub decimals: u32,
     pub native_token: bool,
+    pub is_spam: bool,
+    pub token_type: Option<String>,
     pub logo_url: Option<String>,
+    pub chain_logo_url: Option<String>,
+    pub chain_id: Option<u64>,
+    pub chain_name: Option<String>,
+    pub last_transferred_at: Option<String>,
+}
+
+pub fn format_value(raw: &str, decimals: u32) -> String {
+    format_units(raw, decimals)
 }
 
 fn format_units(raw: &str, decimals: u32) -> String {
@@ -388,6 +420,9 @@ pub async fn get_balances(
         if item.item_type.as_deref() == Some("nft") {
             continue;
         }
+        if item.is_spam.unwrap_or(false) {
+            continue;
+        }
         let raw_balance = item.balance.as_deref().unwrap_or("0");
         let is_native = item.native_token.unwrap_or(false);
         let is_zero = raw_balance == "0" || raw_balance.is_empty();
@@ -398,21 +433,39 @@ pub async fn get_balances(
         let decimals = item.contract_decimals.unwrap_or(18);
         let symbol = item
             .contract_ticker_symbol
+            .clone()
             .unwrap_or_else(|| if is_native { native_symbol(chain_id).into() } else { "???".into() });
+        let name = item.contract_name.unwrap_or_else(|| symbol.clone());
         let formatted = format_units(raw_balance, decimals);
         let usd = format!("{:.2}", item.quote.unwrap_or(0.0));
+        let usd_24h = item.quote_24h.map(|q| format!("{:.2}", q));
 
-        let logo_url = item.logo_urls.and_then(|l| l.token_logo_url);
+        let (logo_url, chain_logo_url) = match item.logo_urls {
+            Some(logos) => (logos.token_logo_url, logos.chain_logo_url),
+            None => (None, None),
+        };
 
         tokens.push(TokenBalance {
             symbol,
+            name,
             balance: raw_balance.to_string(),
             balance_formatted: formatted,
+            balance_24h: item.balance_24h,
             usd,
+            usd_24h,
+            quote_rate: item.quote_rate,
+            quote_rate_24h: item.quote_rate_24h,
+            pretty_quote: item.pretty_quote,
             contract_address: item.contract_address,
             decimals,
             native_token: is_native,
+            is_spam: false,
+            token_type: item.item_type,
             logo_url,
+            chain_logo_url,
+            chain_id: Some(chain_id),
+            chain_name: Some(chain_display_name(chain_id).to_string()),
+            last_transferred_at: item.last_transferred_at,
         });
     }
 
@@ -491,6 +544,177 @@ pub async fn get_all_chain_balances(
                 warn!("Failed to get balances for chain {}: {}", chain_id, e);
             }
         }
+    }
+
+    chains.sort_by_key(|c| c.chain_id);
+
+    Ok(AllChainsBalance {
+        address: address.to_string(),
+        chains,
+        total_usd: format!("{:.2}", grand_total_usd),
+    })
+}
+
+// ─── Allchains Single-Request Balances ──────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct AllchainsResponse {
+    data: Option<AllchainsData>,
+    error: Option<bool>,
+    error_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AllchainsData {
+    items: Vec<CovalentBalanceItem>,
+}
+
+/// Get balances across ALL chains in a single API call (Covalent allchains endpoint).
+/// Falls back to per-chain parallel if this fails (e.g. free tier doesn't support it).
+pub async fn get_allchains_balances(
+    http: &Client,
+    api_key: &str,
+    address: &str,
+) -> Result<AllChainsBalance, String> {
+    let url = format!(
+        "{}/allchains/address/{}/balances/",
+        BASE_URL, address
+    );
+
+    tracing::info!("[Covalent] get_allchains_balances address={} url={}", address, url);
+
+    let http_clone = http.clone();
+    let url_clone = url.clone();
+    let api_key_owned = api_key.to_string();
+
+    let body = retry_with_backoff(
+        RetryConfig::conservative(),
+        || {
+            let http = http_clone.clone();
+            let url = url_clone.clone();
+            let key = api_key_owned.clone();
+            async move {
+                let resp = http
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", key))
+                    .send()
+                    .await
+                    .map_err(|e| format!("Covalent allchains request failed: {}", e))?;
+
+                let status = resp.status();
+                tracing::info!("[Covalent] allchains response status={}", status);
+
+                if !status.is_success() {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    tracing::error!("[Covalent] allchains error body: {}", body_text);
+                    return Err(format!("Covalent allchains API returned {}", status));
+                }
+
+                let body: AllchainsResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Covalent allchains parse error: {}", e))?;
+
+                if body.error.unwrap_or(false) {
+                    return Err(format!(
+                        "Covalent allchains error: {}",
+                        body.error_message.unwrap_or_default()
+                    ));
+                }
+
+                Ok(body)
+            }
+        },
+        is_retryable_covalent_error,
+        "covalent_get_allchains_balances",
+    )
+    .await?;
+
+    let data = body.data.ok_or("Covalent allchains returned no data")?;
+    tracing::info!("[Covalent] allchains got {} items", data.items.len());
+
+    // Group tokens by chain_id
+    let mut chain_map: HashMap<u64, Vec<TokenBalance>> = HashMap::new();
+
+    for item in data.items {
+        if item.item_type.as_deref() == Some("nft") {
+            continue;
+        }
+        if item.is_spam.unwrap_or(false) {
+            continue;
+        }
+
+        let raw_balance = item.balance.as_deref().unwrap_or("0");
+        let is_native = item.native_token.unwrap_or(false);
+        let is_zero = raw_balance == "0" || raw_balance.is_empty();
+        if is_zero && !is_native {
+            continue;
+        }
+
+        let item_chain_id = item.chain_id.unwrap_or(1);
+        let decimals = item.contract_decimals.unwrap_or(18);
+        let symbol = item
+            .contract_ticker_symbol
+            .clone()
+            .unwrap_or_else(|| if is_native { native_symbol(item_chain_id).into() } else { "???".into() });
+        let name = item.contract_name.unwrap_or_else(|| symbol.clone());
+        let formatted = format_units(raw_balance, decimals);
+        let usd = format!("{:.2}", item.quote.unwrap_or(0.0));
+        let usd_24h = item.quote_24h.map(|q| format!("{:.2}", q));
+        let item_chain_name = item.chain_display_name
+            .or(item.chain_name)
+            .unwrap_or_else(|| chain_display_name(item_chain_id).to_string());
+
+        let (logo_url, chain_logo_url) = match item.logo_urls {
+            Some(logos) => (logos.token_logo_url, logos.chain_logo_url),
+            None => (None, None),
+        };
+
+        let token = TokenBalance {
+            symbol,
+            name,
+            balance: raw_balance.to_string(),
+            balance_formatted: formatted,
+            balance_24h: item.balance_24h,
+            usd,
+            usd_24h,
+            quote_rate: item.quote_rate,
+            quote_rate_24h: item.quote_rate_24h,
+            pretty_quote: item.pretty_quote,
+            contract_address: item.contract_address,
+            decimals,
+            native_token: is_native,
+            is_spam: false,
+            token_type: item.item_type,
+            logo_url,
+            chain_logo_url: chain_logo_url.clone(),
+            chain_id: Some(item_chain_id),
+            chain_name: Some(item_chain_name.clone()),
+            last_transferred_at: item.last_transferred_at,
+        };
+
+        chain_map.entry(item_chain_id).or_default().push(token);
+    }
+
+    let mut chains: Vec<ChainBalance> = Vec::new();
+    let mut grand_total_usd = 0.0;
+
+    for (chain_id, mut tokens) in chain_map {
+        tokens.sort_by(|a, b| b.native_token.cmp(&a.native_token));
+        let chain_total: f64 = tokens
+            .iter()
+            .filter_map(|t| t.usd.parse::<f64>().ok())
+            .sum();
+        grand_total_usd += chain_total;
+
+        chains.push(ChainBalance {
+            chain_id,
+            chain_name: tokens.first()
+                .and_then(|t| t.chain_name.clone())
+                .unwrap_or_else(|| chain_display_name(chain_id).to_string()),
+            tokens,
+            total_usd: format!("{:.2}", chain_total),
+        });
     }
 
     chains.sort_by_key(|c| c.chain_id);

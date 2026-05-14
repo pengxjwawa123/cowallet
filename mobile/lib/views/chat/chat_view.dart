@@ -14,6 +14,7 @@ import 'widgets/receive_widget.dart';
 import 'widgets/send_confirm_widget.dart';
 import 'widgets/swap_confirm_widget.dart';
 import 'widgets/tx_result_widget.dart';
+import 'widgets/tx_detail_widget.dart';
 import 'widgets/history_widget.dart';
 import 'widgets/audit_widget.dart';
 import 'widgets/token_info_widget.dart';
@@ -26,7 +27,7 @@ import 'widgets/session_list_sheet.dart';
 
 enum ChatMsgKind { user, ai, thinking, widget }
 
-enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, history, audit, clarify, tokenInfo }
+enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, txDetail, history, audit, clarify, tokenInfo }
 
 class ChatMsg {
   final ChatMsgKind kind;
@@ -100,6 +101,17 @@ class ChatViewState extends State<ChatView> {
 
   void sendMessage(String message) {
     _send(message);
+  }
+
+  void showTxDetail(Map<String, dynamic> txData) {
+    setState(() {
+      _messages.add(ChatMsg(
+        kind: ChatMsgKind.widget,
+        widgetType: WidgetType.txDetail,
+        widgetData: txData,
+      ));
+    });
+    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -955,10 +967,13 @@ class ChatViewState extends State<ChatView> {
           amount: msg.widgetData['amount'],
           token: msg.widgetData['token'],
         );
+      case WidgetType.txDetail:
+        return ChatTxDetailWidget(data: msg.widgetData);
       case WidgetType.history:
         return ChatHistoryWidget(
           transactions: (msg.widgetData['transactions'] as List<dynamic>?) ?? [],
           total: msg.widgetData['total'] as int? ?? 0,
+          onTxTap: (tx) => showTxDetail(tx),
         );
       case WidgetType.audit:
         return ChatAuditWidget(data: msg.widgetData);

@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod covalent;
+pub mod defillama;
 pub mod ai_executor;
 pub mod chat_store;
 pub mod crypto;

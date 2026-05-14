@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../theme/colors.dart';
-import '../../widgets/top_toast.dart';
 import '../../api/tx_api.dart';
 import '../../services/locator.dart';
 import '../../main.dart';
 import '../../config/api_config.dart';
+import '../../router/app_router.dart';
 
 class TxHistoryView extends StatefulWidget {
   const TxHistoryView({super.key});
@@ -144,12 +143,33 @@ class _TxHistoryViewState extends State<TxHistoryView> {
   }
 
   void _showTransactionDetail(Map<String, dynamic> tx) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _TransactionDetailSheet(tx: tx),
-    );
+    final walletAddress = CowalletApp.of(context).walletAddress;
+    final to = tx['to'] as String? ?? '';
+    final isIncoming = to.toLowerCase() == walletAddress.toLowerCase();
+    final chainId = tx['chain_id'] as int? ?? 1;
+    final tokenSymbol = _getTokenSymbol(tx, chainId);
+
+    AppShell.goToChatAndShowTx(context, {
+      'tx_hash': tx['tx_hash'] ?? '',
+      'from': tx['from'] ?? '',
+      'to': to,
+      'value': tx['value'] ?? '0',
+      'token': tokenSymbol,
+      'status': tx['status'] ?? '',
+      'chain_id': chainId,
+      'block_number': tx['block_number'],
+      'timestamp': tx['timestamp'],
+      'gas_used': tx['gas_used'],
+      'is_incoming': isIncoming,
+    });
+  }
+
+  String _getTokenSymbol(Map<String, dynamic> tx, int chainId) {
+    final symbol = tx['token_symbol'] as String?;
+    if (symbol != null && symbol.isNotEmpty) return symbol;
+    if (chainId == 137) return 'POL';
+    if (chainId == 56) return 'BNB';
+    return 'ETH';
   }
 
   @override
@@ -595,178 +615,3 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-class _TransactionDetailSheet extends StatelessWidget {
-  final Map<String, dynamic> tx;
-
-  const _TransactionDetailSheet({required this.tx});
-
-  @override
-  Widget build(BuildContext context) {
-    final txHash = tx['tx_hash'] as String? ?? '';
-    final from = tx['from'] as String? ?? '';
-    final to = tx['to'] as String? ?? '';
-    final value = tx['value'] as String? ?? '0';
-    final chainId = tx['chain_id'] as int? ?? 1;
-    final blockNumber = tx['block_number'] as int?;
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: CwColors.bgCard,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle bar
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: CwColors.ink4,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Title
-              const Text(
-                'Transaction Details',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: CwColors.ink1,
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Details
-              _DetailRow(label: 'From', value: from, copyable: true),
-              _DetailRow(label: 'To', value: to, copyable: true),
-              _DetailRow(label: 'Value', value: value),
-              _DetailRow(label: 'Tx Hash', value: txHash, copyable: true),
-              if (blockNumber != null)
-                _DetailRow(label: 'Block', value: blockNumber.toString()),
-              _DetailRow(label: 'Chain ID', value: chainId.toString()),
-
-              const SizedBox(height: 20),
-
-              // View on explorer button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _openBlockExplorer(chainId, txHash),
-                  icon: const Icon(Icons.open_in_new, size: 18),
-                  label: const Text('View on Block Explorer'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: CwColors.accent,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _openBlockExplorer(int chainId, String txHash) {
-    String baseUrl;
-    switch (chainId) {
-      case 1:
-        baseUrl = 'https://etherscan.io';
-        break;
-      case 8453:
-        baseUrl = 'https://basescan.org';
-        break;
-      case 137:
-        baseUrl = 'https://polygonscan.com';
-        break;
-      case 42161:
-        baseUrl = 'https://arbiscan.io';
-        break;
-      case 10:
-        baseUrl = 'https://optimistic.etherscan.io';
-        break;
-      case 56:
-        baseUrl = 'https://bscscan.com';
-        break;
-      default:
-        baseUrl = 'https://etherscan.io';
-    }
-
-    final url = '$baseUrl/tx/$txHash';
-    Clipboard.setData(ClipboardData(text: url));
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool copyable;
-
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    this.copyable = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: CwColors.ink3,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    value,
-                    style: const TextStyle(
-                      fontFamily: 'JetBrainsMono',
-                      fontSize: 12,
-                      color: CwColors.ink1,
-                    ),
-                  ),
-                ),
-                if (copyable)
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 16),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: value));
-                      showTopToast(context, 'Copied to clipboard');
-                    },
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

@@ -73,7 +73,6 @@ fn infer_chain_id_from_token(token: &str) -> u64 {
 
 /// Format U256 value with given decimals (simplified version)
 fn format_units(value: alloy_primitives::U256, decimals: u32) -> String {
-    // Very basic formatting - just divide by 10^decimals
     let divisor = alloy_primitives::U256::from(10).pow(alloy_primitives::U256::from(decimals));
     let integer = value / divisor;
     let fraction = value % divisor;
@@ -82,6 +81,26 @@ fn format_units(value: alloy_primitives::U256, decimals: u32) -> String {
     } else {
         format!("{}.{:06}", integer, fraction.to_string().chars().take(6).collect::<String>())
     }
+}
+
+fn token_balance_to_json(b: &crate::services::covalent::TokenBalance) -> serde_json::Value {
+    serde_json::json!({
+        "symbol": b.symbol,
+        "name": b.name,
+        "balance": b.balance_formatted,
+        "balance_raw": b.balance,
+        "usd": b.usd,
+        "usd_24h": b.usd_24h,
+        "quote_rate": b.quote_rate,
+        "quote_rate_24h": b.quote_rate_24h,
+        "native": b.native_token,
+        "contract_address": b.contract_address,
+        "decimals": b.decimals,
+        "logo_url": b.logo_url,
+        "chain_id": b.chain_id,
+        "chain_name": b.chain_name,
+        "last_transferred_at": b.last_transferred_at,
+    })
 }
 
 impl ToolContext {
@@ -162,14 +181,7 @@ impl ToolContext {
                             if !filtered_tokens.is_empty() {
                                 let tokens: Vec<serde_json::Value> = filtered_tokens
                                     .iter()
-                                    .map(|b| {
-                                        serde_json::json!({
-                                            "symbol": b.symbol,
-                                            "balance": b.balance_formatted,
-                                            "usd": b.usd,
-                                            "native": b.native_token,
-                                        })
-                                    })
+                                    .map(|b| token_balance_to_json(b))
                                     .collect();
 
                                 chains_data.push(serde_json::json!({
@@ -227,14 +239,7 @@ impl ToolContext {
 
                         let tokens: Vec<serde_json::Value> = filtered
                             .iter()
-                            .map(|b| {
-                                serde_json::json!({
-                                    "symbol": b.symbol,
-                                    "balance": b.balance_formatted,
-                                    "usd": b.usd,
-                                    "native": b.native_token,
-                                })
-                            })
+                            .map(|b| token_balance_to_json(b))
                             .collect();
 
                         let result = serde_json::json!({
@@ -318,18 +323,35 @@ impl ToolContext {
                         "balance": token.balance_formatted,
                         "balance_raw": token.balance,
                         "usd_value": token.usd,
+                        "usd_24h": token.usd_24h,
+                        "quote_rate": token.quote_rate,
+                        "quote_rate_24h": token.quote_rate_24h,
                         "contract_address": token.contract_address,
                         "decimals": token.decimals,
                         "is_native": token.native_token,
+                        "logo_url": token.logo_url,
+                        "last_transferred_at": token.last_transferred_at,
                     });
                 }
             }
         }
 
-        // Get price from PriceCache
-        let price_usd = self.app_state.price_cache
+        // Get price from PriceCache (DeFiLlama primary, CoinGecko fallback)
+        let mut price_usd = self.app_state.price_cache
             .get_usd_price(&self.app_state.http, &symbol_upper)
             .await;
+
+        // Fallback: if symbol lookup failed, try by contract address via DeFiLlama
+        if price_usd.is_none() {
+            let contract_addr = balance_info.get("contract_address")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(addr) = contract_addr {
+                price_usd = self.app_state.price_cache
+                    .get_token_price_by_address(&self.app_state.http, chain_id, addr)
+                    .await;
+            }
+        }
 
         // Build known token metadata
         let token_meta = match symbol_upper.as_str() {
@@ -654,13 +676,18 @@ impl ToolContext {
                             .into_iter()
                             .take(limit as usize)
                             .map(|tx| {
+                                let token = &tx.token_symbol;
+                                let decimals: u32 = if token == "USDC" || token == "USDT" { 6 } else { 18 };
+                                let formatted_value = crate::services::covalent::format_value(&tx.value, decimals);
                                 serde_json::json!({
                                     "chain_id": tx.chain_id,
                                     "chain_name": tx.chain_name,
                                     "tx_hash": tx.tx_hash,
                                     "from_addr": tx.from,
                                     "to_addr": tx.to,
-                                    "value": tx.value,
+                                    "value": formatted_value,
+                                    "value_raw": tx.value,
+                                    "token": tx.token_symbol,
                                     "timestamp": tx.timestamp,
                                     "status": tx.status,
                                 })

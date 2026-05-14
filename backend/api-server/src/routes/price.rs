@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tracing::warn;
 
+use crate::services::defillama;
 use crate::state::AppState;
 
 static COINGECKO_API: &str = "https://api.coingecko.com/api/v3";
@@ -19,6 +21,15 @@ static SYMBOL_TO_ID: &[(&str, &str)] = &[
     ("WETH", "weth"),
     ("STETH", "staked-ether"),
     ("CBETH", "coinbase-wrapped-staked-eth"),
+    ("BNB", "binancecoin"),
+    ("MATIC", "matic-network"),
+    ("POL", "matic-network"),
+    ("ARB", "arbitrum"),
+    ("OP", "optimism"),
+    ("LINK", "chainlink"),
+    ("UNI", "uniswap"),
+    ("AAVE", "aave"),
+    ("WBTC", "wrapped-bitcoin"),
 ];
 
 fn resolve_id(symbol: &str) -> Option<&'static str> {
@@ -74,9 +85,45 @@ impl PriceCache {
         }
         drop(cache);
 
-        let ids: Vec<&str> = symbols.iter().filter_map(|s| resolve_id(s)).collect();
+        // Primary: DeFiLlama (free, no key, no rate limit)
+        let mut result = HashMap::new();
+        match defillama::get_prices(client, symbols).await {
+            Ok(llama_prices) => {
+                let mut cache = self.inner.write().await;
+                for (sym, price) in &llama_prices {
+                    let entry = CachedPrice {
+                        usd: price.usd,
+                        change_24h: 0.0, // DeFiLlama /current doesn't return 24h change
+                    };
+                    cache.data.insert(sym.clone(), entry.clone());
+                    result.insert(sym.clone(), entry);
+                }
+                cache.last_fetch = Some(Instant::now());
+
+                // If we got all symbols, return early
+                if result.len() == symbols.len() {
+                    return result;
+                }
+            }
+            Err(e) => {
+                warn!("DeFiLlama price fetch failed, falling back to CoinGecko: {}", e);
+            }
+        }
+
+        // Fallback: CoinGecko for any symbols DeFiLlama missed
+        let missing: Vec<String> = symbols
+            .iter()
+            .filter(|s| !result.contains_key(&s.to_uppercase()))
+            .cloned()
+            .collect();
+
+        if missing.is_empty() {
+            return result;
+        }
+
+        let ids: Vec<&str> = missing.iter().filter_map(|s| resolve_id(s)).collect();
         if ids.is_empty() {
-            return HashMap::new();
+            return result;
         }
 
         let ids_param = ids.join(",");
@@ -88,15 +135,13 @@ impl PriceCache {
         let fetched = match client.get(&url).send().await {
             Ok(resp) => match resp.json::<serde_json::Value>().await {
                 Ok(v) => v,
-                Err(_) => return self.fallback(symbols).await,
+                Err(_) => return self.merge_fallback(symbols, result).await,
             },
-            Err(_) => return self.fallback(symbols).await,
+            Err(_) => return self.merge_fallback(symbols, result).await,
         };
 
         let mut cache = self.inner.write().await;
-        let mut result = HashMap::new();
-
-        for sym in symbols {
+        for sym in &missing {
             let upper = sym.to_uppercase();
             if let Some(id) = resolve_id(&upper) {
                 if let Some(coin) = fetched.get(id) {
@@ -114,7 +159,6 @@ impl PriceCache {
                 }
             }
         }
-
         cache.last_fetch = Some(Instant::now());
         result
     }
@@ -125,21 +169,40 @@ impl PriceCache {
         prices.get(&symbol.to_uppercase()).map(|p| p.usd)
     }
 
-    async fn fallback(&self, symbols: &[String]) -> HashMap<String, CachedPrice> {
-        let cache = self.inner.read().await;
-        let mut result = HashMap::new();
-        for sym in symbols {
-            if let Some(cached) = cache.data.get(&sym.to_uppercase()) {
-                result.insert(sym.to_uppercase(), cached.clone());
+    /// Get token price by contract address using DeFiLlama.
+    pub async fn get_token_price_by_address(
+        &self,
+        client: &reqwest::Client,
+        chain_id: u64,
+        contract_address: &str,
+    ) -> Option<f64> {
+        match defillama::get_token_price_by_address(client, chain_id, contract_address).await {
+            Ok(price) => Some(price),
+            Err(e) => {
+                warn!("DeFiLlama token price by address failed: {}", e);
+                None
             }
         }
-        result
+    }
+
+    async fn merge_fallback(&self, symbols: &[String], mut existing: HashMap<String, CachedPrice>) -> HashMap<String, CachedPrice> {
+        let cache = self.inner.read().await;
+        for sym in symbols {
+            let upper = sym.to_uppercase();
+            if !existing.contains_key(&upper) {
+                if let Some(cached) = cache.data.get(&upper) {
+                    existing.insert(upper, cached.clone());
+                }
+            }
+        }
+        existing
     }
 }
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_prices))
+        .route("/token", get(get_token_price))
         .route("/history", get(price_history))
 }
 
@@ -189,6 +252,41 @@ async fn get_prices(
         .collect();
 
     Json(PriceResponse { prices })
+}
+
+#[derive(Deserialize)]
+struct TokenPriceQuery {
+    chain_id: u64,
+    address: String,
+}
+
+#[derive(Serialize)]
+struct TokenPriceResponse {
+    chain_id: u64,
+    address: String,
+    usd: f64,
+}
+
+async fn get_token_price(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<TokenPriceQuery>,
+) -> Result<Json<TokenPriceResponse>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let price = state
+        .price_cache
+        .get_token_price_by_address(&state.http, q.chain_id, &q.address)
+        .await
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "token price not found" })),
+            )
+        })?;
+
+    Ok(Json(TokenPriceResponse {
+        chain_id: q.chain_id,
+        address: q.address,
+        usd: price,
+    }))
 }
 
 #[derive(Deserialize)]

@@ -57,6 +57,16 @@ class AppShell extends StatefulWidget {
     }
   }
 
+  static void goToChatAndShowTx(BuildContext context, Map<String, dynamic> txData) {
+    final shellState = context.findAncestorStateOfType<_AppShellState>();
+    if (shellState != null) {
+      shellState.switchToChat();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        chatKey.currentState?.showTxDetail(txData);
+      });
+    }
+  }
+
   @override
   State<AppShell> createState() => _AppShellState();
 }
