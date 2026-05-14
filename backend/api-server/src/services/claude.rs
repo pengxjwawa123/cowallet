@@ -72,6 +72,8 @@ struct ChatCompletionRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a [ToolDefinition]>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
@@ -197,6 +199,7 @@ impl AiClient {
             model: &self.model,
             messages,
             tools: if tools.is_empty() { None } else { Some(tools) },
+            tool_choice: if tools.is_empty() { None } else { Some("auto") },
             temperature: Some(temperature.unwrap_or(0.7)),
             max_tokens: Some(4096),
             stream: None,
@@ -232,6 +235,7 @@ impl AiClient {
             model: &self.model,
             messages,
             tools: if tools.is_empty() { None } else { Some(tools) },
+            tool_choice: if tools.is_empty() { None } else { Some("auto") },
             temperature: Some(temperature.unwrap_or(0.7)),
             max_tokens: Some(4096),
             stream: Some(true),

@@ -141,6 +141,7 @@ class IntentExecutor {
       final isNativeToken = _isNativeToken(token, targetChainId);
 
       BigInt amount;
+      final bool confirmedDeduct = params['confirmed_deduct'] == 'true';
       if (sendAll && isNativeToken) {
         final balance = await _chain.getEthBalance(address);
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
@@ -151,6 +152,19 @@ class IntentExecutor {
         if (amount <= BigInt.zero) {
           return ActionResult.fail(
             S.lang == Lang.zh ? '余额不足以支付Gas费' : 'Insufficient balance for gas',
+          );
+        }
+        if (!confirmedDeduct) {
+          final nativeSymbol = (targetChainId == 137 || targetChainId == 80002) ? 'POL'
+              : targetChainId == 56 ? 'BNB' : 'ETH';
+          final balanceDisplay = _formatWei(balance, token);
+          final maxSendableDisplay = _formatWei(amount, token);
+          final gasCostDisplay = _formatWei(gasCost, token);
+          return ActionResult.fail(
+            S.lang == Lang.zh
+                ? '转出全部余额需扣除Gas费。余额 $balanceDisplay $nativeSymbol，扣除Gas费后实际转出 $maxSendableDisplay $nativeSymbol，是否继续？'
+                : 'Sending all requires gas deduction. Balance: $balanceDisplay $nativeSymbol, actual send: $maxSendableDisplay $nativeSymbol after gas. Continue?',
+            data: {'suggest_deduct_gas': 'true', 'max_sendable': maxSendableDisplay, 'gas_cost': gasCostDisplay, 'symbol': nativeSymbol, 'original_amount': balanceDisplay},
           );
         }
       } else {
@@ -173,10 +187,19 @@ class IntentExecutor {
         if (balance < amount + gasCost) {
           final nativeSymbol = (targetChainId == 137 || targetChainId == 80002) ? 'POL'
               : targetChainId == 56 ? 'BNB' : 'ETH';
+          final maxSendable = balance - gasCost;
+          if (maxSendable > BigInt.zero) {
+            final maxSendableDisplay = _formatWei(maxSendable, token);
+            final gasCostDisplay = _formatWei(gasCost, token);
+            return ActionResult.fail(
+              S.lang == Lang.zh
+                  ? '余额不足以支付转账金额+Gas费。扣除Gas费后最多可转出 $maxSendableDisplay $nativeSymbol (Gas≈$gasCostDisplay $nativeSymbol)，是否继续？'
+                  : 'Insufficient balance for amount + gas. Max sendable after gas: $maxSendableDisplay $nativeSymbol (gas≈$gasCostDisplay $nativeSymbol). Continue?',
+              data: {'suggest_deduct_gas': 'true', 'max_sendable': maxSendableDisplay, 'gas_cost': gasCostDisplay, 'symbol': nativeSymbol},
+            );
+          }
           return ActionResult.fail(
-            S.lang == Lang.zh
-                ? '余额不足: 需要 ${(amount + gasCost).toString()} wei，当前 $nativeSymbol 余额 ${balance.toString()} wei'
-                : 'Insufficient balance on chain $targetChainId',
+            S.lang == Lang.zh ? '余额不足以支付Gas费' : 'Insufficient balance for gas',
           );
         }
       }
@@ -313,5 +336,17 @@ class IntentExecutor {
       return BigInt.from(value * 1e18);
     }
     return BigInt.from(value * 1e6); // USDC/USDT 6 decimals
+  }
+
+  String _formatWei(BigInt wei, String token) {
+    final decimals = (token == 'USDC' || token == 'USDT') ? 6 : 18;
+    final divisor = BigInt.from(10).pow(decimals);
+    final whole = wei ~/ divisor;
+    final frac = wei.remainder(divisor).abs();
+    final fracStr = frac.toString().padLeft(decimals, '0');
+    // Show up to 6 significant decimal digits, trim trailing zeros
+    final trimmed = fracStr.substring(0, 6).replaceAll(RegExp(r'0+$'), '');
+    if (trimmed.isEmpty) return whole.toString();
+    return '$whole.$trimmed';
   }
 }

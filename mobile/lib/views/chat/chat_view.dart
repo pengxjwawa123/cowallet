@@ -6,6 +6,7 @@ import '../../l10n/strings.dart';
 import '../../widgets/cw_orb.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
+import '../../services/chain_service.dart';
 import '../../api/ai_api.dart';
 import '../../utils/secure_storage.dart';
 import 'widgets/balance_widget.dart';
@@ -224,6 +225,7 @@ class ChatViewState extends State<ChatView> {
             final params = event.data['parameters'] as Map<String, dynamic>? ?? {};
 
             if (kind == 'write' && name == 'send_transaction') {
+              final isSendAll = params['send_all'] == true || params['send_all'] == 'true';
               setState(() {
                 if (_messages[aiMsgIndex].text.isEmpty) {
                   _messages.removeAt(aiMsgIndex);
@@ -236,7 +238,9 @@ class ChatViewState extends State<ChatView> {
                     'amount': params['value'] ?? '0',
                     'token': params['token'] ?? 'ETH',
                     'chain_id': params['chain_id'],
-                    'send_all': params['send_all'] == true || params['send_all'] == 'true',
+                    'send_all': isSendAll,
+                    if (isSendAll) 'deduct_gas_hint': true,
+                    if (isSendAll) 'loading_deduction': true,
                   },
                   toolCallId: id,
                 ));
@@ -244,6 +248,10 @@ class ChatViewState extends State<ChatView> {
                 aiMsgIndex = _messages.length - 1;
               });
               _scrollToBottom();
+              // For send_all, auto-fetch deduction breakdown
+              if (isSendAll) {
+                _autoFetchDeduction(_messages.length - 2);
+              }
             } else if (kind == 'write' && name == 'swap_token') {
               setState(() {
                 if (_messages[aiMsgIndex].text.isEmpty) {
@@ -435,6 +443,7 @@ class ChatViewState extends State<ChatView> {
       'token': msg.widgetData['token'] as String? ?? 'ETH',
       if (msg.widgetData['chain_id'] != null) 'chain_id': msg.widgetData['chain_id'].toString(),
       if (msg.widgetData['send_all'] == true) 'send_all': 'true',
+      if (msg.widgetData['deduct_gas_hint'] == true) 'confirmed_deduct': 'true',
     };
 
     final result = await Services.intent.execute('transfer', params);
@@ -442,9 +451,9 @@ class ChatViewState extends State<ChatView> {
     if (!mounted) return;
     setState(() {
       msg.loading = false;
-      msg.confirmed = true;
 
       if (result.success) {
+        msg.confirmed = true;
         _messages.add(ChatMsg(
           kind: ChatMsgKind.widget,
           widgetType: WidgetType.txResult,
@@ -456,11 +465,106 @@ class ChatViewState extends State<ChatView> {
           },
         ));
         _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: result.message));
+      } else if (result.data['suggest_deduct_gas'] == 'true') {
+        msg.confirmed = true;
+        final maxSendable = result.data['max_sendable'] ?? '0';
+        final gasCost = result.data['gas_cost'] ?? '';
+        final symbol = result.data['symbol'] ?? params['token']!;
+        _messages.add(ChatMsg(
+          kind: ChatMsgKind.widget,
+          widgetType: WidgetType.sendConfirm,
+          widgetData: {
+            'to_address': params['to'],
+            'amount': maxSendable,
+            'token': symbol,
+            'chain_id': msg.widgetData['chain_id'],
+            'send_all': true,
+            'gas_estimate': gasCost,
+            'original_amount': result.data['original_amount'] ?? params['amount'],
+            'deduct_gas_hint': true,
+          },
+        ));
+        _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
       } else {
+        msg.confirmed = true;
         _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ ${result.message}'));
       }
     });
     _scrollToBottom();
+  }
+
+  Future<void> _autoFetchDeduction(int index) async {
+    final msg = _messages[index];
+    final address = await Services.wallet.getAddress();
+    if (address.isEmpty) {
+      setState(() {
+        msg.widgetData.remove('loading_deduction');
+        msg.widgetData.remove('deduct_gas_hint');
+      });
+      return;
+    }
+
+    final chainIdVal = msg.widgetData['chain_id'];
+    final chainId = chainIdVal is int ? chainIdVal : 137;
+
+    // Only fetch balance and gas to display breakdown — do NOT execute the transfer
+    final chain = Services.chain;
+    if (chain is JsonRpcChainService) {
+      chain.switchChain(ChainConfig.byId(chainId));
+    }
+
+    try {
+      final balance = await chain.getEthBalance(address);
+      final baseFee = await chain.getBaseFee() ?? await chain.getGasPrice();
+      final maxPriority = await chain.getMaxPriorityFeePerGas();
+      final maxFee = baseFee * BigInt.two + maxPriority;
+      final gasCost = maxFee * BigInt.from(21000);
+      final maxSendable = balance - gasCost;
+
+      if (!mounted) return;
+
+      if (maxSendable <= BigInt.zero) {
+        setState(() {
+          msg.confirmed = true;
+          msg.widgetData.remove('loading_deduction');
+          _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ 余额不足以支付Gas费'));
+        });
+        _scrollToBottom();
+        return;
+      }
+
+      final nativeSymbol = (chainId == 137 || chainId == 80002) ? 'POL'
+          : chainId == 56 ? 'BNB' : 'ETH';
+      final balanceDisplay = _formatWei(balance, 18);
+      final maxSendableDisplay = _formatWei(maxSendable, 18);
+      final gasCostDisplay = _formatWei(gasCost, 18);
+
+      setState(() {
+        msg.widgetData['amount'] = maxSendableDisplay;
+        msg.widgetData['token'] = nativeSymbol;
+        msg.widgetData['gas_estimate'] = gasCostDisplay;
+        msg.widgetData['original_amount'] = balanceDisplay;
+        msg.widgetData['deduct_gas_hint'] = true;
+        msg.widgetData['send_all'] = true;
+        msg.widgetData.remove('loading_deduction');
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        msg.widgetData.remove('loading_deduction');
+        msg.widgetData.remove('deduct_gas_hint');
+      });
+    }
+  }
+
+  String _formatWei(BigInt wei, int decimals) {
+    final divisor = BigInt.from(10).pow(decimals);
+    final whole = wei ~/ divisor;
+    final frac = wei.remainder(divisor).abs();
+    final fracStr = frac.toString().padLeft(decimals, '0');
+    final trimmed = fracStr.substring(0, 6).replaceAll(RegExp(r'0+$'), '');
+    if (trimmed.isEmpty) return whole.toString();
+    return '$whole.$trimmed';
   }
 
   void _onSendDeny(int index) {
@@ -815,15 +919,19 @@ class ChatViewState extends State<ChatView> {
         return ChatReceiveWidget(address: msg.widgetData['address'] ?? '');
       case WidgetType.sendConfirm:
         final isSendAll = msg.widgetData['send_all'] == true;
-        final displayAmount = isSendAll ? '全部' : (msg.widgetData['amount'] ?? '0');
+        final deductGasHint = msg.widgetData['deduct_gas_hint'] == true;
+        final loadingDeduction = msg.widgetData['loading_deduction'] == true;
+        final displayAmount = (isSendAll && !deductGasHint) ? '全部' : (msg.widgetData['amount'] ?? '0');
         return ChatSendConfirmWidget(
           toAddress: msg.widgetData['to_address'] ?? '',
           amount: displayAmount,
           token: msg.widgetData['token'] ?? 'ETH',
           gasEstimate: msg.widgetData['gas_estimate'],
           chainId: msg.widgetData['chain_id'] as int?,
-          loading: msg.loading,
+          loading: msg.loading || loadingDeduction,
           resolved: msg.confirmed,
+          deductGasHint: deductGasHint,
+          originalAmount: msg.widgetData['original_amount'],
           onConfirm: () => _onSendConfirm(index),
           onDeny: () => _onSendDeny(index),
         );
