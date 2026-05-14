@@ -146,7 +146,7 @@ class IntentExecutor {
         final balance = await _chain.getEthBalance(address);
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
         final maxPriority = await _chain.getMaxPriorityFeePerGas();
-        final maxFee = baseFee * BigInt.two + maxPriority;
+        final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
         final gasCost = maxFee * BigInt.from(21000);
         amount = balance - gasCost;
         if (amount <= BigInt.zero) {
@@ -182,7 +182,7 @@ class IntentExecutor {
         final balance = await _chain.getEthBalance(address);
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
         final maxPriority = await _chain.getMaxPriorityFeePerGas();
-        final maxFee = baseFee * BigInt.two + maxPriority;
+        final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
         final gasCost = maxFee * BigInt.from(21000);
         if (balance < amount + gasCost) {
           final nativeSymbol = (targetChainId == 137 || targetChainId == 80002) ? 'POL'

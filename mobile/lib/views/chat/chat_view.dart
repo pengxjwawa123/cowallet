@@ -517,7 +517,7 @@ class ChatViewState extends State<ChatView> {
       final balance = await chain.getEthBalance(address);
       final baseFee = await chain.getBaseFee() ?? await chain.getGasPrice();
       final maxPriority = await chain.getMaxPriorityFeePerGas();
-      final maxFee = baseFee * BigInt.two + maxPriority;
+      final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
       final gasCost = maxFee * BigInt.from(21000);
       final maxSendable = balance - gasCost;
 

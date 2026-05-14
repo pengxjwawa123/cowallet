@@ -64,7 +64,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 resolved ? '转账已提交'
-                    : deductGasHint ? '余额不足，需扣除Gas费'
+                    : deductGasHint ? '金额已调整（需预留Gas）'
                     : '转账确认',
                 style: TextStyle(
                   fontSize: 12,
@@ -99,11 +99,11 @@ class ChatSendConfirmWidget extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          '余额不足以支付全额+Gas费',
+                          '转出金额+Gas超出余额，已自动调减',
                           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: CwColors.warn),
                         ),
                         const SizedBox(height: 8),
-                        _breakdownRow('请求转出', '$originalAmount $token'),
+                        _breakdownRow('原始金额', '$originalAmount $token'),
                         const SizedBox(height: 4),
                         _breakdownRow('Gas 费用', '- ${gasEstimate ?? "..."} $token'),
                         const Padding(
@@ -180,7 +180,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
                                 color: Colors.white,
                               ),
                             )
-                          : Text(deductGasHint ? '确认扣费转出' : '确认转账'),
+                          : Text(deductGasHint ? '确认转出' : '确认转账'),
                     ),
                   ),
                 ),
