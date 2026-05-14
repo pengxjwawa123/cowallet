@@ -163,8 +163,8 @@ class IntentExecutor {
         );
       }
 
-      // Pre-check: verify sufficient balance before signing
-      if (isNativeToken) {
+      // Pre-check: verify sufficient balance before signing (skip for sendAll — already validated)
+      if (isNativeToken && !sendAll) {
         final balance = await _chain.getEthBalance(address);
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
         final maxPriority = await _chain.getMaxPriorityFeePerGas();

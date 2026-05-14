@@ -2329,6 +2329,7 @@ dependencies = [
  "flutter_rust_bridge",
  "hex",
  "k256",
+ "log",
  "mpc-core",
  "policy-engine",
  "reqwest 0.12.28",

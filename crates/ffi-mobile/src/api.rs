@@ -425,12 +425,27 @@ pub fn sign_process_round2(
     let sig = session.process_round2(vec![incoming])
         .map_err(|e| format!("process server signature failed: {}", e))?;
 
+    // Verify signature ecrecover matches our known public key
+    let sig_bytes = sig.to_bytes();
+    if let Some(share) = session.my_share.as_ref() {
+        let msg_hash = &session.message_hash;
+        let pubkey_hex = hex::encode(&share.public_key);
+        let eth_addr = hex::encode(share.eth_address());
+        let verified = sig.verify(msg_hash, &share.public_key).unwrap_or(false);
+        log::info!(
+            "[MPC Sign FFI] session={} verified={} v={} r={} s={} pubkey={} eth_addr=0x{} msg_hash={}",
+            session_id, verified, sig_bytes[64],
+            hex::encode(&sig_bytes[..32]), hex::encode(&sig_bytes[32..64]),
+            pubkey_hex, eth_addr, hex::encode(msg_hash)
+        );
+    }
+
     // Clean up session
     drop(session);
     state::delete_sign_session(&session_id);
 
     Ok(FfiSignResult {
-        signature: sig.to_bytes().to_vec(),
+        signature: sig_bytes.to_vec(),
     })
 }
 

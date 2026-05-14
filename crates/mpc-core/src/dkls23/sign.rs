@@ -29,8 +29,8 @@ use zeroize::Zeroize;
 pub struct SignSession {
     config: SessionConfig,
     party_index: u16,
-    my_share: Option<KeyShare>,
-    message_hash: [u8; 32],
+    pub my_share: Option<KeyShare>,
+    pub message_hash: [u8; 32],
     state: SignState,
 
     // Protocol state
@@ -756,9 +756,6 @@ impl SignSession {
         let r = self.r_scalar.ok_or_else(||
             MpcError::SigningFailed("r not computed".into()))?;
         let r_bytes: [u8; 32] = r.to_bytes().into();
-
-        let aggregate_r = self.aggregate_r_point
-            .ok_or_else(|| MpcError::SigningFailed("aggregate R not set".into()))?;
 
         // Decrypt Enc(s) using our Paillier secret key
         let paillier = self.paillier_keypair.as_ref()
