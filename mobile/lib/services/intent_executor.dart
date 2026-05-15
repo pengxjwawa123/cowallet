@@ -1,3 +1,4 @@
+import '../api/swap_api.dart';
 import '../l10n/strings.dart';
 import '../models/tx_record.dart';
 import 'action_result.dart';
@@ -134,8 +135,9 @@ class IntentExecutor {
 
       // Switch chain RPC for balance/gas queries if needed
       final targetChainId = chainId ?? _resolveChainId(token);
-      if (_chain is JsonRpcChainService) {
-        (_chain as JsonRpcChainService).switchChain(ChainConfig.byId(targetChainId));
+      final chain = _chain;
+      if (chain is JsonRpcChainService) {
+        chain.switchChain(ChainConfig.byId(targetChainId));
       }
 
       final isNativeToken = _isNativeToken(token, targetChainId);
@@ -277,6 +279,9 @@ class IntentExecutor {
       final fromToken = (params['from_token'] ?? '').toUpperCase();
       final toToken = (params['to_token'] ?? '').toUpperCase();
       final amountStr = params['amount'] ?? '0';
+      final chainIdStr = params['chain_id'];
+      final slippageStr = params['slippage'];
+
       if (fromToken.isEmpty || toToken.isEmpty) {
         return ActionResult.fail(
           S.lang == Lang.zh ? '请指定兑换的代币' : 'Please specify swap tokens',
@@ -290,17 +295,163 @@ class IntentExecutor {
         );
       }
 
-      // Swap is not yet implemented on-chain — return informative message
-      return ActionResult.fail(
+      final address = await _wallet.getAddress();
+      if (address.isEmpty) return ActionResult.fail(S.noWallet);
+
+      final chainId = chainIdStr != null
+          ? (int.tryParse(chainIdStr) ?? _resolveChainId(fromToken))
+          : _resolveChainId(fromToken);
+      final slippage = slippageStr != null
+          ? (double.tryParse(slippageStr) ?? 0.5)
+          : 0.5;
+
+      // Switch chain RPC for balance pre-check
+      final chainSvc = _chain;
+      if (chainSvc is JsonRpcChainService) {
+        chainSvc.switchChain(ChainConfig.byId(chainId));
+      }
+
+      // Pre-check: verify sufficient balance for native token sells
+      if (_isNativeToken(fromToken, chainId)) {
+        final balance = await _chain.getEthBalance(address);
+        if (balance < amount) {
+          return ActionResult.fail(
+            S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
+          );
+        }
+      } else {
+        final config = ChainConfig.byId(chainId);
+        final tokenContract = config.tokenContract(fromToken);
+        if (tokenContract.isNotEmpty) {
+          final tokenBalance = await _chain.getTokenBalance(address, tokenContract);
+          if (tokenBalance < amount) {
+            return ActionResult.fail(
+              S.lang == Lang.zh ? '$fromToken 余额不足' : 'Insufficient $fromToken balance',
+            );
+          }
+        }
+      }
+
+      // Build swap transaction via backend (0x aggregator)
+      final buildResult = await SwapApi.buildSwapTx(
+        chainId: chainId,
+        sellToken: fromToken,
+        buyToken: toToken,
+        sellAmount: amountStr,
+        takerAddress: address,
+        slippage: slippage,
+      );
+
+      if (!buildResult.isSuccess || buildResult.data == null) {
+        return ActionResult.fail(
+          S.lang == Lang.zh
+              ? '获取兑换路由失败: ${buildResult.errorMessage ?? "未知错误"}'
+              : 'Failed to get swap route: ${buildResult.errorMessage ?? "unknown error"}',
+        );
+      }
+
+      final swapData = buildResult.data!;
+      final swapTo = swapData['to'] as String? ?? '';
+      final swapCalldata = swapData['data'] as String? ?? '';
+      final swapValue = swapData['value'] as String? ?? '0';
+      final gasEstimateStr = swapData['gas_estimate'] as String? ?? '200000';
+      final buyAmount = swapData['buy_amount'] as String? ?? '';
+
+      if (swapTo.isEmpty || swapCalldata.isEmpty) {
+        return ActionResult.fail(
+          S.lang == Lang.zh ? '兑换交易数据无效' : 'Invalid swap transaction data',
+        );
+      }
+
+      // Parse the value to send with the swap (for native token sells)
+      final swapValueBigInt = BigInt.tryParse(
+        swapValue.startsWith('0x')
+            ? swapValue.substring(2)
+            : swapValue,
+        radix: swapValue.startsWith('0x') ? 16 : 10,
+      ) ?? BigInt.zero;
+
+      final gasLimit = BigInt.tryParse(gasEstimateStr) ?? BigInt.from(200000);
+
+      // TODO: If selling ERC-20, may need approval tx first.
+      // The 0x API's allowance_target field tells us which contract needs approval.
+      // For now, the backend handles this check and returns an error if approval is needed.
+
+      // Sign and send the swap transaction
+      final txHash = await _tx.signAndSend(
+        to: swapTo,
+        value: swapValueBigInt,
+        data: swapCalldata,
+        gasLimit: gasLimit,
+        chainId: chainId,
+      );
+
+      // Record transaction locally
+      await _txHistory.add(TxRecord(
+        txHash: txHash,
+        toAddress: swapTo,
+        value: amount,
+        token: '$fromToken>$toToken',
+        timestamp: DateTime.now(),
+      ));
+
+      // Notification
+      Services.notifications.showTxConfirmed(txHash, amountStr, '$fromToken>$toToken');
+
+      final shortHash =
+          '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
+
+      // Format buy amount for display
+      final buyDisplayAmount = _formatBuyAmount(buyAmount, toToken);
+
+      return ActionResult.ok(
         S.lang == Lang.zh
-            ? 'DEX 兑换功能开发中，暂时请使用外部 DEX 完成 $fromToken → $toToken 兑换'
-            : 'DEX swap is under development. Please use an external DEX for $fromToken → $toToken swap.',
+            ? '兑换成功! $amountStr $fromToken → $buyDisplayAmount $toToken\n交易: $shortHash'
+            : 'Swap successful! $amountStr $fromToken → $buyDisplayAmount $toToken\nTx: $shortHash',
+        data: {
+          'txHash': txHash,
+          'fromToken': fromToken,
+          'toToken': toToken,
+          'sellAmount': amountStr,
+          'buyAmount': buyDisplayAmount,
+        },
       );
     } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('Biometric')) {
+        return ActionResult.fail(
+          S.lang == Lang.zh
+              ? '生物认证失败,兑换已取消'
+              : 'Biometric auth failed, swap cancelled',
+        );
+      }
+      if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {
+        return ActionResult.fail(
+          S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
+        );
+      }
+      if (msg.contains('allowance') || msg.contains('ALLOWANCE')) {
+        return ActionResult.fail(
+          S.lang == Lang.zh
+              ? '需要先授权代币额度，请稍后重试'
+              : 'Token approval required. Please try again shortly.',
+        );
+      }
       return ActionResult.fail(
-        S.lang == Lang.zh ? '兑换失败: $e' : 'Swap failed: $e',
+        S.lang == Lang.zh ? '兑换失败: $msg' : 'Swap failed: $msg',
       );
     }
+  }
+
+  /// Format raw buy amount from the DEX response into human-readable form.
+  String _formatBuyAmount(String rawAmount, String token) {
+    if (rawAmount.isEmpty) return '~';
+    // If it looks like a decimal already (from backend formatting), return as-is
+    if (rawAmount.contains('.')) return rawAmount;
+    // Otherwise parse as raw integer and format
+    final raw = BigInt.tryParse(rawAmount);
+    if (raw == null) return rawAmount;
+    return _formatWei(raw, token.isEmpty ? 'ETH' : token);
   }
 
   bool _isNativeToken(String token, int chainId) {
@@ -326,7 +477,7 @@ class IntentExecutor {
         return 56;
       case 'ETH':
       default:
-        return 8453;
+        return _chain.currentConfig.chainId;
     }
   }
 

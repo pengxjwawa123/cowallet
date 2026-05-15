@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
 };
@@ -15,6 +15,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/submit", post(submit))
+        .route("/status/:tx_hash", get(tx_status))
         .route("/summary", get(spending_summary))
         .route("/simulate", post(simulate))
         .route("/estimate-gas", post(estimate_gas))
@@ -51,7 +52,7 @@ async fn submit(
         .sub
         .parse()
         .map_err(|_| rpc_error("invalid user id in token"))?;
-    let chain_id = body.chain_id.unwrap_or(8453);
+    let chain_id = body.chain_id.ok_or_else(|| rpc_error("chain_id is required"))?;
 
     let rpc_url = state.rpc_for_chain(chain_id);
 
@@ -213,6 +214,101 @@ async fn submit(
     Ok(Json(SubmitResponse { tx_hash }))
 }
 
+// ─── Transaction Status Endpoint ────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct TxStatusResponse {
+    tx_hash: String,
+    status: String,
+    block_number: Option<i64>,
+    gas_used: Option<i64>,
+    confirmations: Option<i64>,
+    confirmed_at: Option<String>,
+}
+
+/// GET /status/:tx_hash
+///
+/// Returns the current confirmation status of a transaction.
+async fn tx_status(
+    State(state): State<AppState>,
+    _claims: axum::Extension<Claims>,
+    Path(tx_hash): Path<String>,
+) -> Result<Json<TxStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state.require_db().map_err(|_| db_unavailable())?;
+
+    let hash_str = tx_hash.strip_prefix("0x").unwrap_or(&tx_hash);
+    let hash_bytes = hex::decode(hash_str)
+        .map_err(|_| rpc_error("invalid tx_hash hex"))?;
+
+    let row: Option<(String, Option<i64>, Option<i64>, Option<chrono::DateTime<chrono::Utc>>, i64)> =
+        sqlx::query_as(
+            "SELECT status, block_number, gas_used, confirmed_at, chain_id
+             FROM transactions
+             WHERE tx_hash = $1"
+        )
+        .bind(&hash_bytes)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| db_error(&e.to_string()))?;
+
+    let (status, block_number, gas_used, confirmed_at, chain_id) = row
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "transaction not found".into() })))?;
+
+    // Calculate confirmations if confirmed
+    let confirmations = if let Some(block_num) = block_number {
+        // Get current block number from chain
+        let rpc_url = state.rpc_for_chain(chain_id as u64);
+        match get_current_block(&state.http, rpc_url).await {
+            Ok(current_block) => Some(current_block - block_num),
+            Err(_) => Some(0),
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(TxStatusResponse {
+        tx_hash: format!("0x{}", hex::encode(&hash_bytes)),
+        status,
+        block_number,
+        gas_used,
+        confirmations,
+        confirmed_at: confirmed_at.map(|t| t.to_rfc3339()),
+    }))
+}
+
+/// Helper to get the current block number from an RPC endpoint.
+async fn get_current_block(http: &reqwest::Client, rpc_url: &str) -> Result<i64, String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_blockNumber",
+        "params": [],
+        "id": 1
+    });
+
+    let resp = http
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("RPC request failed: {}", e))?;
+
+    let rpc_resp: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid RPC response: {}", e))?;
+
+    let block_hex = rpc_resp
+        .get("result")
+        .and_then(|r| r.as_str())
+        .unwrap_or("0x0");
+
+    i64::from_str_radix(
+        block_hex.strip_prefix("0x").unwrap_or(block_hex),
+        16,
+    )
+    .map_err(|e| format!("Invalid block number: {}", e))
+}
+
 #[derive(Deserialize)]
 struct SummaryQuery {
     days: Option<i64>,
@@ -306,7 +402,7 @@ async fn simulate(
     State(state): State<AppState>,
     Json(body): Json<SimulateRequest>,
 ) -> Result<Json<SimulateResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let chain_id = body.chain_id.unwrap_or(8453);
+    let chain_id = body.chain_id.ok_or_else(|| rpc_error("chain_id is required"))?;
     let rpc_url = state.rpc_for_chain(chain_id);
 
     let mut call_obj = serde_json::json!({
@@ -394,7 +490,7 @@ async fn estimate_gas(
     State(state): State<AppState>,
     Json(body): Json<EstimateGasRequest>,
 ) -> Result<Json<EstimateGasResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let chain_id = body.chain_id.unwrap_or(8453);
+    let chain_id = body.chain_id.ok_or_else(|| rpc_error("chain_id is required"))?;
     let rpc_url = state.rpc_for_chain(chain_id);
 
     // Build the transaction object for eth_estimateGas
@@ -536,7 +632,7 @@ async fn submit_userop(
         .parse()
         .map_err(|_| rpc_error("invalid user id in token"))?;
 
-    let chain_id = body.chain_id.unwrap_or(8453);
+    let chain_id = body.chain_id.ok_or_else(|| rpc_error("chain_id is required"))?;
 
     // Parse sender address
     let sender_str = body.sender.strip_prefix("0x").unwrap_or(&body.sender);
@@ -638,7 +734,7 @@ async fn submit_signed_userop(
     _claims: axum::Extension<Claims>,
     Json(body): Json<SubmitSignedUserOpRequest>,
 ) -> Result<Json<SubmitSignedUserOpResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let _chain_id = body.chain_id.unwrap_or(8453);
+    let _chain_id = body.chain_id.ok_or_else(|| rpc_error("chain_id is required"))?;
 
     // Parse the UserOperation from the JSON value
     let op = &body.user_op;

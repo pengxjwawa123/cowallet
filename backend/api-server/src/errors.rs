@@ -67,7 +67,7 @@ pub enum ErrorCode {
 pub struct ErrorResponse {
     /// Machine-readable error code
     pub code: ErrorCode,
-    /// Numeric error code (for backwards compatibility)
+    /// HTTP status code
     pub status: u16,
     /// Human-readable error message
     pub message: String,
@@ -219,6 +219,28 @@ impl ApiError {
         Self {
             code: ErrorCode::RpcError,
             status: StatusCode::BAD_GATEWAY,
+            message: message.into(),
+            details: None,
+            source: None,
+            request_id: None,
+        }
+    }
+
+    pub fn external_service(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::ExternalApiFailed,
+            status: StatusCode::BAD_GATEWAY,
+            message: message.into(),
+            details: None,
+            source: None,
+            request_id: None,
+        }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::ValidationFailed,
+            status: StatusCode::BAD_REQUEST,
             message: message.into(),
             details: None,
             source: None,

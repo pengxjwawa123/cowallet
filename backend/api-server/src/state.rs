@@ -11,6 +11,7 @@ use crate::routes::yield_::YieldCache;
 use crate::services::claude::AiClient;
 use crate::services::mpc_participant::MpcParticipant;
 use crate::services::presign_manager::PresignManager;
+use crate::services::tx_tracker::TxTracker;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -30,8 +31,10 @@ pub struct AppState {
     pub mpc_participant: Option<Arc<MpcParticipant>>,
     pub presign_manager: Option<Arc<PresignManager>>,
     pub covalent_api_key: Option<String>,
+    pub zerox_api_key: Option<String>,
     pub bundler_url: Option<String>,
     pub paymaster_url: Option<String>,
+    pub tx_tracker: Option<Arc<TxTracker>>,
 }
 
 impl AppState {
@@ -133,6 +136,15 @@ impl AppState {
             tracing::warn!("COVALENT_API_KEY not set — balance and tx-history endpoints will return 503");
         }
 
+        let zerox_api_key = std::env::var("ZEROX_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
+        if zerox_api_key.is_some() {
+            tracing::info!("0x API key configured for DEX swaps");
+        } else {
+            tracing::info!("ZEROX_API_KEY not set — swap quotes will use free tier (rate limited)");
+        }
+
         let bundler_url = std::env::var("BUNDLER_URL")
             .ok()
             .filter(|s| !s.is_empty());
@@ -149,13 +161,24 @@ impl AppState {
             tracing::info!("Paymaster configured at {}", url);
         }
 
+        // Initialize transaction confirmation tracker
+        let http_client = Self::create_http_client();
+        let tx_tracker = Arc::new(TxTracker::new(
+            db.clone(),
+            http_client.clone(),
+            rpc_urls.clone(),
+            rpc_url.clone(),
+        ));
+        tx_tracker.spawn_background_task();
+        tracing::info!("Transaction confirmation tracker started");
+
         Ok(Self {
             db: Some(db.clone()),
             rpc_url,
             rpc_urls,
             price_cache: PriceCache::new(),
             yield_cache: YieldCache::new(),
-            http: Self::create_http_client(),
+            http: http_client,
             claude,
             nats,
             rate_limiter: AnyRateLimiter::from_env().unwrap_or_else(|_| AnyRateLimiter::in_memory()),
@@ -166,8 +189,10 @@ impl AppState {
             mpc_participant: Some(participant),
             presign_manager: Some(presign_manager),
             covalent_api_key,
+            zerox_api_key,
             bundler_url,
             paymaster_url,
+            tx_tracker: Some(tx_tracker),
         })
     }
 

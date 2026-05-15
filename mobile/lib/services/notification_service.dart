@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../l10n/strings.dart';
 
 /// Local push notification service for transaction events and security alerts.
 ///
@@ -77,8 +78,8 @@ class NotificationService {
 
     await _plugin.show(
       txHash.hashCode,
-      'Transfer Confirmed',
-      '$amount $token sent successfully ($shortHash)',
+      S.notifTxConfirmedTitle,
+      S.notifTxConfirmedBody(amount, token, shortHash),
       NotificationDetails(
         android: AndroidNotificationDetails(
           _txChannel.id,
@@ -107,8 +108,8 @@ class NotificationService {
 
     await _plugin.show(
       txHash.hashCode + 1,
-      'Transfer Failed',
-      'Transaction $shortHash failed: $reason',
+      S.notifTxFailedTitle,
+      S.notifTxFailedBody(shortHash, reason),
       NotificationDetails(
         android: AndroidNotificationDetails(
           _txChannel.id,

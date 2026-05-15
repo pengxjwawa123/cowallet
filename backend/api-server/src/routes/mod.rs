@@ -7,6 +7,7 @@ pub mod mpc_ws;
 pub mod policy;
 pub mod price;
 pub mod push;
+pub mod swap;
 pub mod tx;
 pub mod tx_history;
 pub mod wallets;

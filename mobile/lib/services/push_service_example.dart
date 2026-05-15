@@ -1,59 +1,65 @@
-/// Example usage of PushService in the app
+/// Example usage of PushService in the app.
 ///
-/// This file demonstrates how to initialize and use the push notification service
-/// for handling MPC signing requests.
+/// PushService is automatically initialized via `Services.init()` in the
+/// service locator. No manual initialization is needed.
+///
+/// ## How it works
+///
+/// 1. On app start, `Services.push.init()` initializes Firebase, requests
+///    permissions, obtains the FCM token, and registers it with the backend.
+///
+/// 2. When a push notification arrives:
+///    - **Foreground**: a local notification is shown using the appropriate
+///      channel (transactions, security, MPC signing).
+///    - **Background/Terminated**: FCM shows the notification automatically.
+///      When tapped, the app navigates to the relevant screen.
+///
+/// 3. After login/token refresh, call `Services.push.reregisterToken()` to
+///    ensure the backend has the current FCM token associated with the
+///    authenticated user.
+///
+/// ## Listening for push messages in-app
+///
+/// ```dart
+/// Services.push.onMessage.listen((data) {
+///   final type = data['type'];
+///   if (type == PushType.txConfirmed) {
+///     // Refresh balance, show success indicator, etc.
+///   }
+/// });
+/// ```
+///
+/// ## Backend push payload format
+///
+/// The backend sends data-only messages with these fields:
+///
+/// ```json
+/// {
+///   "type": "tx_confirmed",      // or tx_failed, security_alert, mpc_sign_request
+///   "tx_hash": "0xabc...",
+///   "amount": "0.1",
+///   "token": "ETH",
+///   "chain_id": "8453"
+/// }
+/// ```
+///
+/// For security alerts:
+/// ```json
+/// {
+///   "type": "security_alert",
+///   "title": "Suspicious Activity",
+///   "message": "Unusual login attempt detected"
+/// }
+/// ```
+///
+/// For MPC signing requests:
+/// ```json
+/// {
+///   "type": "mpc_sign_request",
+///   "session_id": "abc-123",
+///   "amount": "0.5 ETH",
+///   "to": "0x742d..."
+/// }
+/// ```
 
-import 'package:flutter/material.dart';
-import 'push_service.dart';
-
-class PushServiceExample {
-  /// Initialize push service on app startup (call from main.dart or app initialization)
-  static Future<void> initializePushNotifications({
-    required String apiBaseUrl,
-    required String authToken,
-    String? deviceId,
-  }) async {
-    final pushService = PushService();
-
-    // Initialize with backend URL and auth token
-    await pushService.initialize(
-      apiBaseUrl: apiBaseUrl,
-      authToken: authToken,
-      deviceId: deviceId ?? 'default_device',
-    );
-
-    // Listen for push messages (MPC signing requests)
-    pushService.onMessage.listen((data) {
-      final type = data['type'] as String?;
-      if (type == 'mpc_sign_request') {
-        // Navigate to signing approval screen
-        final sessionId = data['session_id'] as String?;
-        final amount = data['amount'] as String?;
-        final toAddress = data['to'] as String?;
-
-        print('[Push] MPC signing request: session=$sessionId, amount=$amount, to=$toAddress');
-
-        // TODO: Navigate to approval screen
-        // Example: Navigator.of(context).pushNamed('/mpc-approval', arguments: data);
-      }
-    });
-  }
-
-  /// Example: Send push notification from backend when starting MPC session
-  ///
-  /// Call this from the backend when a new MPC signing session is created.
-  ///
-  /// ```rust
-  /// use crate::routes::push::send_mpc_signing_notification;
-  ///
-  /// // In your MPC session creation endpoint:
-  /// let _ = send_mpc_signing_notification(
-  ///     db,
-  ///     &http_client,
-  ///     user_id,
-  ///     &session_id,
-  ///     "0.1 ETH",
-  ///     "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-  /// ).await;
-  /// ```
-}
+library;

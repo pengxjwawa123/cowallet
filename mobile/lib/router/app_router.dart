@@ -9,6 +9,8 @@ import '../views/send/send_view.dart';
 import '../views/receive/receive_view.dart';
 import '../views/scan/scan_view.dart';
 import '../views/contacts/contacts_view.dart';
+import '../views/recovery/recovery_view.dart';
+import '../views/wallet/tx_history_view.dart';
 import '../onboarding/onboarding_flow.dart';
 import '../theme/colors.dart';
 import '../l10n/strings.dart';
@@ -16,16 +18,20 @@ import '../l10n/strings.dart';
 class AppRouter {
   static const home = '/';
   static const onboarding = '/onboarding';
+  static const recovery = '/recovery';
   static const keys = '/keys';
   static const send = '/send';
   static const receive = '/receive';
   static const scan = '/scan';
   static const contacts = '/contacts';
+  static const txHistory = '/tx-history';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
       case onboarding:
         return MaterialPageRoute(builder: (_) => const OnboardingFlow());
+      case recovery:
+        return MaterialPageRoute(builder: (_) => const RecoveryView());
       case keys:
         return MaterialPageRoute(builder: (_) => const KeysView());
       case send:
@@ -36,6 +42,8 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const ScanView());
       case contacts:
         return MaterialPageRoute(builder: (_) => const ContactsView());
+      case txHistory:
+        return MaterialPageRoute(builder: (_) => const TxHistoryView());
       default:
         return MaterialPageRoute(builder: (_) => const AppShell());
     }

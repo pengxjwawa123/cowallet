@@ -597,3 +597,108 @@ class FfiWalletInfo {
           address == other.address &&
           publicKey == other.publicKey;
 }
+
+// ---------------------------------------------------------------------------
+// Noise_XX Transport Encryption
+// ---------------------------------------------------------------------------
+
+class FfiNoiseKeypair {
+  /// X25519 private key (32 bytes)
+  final Uint8List privateKey;
+
+  /// X25519 public key (32 bytes)
+  final Uint8List publicKey;
+
+  const FfiNoiseKeypair({required this.privateKey, required this.publicKey});
+
+  @override
+  int get hashCode => privateKey.hashCode ^ publicKey.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FfiNoiseKeypair &&
+          runtimeType == other.runtimeType &&
+          privateKey == other.privateKey &&
+          publicKey == other.publicKey;
+}
+
+class FfiNoiseHandshakeResult {
+  /// Base64-encoded handshake message to send to the peer
+  final String messageBase64;
+
+  /// Whether the handshake is now complete (transport ready)
+  final bool isReady;
+
+  const FfiNoiseHandshakeResult({
+    required this.messageBase64,
+    required this.isReady,
+  });
+
+  @override
+  int get hashCode => messageBase64.hashCode ^ isReady.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FfiNoiseHandshakeResult &&
+          runtimeType == other.runtimeType &&
+          messageBase64 == other.messageBase64 &&
+          isReady == other.isReady;
+}
+
+/// Generate a new X25519 static keypair for Noise_XX.
+/// The private key should be stored in secure storage (Keychain/Keystore).
+Future<FfiNoiseKeypair> noiseGenerateKeypair() =>
+    RustLib.instance.api.crateApiNoiseGenerateKeypair();
+
+/// Create a Noise_XX initiator session (device side) and generate the first handshake message.
+/// `staticPrivateKey` is the device's persistent X25519 private key (32 bytes).
+/// Returns a session ID and the first handshake message (base64-encoded).
+Future<FfiNoiseHandshakeResult> noiseInitiatorStart({
+  required Uint8List staticPrivateKey,
+}) => RustLib.instance.api.crateApiNoiseInitiatorStart(
+  staticPrivateKey: staticPrivateKey,
+);
+
+/// Process a handshake message from the server and generate the next message.
+/// For the initiator, this is called once with the server's response (step 2),
+/// producing the final handshake message (step 3). After this call, `is_ready` is true.
+Future<FfiNoiseHandshakeResult> noiseInitiatorFinish({
+  required String sessionId,
+  required String serverMessageBase64,
+}) => RustLib.instance.api.crateApiNoiseInitiatorFinish(
+  sessionId: sessionId,
+  serverMessageBase64: serverMessageBase64,
+);
+
+/// Encrypt a plaintext message using the established Noise session.
+/// Returns base64-encoded ciphertext.
+/// Only valid after the handshake is complete (`isReady` was true).
+Future<String> noiseEncrypt({
+  required String sessionId,
+  required Uint8List plaintext,
+}) => RustLib.instance.api.crateApiNoiseEncrypt(
+  sessionId: sessionId,
+  plaintext: plaintext,
+);
+
+/// Decrypt a ciphertext message using the established Noise session.
+/// `ciphertextBase64` is the base64-encoded ciphertext from the server.
+/// Returns the decrypted plaintext bytes.
+Future<Uint8List> noiseDecrypt({
+  required String sessionId,
+  required String ciphertextBase64,
+}) => RustLib.instance.api.crateApiNoiseDecrypt(
+  sessionId: sessionId,
+  ciphertextBase64: ciphertextBase64,
+);
+
+/// Get the remote peer's static public key (after handshake completes).
+/// Returns the 32-byte X25519 public key, or an error if not available.
+Future<Uint8List> noiseGetRemotePublicKey({required String sessionId}) =>
+    RustLib.instance.api.crateApiNoiseGetRemotePublicKey(sessionId: sessionId);
+
+/// Destroy a Noise session and free its resources.
+Future<void> noiseSessionDestroy({required String sessionId}) =>
+    RustLib.instance.api.crateApiNoiseSessionDestroy(sessionId: sessionId);

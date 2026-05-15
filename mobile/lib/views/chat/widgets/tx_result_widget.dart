@@ -1,13 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../services/tx_tracker_service.dart';
 import '../../../theme/colors.dart';
 import '../../../widgets/top_toast.dart';
 
-class ChatTxResultWidget extends StatelessWidget {
+class ChatTxResultWidget extends StatefulWidget {
   final String txHash;
   final bool success;
   final String? amount;
   final String? token;
+  final TxTrackerService? tracker;
 
   const ChatTxResultWidget({
     super.key,
@@ -15,26 +19,77 @@ class ChatTxResultWidget extends StatelessWidget {
     this.success = true,
     this.amount,
     this.token,
+    this.tracker,
   });
 
   @override
+  State<ChatTxResultWidget> createState() => _ChatTxResultWidgetState();
+}
+
+class _ChatTxResultWidgetState extends State<ChatTxResultWidget> {
+  TxStatus _status = TxStatus.broadcast;
+  int? _confirmations;
+  StreamSubscription<TxStatusInfo>? _subscription;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.success && widget.tracker != null) {
+      _subscription = widget.tracker!.track(widget.txHash).listen((info) {
+        if (mounted) {
+          setState(() {
+            _status = info.status;
+            _confirmations = info.confirmations;
+          });
+        }
+      });
+    } else if (!widget.success) {
+      _status = TxStatus.failed;
+    }
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final shortHash = txHash.length >= 16
-        ? '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}'
-        : txHash;
+    final shortHash = widget.txHash.length >= 16
+        ? '${widget.txHash.substring(0, 10)}...${widget.txHash.substring(widget.txHash.length - 6)}'
+        : widget.txHash;
+
+    final isConfirmed = _status == TxStatus.confirmed;
+    final isFailed = _status == TxStatus.failed;
+    final isPending = _status == TxStatus.pending || _status == TxStatus.broadcast;
+
+    final Color statusColor;
+    final IconData statusIcon;
+    final String statusText;
+
+    if (isConfirmed) {
+      statusColor = CwColors.success;
+      statusIcon = Icons.check_circle;
+      statusText = _confirmations != null ? '已确认 ($_confirmations blocks)' : '已确认';
+    } else if (isFailed) {
+      statusColor = CwColors.danger;
+      statusIcon = Icons.error;
+      statusText = '交易失败';
+    } else {
+      statusColor = CwColors.ink3;
+      statusIcon = Icons.schedule;
+      statusText = '确认中...';
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: success
-            ? CwColors.success.withValues(alpha: 0.06)
-            : CwColors.danger.withValues(alpha: 0.06),
+        color: statusColor.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: success
-              ? CwColors.success.withValues(alpha: 0.3)
-              : CwColors.danger.withValues(alpha: 0.3),
+          color: statusColor.withValues(alpha: 0.3),
         ),
       ),
       child: Column(
@@ -42,26 +97,32 @@ class ChatTxResultWidget extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(
-                success ? Icons.check_circle : Icons.error,
-                size: 18,
-                color: success ? CwColors.success : CwColors.danger,
-              ),
+              if (isPending)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                  ),
+                )
+              else
+                Icon(statusIcon, size: 18, color: statusColor),
               const SizedBox(width: 8),
               Text(
-                success ? '交易已广播' : '交易失败',
+                statusText,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: success ? CwColors.success : CwColors.danger,
+                  color: statusColor,
                 ),
               ),
             ],
           ),
-          if (amount != null && token != null) ...[
+          if (widget.amount != null && widget.token != null) ...[
             const SizedBox(height: 8),
             Text(
-              '$amount $token',
+              '${widget.amount} ${widget.token}',
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
@@ -72,7 +133,7 @@ class ChatTxResultWidget extends StatelessWidget {
           const SizedBox(height: 8),
           GestureDetector(
             onTap: () {
-              Clipboard.setData(ClipboardData(text: txHash));
+              Clipboard.setData(ClipboardData(text: widget.txHash));
               showTopToast(context, '交易哈希已复制');
             },
             child: Row(

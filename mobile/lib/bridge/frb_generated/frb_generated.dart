@@ -218,6 +218,33 @@ abstract class RustLibApi extends BaseApi {
     required List<int> deviceShardBytes,
     required List<int> expectedPublicKey,
   });
+
+  Future<FfiNoiseKeypair> crateApiNoiseGenerateKeypair();
+
+  Future<FfiNoiseHandshakeResult> crateApiNoiseInitiatorStart({
+    required Uint8List staticPrivateKey,
+  });
+
+  Future<FfiNoiseHandshakeResult> crateApiNoiseInitiatorFinish({
+    required String sessionId,
+    required String serverMessageBase64,
+  });
+
+  Future<String> crateApiNoiseEncrypt({
+    required String sessionId,
+    required Uint8List plaintext,
+  });
+
+  Future<Uint8List> crateApiNoiseDecrypt({
+    required String sessionId,
+    required String ciphertextBase64,
+  });
+
+  Future<Uint8List> crateApiNoiseGetRemotePublicKey({
+    required String sessionId,
+  });
+
+  Future<void> crateApiNoiseSessionDestroy({required String sessionId});
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -1361,6 +1388,233 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     argNames: ["backupBytes", "deviceShardBytes", "expectedPublicKey"],
   );
 
+  @override
+  Future<FfiNoiseKeypair> crateApiNoiseGenerateKeypair() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 36,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_ffi_noise_keypair,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiNoiseGenerateKeypairConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseGenerateKeypairConstMeta =>
+      const TaskConstMeta(debugName: "noise_generate_keypair", argNames: []);
+
+  @override
+  Future<FfiNoiseHandshakeResult> crateApiNoiseInitiatorStart({
+    required Uint8List staticPrivateKey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_strict(staticPrivateKey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 37,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_ffi_noise_handshake_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiNoiseInitiatorStartConstMeta,
+        argValues: [staticPrivateKey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseInitiatorStartConstMeta =>
+      const TaskConstMeta(
+        debugName: "noise_initiator_start",
+        argNames: ["staticPrivateKey"],
+      );
+
+  @override
+  Future<FfiNoiseHandshakeResult> crateApiNoiseInitiatorFinish({
+    required String sessionId,
+    required String serverMessageBase64,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sessionId, serializer);
+          sse_encode_String(serverMessageBase64, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 38,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_ffi_noise_handshake_result,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiNoiseInitiatorFinishConstMeta,
+        argValues: [sessionId, serverMessageBase64],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseInitiatorFinishConstMeta =>
+      const TaskConstMeta(
+        debugName: "noise_initiator_finish",
+        argNames: ["sessionId", "serverMessageBase64"],
+      );
+
+  @override
+  Future<String> crateApiNoiseEncrypt({
+    required String sessionId,
+    required Uint8List plaintext,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sessionId, serializer);
+          sse_encode_list_prim_u_8_strict(plaintext, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 39,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiNoiseEncryptConstMeta,
+        argValues: [sessionId, plaintext],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseEncryptConstMeta => const TaskConstMeta(
+    debugName: "noise_encrypt",
+    argNames: ["sessionId", "plaintext"],
+  );
+
+  @override
+  Future<Uint8List> crateApiNoiseDecrypt({
+    required String sessionId,
+    required String ciphertextBase64,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sessionId, serializer);
+          sse_encode_String(ciphertextBase64, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 40,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiNoiseDecryptConstMeta,
+        argValues: [sessionId, ciphertextBase64],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseDecryptConstMeta => const TaskConstMeta(
+    debugName: "noise_decrypt",
+    argNames: ["sessionId", "ciphertextBase64"],
+  );
+
+  @override
+  Future<Uint8List> crateApiNoiseGetRemotePublicKey({
+    required String sessionId,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sessionId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 41,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiNoiseGetRemotePublicKeyConstMeta,
+        argValues: [sessionId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseGetRemotePublicKeyConstMeta =>
+      const TaskConstMeta(
+        debugName: "noise_get_remote_public_key",
+        argNames: ["sessionId"],
+      );
+
+  @override
+  Future<void> crateApiNoiseSessionDestroy({required String sessionId}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sessionId, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 42,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiNoiseSessionDestroyConstMeta,
+        argValues: [sessionId],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiNoiseSessionDestroyConstMeta =>
+      const TaskConstMeta(
+        debugName: "noise_session_destroy",
+        argNames: ["sessionId"],
+      );
+
   @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -1656,6 +1910,27 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       hasServerShard: var_hasServerShard,
       hasBackupShard: var_hasBackupShard,
       address: var_address,
+    );
+  }
+
+  @protected
+  FfiNoiseKeypair sse_decode_ffi_noise_keypair(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_privateKey = sse_decode_list_prim_u_8_strict(deserializer);
+    var var_publicKey = sse_decode_list_prim_u_8_strict(deserializer);
+    return FfiNoiseKeypair(privateKey: var_privateKey, publicKey: var_publicKey);
+  }
+
+  @protected
+  FfiNoiseHandshakeResult sse_decode_ffi_noise_handshake_result(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_messageBase64 = sse_decode_String(deserializer);
+    var var_isReady = sse_decode_bool(deserializer);
+    return FfiNoiseHandshakeResult(
+      messageBase64: var_messageBase64,
+      isReady: var_isReady,
     );
   }
 

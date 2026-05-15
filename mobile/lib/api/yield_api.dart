@@ -83,7 +83,7 @@ class YieldOpportunity {
       id: json['id'] ?? '',
       protocolId: json['protocol_id'] ?? '',
       protocolName: json['protocol_name'] ?? '',
-      chainId: json['chain_id'] ?? 8453,
+      chainId: json['chain_id'] as int? ?? 0,
       opportunityType: json['opportunity_type'] ?? 'farm',
       tokenA: json['token_a'] != null ? TokenInfo.fromJson(json['token_a']) : null,
       tokenB: json['token_b'] != null ? TokenInfo.fromJson(json['token_b']) : null,
@@ -203,7 +203,7 @@ class ProtocolInfo {
     return ProtocolInfo(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
-      chainId: json['chain_id'] ?? 8453,
+      chainId: json['chain_id'] as int? ?? 0,
       protocolType: json['protocol_type'] ?? '',
       tvlUsd: (json['tvl_usd'] ?? 0).toDouble(),
       apyRange: (json['apy_range'] as List<dynamic>?)

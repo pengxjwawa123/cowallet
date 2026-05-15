@@ -1,7 +1,7 @@
 use mpc_core::dkls23::{
     SessionConfig,
     dkg::DkgSession,
-    presign::{PresignSession, PresignatureStore},
+    presign::{PresignSession, PresignatureStore, decode_presign_data},
     sign::SignSession,
 };
 use sha3::Digest;
@@ -17,7 +17,6 @@ fn make_config(party: u16) -> SessionConfig {
 
 #[test]
 fn test_full_pipeline_dkg_presign_sign_verify() {
-    // Phase 1: DKG — generate key shares for 3 parties
     let mut dkg = DkgSession::new(make_config(0));
     let shares = dkg.run_local().unwrap();
     assert_eq!(shares.len(), 3);
@@ -27,36 +26,56 @@ fn test_full_pipeline_dkg_presign_sign_verify() {
         assert_eq!(s.public_key, public_key);
     }
 
-    // Phase 2: Presign — parties 0 and 1 create a presignature
-    let mut presign = PresignSession::new_local(
-        make_config(0),
-        vec![0, 1],
-        vec![shares[0].clone(), shares[1].clone()],
-    );
-    let presig = presign.run_local().unwrap();
+    // Presign between party 0 and party 1
+    let mut ps0 = PresignSession::new(make_config(0));
+    let mut ps1 = PresignSession::new(make_config(1));
+
+    let msgs0 = ps0.generate_round1().unwrap();
+    let msgs1 = ps1.generate_round1().unwrap();
+    ps0.process_round1(msgs1).unwrap();
+    ps1.process_round1(msgs0).unwrap();
+
+    let presig0 = ps0.finalize().unwrap();
+    let presig1 = ps1.finalize().unwrap();
 
     let mut store = PresignatureStore::new();
-    store.add(presig);
+    store.add(presig0.clone());
     assert_eq!(store.count(), 1);
 
-    // Phase 3: Sign — consume presignature, sign a message
+    // Sign using presign data
     let msg_hash: [u8; 32] = sha3::Keccak256::digest(b"send 0.1 ETH to alice.eth").into();
 
-    let _presig = store.take().unwrap();
+    let _taken = store.take().unwrap();
     assert!(store.is_empty());
 
-    let mut sign_session = SignSession::new_local(
-        make_config(0),
-        vec![0, 1],
-        vec![shares[0].clone(), shares[1].clone()],
-        msg_hash,
-    );
-    let sig = sign_session.sign_local().unwrap();
+    let data0 = decode_presign_data(&presig0).unwrap();
+    let data1 = decode_presign_data(&presig1).unwrap();
 
-    // Phase 4: Verify
+    let mut sign0 = SignSession::new_distributed(make_config(0), shares[0].clone(), msg_hash);
+    let mut sign1 = SignSession::new_distributed(make_config(1), shares[1].clone(), msg_hash);
+
+    let r1_msg0 = sign0.generate_round1_with_presign(&data0.k_i, &data0.r_i).unwrap();
+    let r1_msg1 = sign1.generate_round1_with_presign(&data1.k_i, &data1.r_i).unwrap();
+
+    sign0.process_round1(vec![r1_msg1]).unwrap();
+    sign1.process_round1(vec![r1_msg0]).unwrap();
+
+    let r2_msg0 = sign0.generate_round2().unwrap();
+    let _sig_server = sign1.process_round2(vec![r2_msg0]).unwrap();
+
+    let payload = sign1.get_server_response()
+        .expect("server should produce ServerSignature");
+    let server_response = mpc_core::dkls23::ProtocolMessage {
+        session_id: "integration-test".into(),
+        from: 1,
+        to: 0,
+        round: 2,
+        payload,
+    };
+
+    let sig = sign0.process_round2(vec![server_response]).unwrap();
     assert!(sig.verify(&msg_hash, &public_key).unwrap());
 
-    // Verify signature encoding roundtrip
     let bytes = sig.to_bytes();
     assert_eq!(bytes.len(), 65);
     assert!(bytes[64] == 27 || bytes[64] == 28);
@@ -68,17 +87,16 @@ fn test_all_party_combinations_produce_valid_signatures() {
     let shares = dkg.run_local().unwrap();
     let public_key = shares[0].public_key.clone();
 
-    let combos: [(Vec<u16>, usize, usize); 3] =
-        [(vec![0, 1], 0, 1), (vec![0, 2], 0, 2), (vec![1, 2], 1, 2)];
+    let combos: [(u16, u16); 3] = [(0, 1), (0, 2), (1, 2)];
 
-    for (indices, a, b) in &combos {
+    for (a, b) in &combos {
         let msg_hash: [u8; 32] =
             sha3::Keccak256::digest(format!("msg for combo {a}-{b}").as_bytes()).into();
 
         let mut sign_session = SignSession::new_local(
             make_config(0),
-            indices.clone(),
-            vec![shares[*a].clone(), shares[*b].clone()],
+            vec![*a, *b],
+            vec![shares[*a as usize].clone(), shares[*b as usize].clone()],
             msg_hash,
         );
         let sig = sign_session.sign_local().unwrap();
@@ -126,7 +144,6 @@ fn test_different_messages_produce_different_signatures() {
 
     assert_ne!(sig_a.to_bytes(), sig_b.to_bytes());
 
-    // But both verify against their respective hashes
     assert!(sig_a.verify(&hash_a, &shares[0].public_key).unwrap());
     assert!(sig_b.verify(&hash_b, &shares[0].public_key).unwrap());
 
@@ -136,32 +153,22 @@ fn test_different_messages_produce_different_signatures() {
 
 #[test]
 fn test_presignature_pool_multiple() {
-    let mut dkg = DkgSession::new(make_config(0));
-    let shares = dkg.run_local().unwrap();
-
     let mut store = PresignatureStore::new();
 
-    // Generate 5 presignatures from different party combinations
-    for i in 0..5 {
-        let (indices, a, b) = if i % 3 == 0 {
-            (vec![0u16, 1], 0, 1)
-        } else if i % 3 == 1 {
-            (vec![0, 2], 0, 2)
-        } else {
-            (vec![1, 2], 1, 2)
-        };
+    for _ in 0..5 {
+        let mut ps0 = PresignSession::new(make_config(0));
+        let mut ps1 = PresignSession::new(make_config(1));
 
-        let mut presign = PresignSession::new_local(
-            make_config(0),
-            indices,
-            vec![shares[a].clone(), shares[b].clone()],
-        );
-        store.add(presign.run_local().unwrap());
+        let msgs0 = ps0.generate_round1().unwrap();
+        let msgs1 = ps1.generate_round1().unwrap();
+        ps0.process_round1(msgs1).unwrap();
+        ps1.process_round1(msgs0).unwrap();
+
+        store.add(ps0.finalize().unwrap());
     }
 
     assert_eq!(store.count(), 5);
 
-    // All presignatures have unique IDs
     let mut ids = Vec::new();
     while let Some(p) = store.take() {
         assert!(!ids.contains(&p.id));

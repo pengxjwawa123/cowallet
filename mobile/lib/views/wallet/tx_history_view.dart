@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../theme/colors.dart';
+import '../../l10n/strings.dart';
 import '../../api/tx_api.dart';
 import '../../services/locator.dart';
 import '../../main.dart';
@@ -311,15 +312,10 @@ class _TxHistoryViewState extends State<TxHistoryView> {
             const Icon(Icons.receipt_long, size: 64, color: CwColors.ink3),
             const SizedBox(height: 16),
             Text(
-              'No transactions yet',
+              S.noTxYet,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: CwColors.ink2,
                   ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Your transaction history will appear here',
-              style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
         ),
@@ -581,16 +577,16 @@ class _StatusBadge extends StatelessWidget {
     switch (status.toLowerCase()) {
       case 'confirmed':
         color = CwColors.success;
-        label = 'Confirmed';
+        label = S.txConfirmed;
         break;
       case 'pending':
       case 'broadcast':
         color = CwColors.warn;
-        label = 'Pending';
+        label = S.txPending;
         break;
       case 'failed':
         color = CwColors.danger;
-        label = 'Failed';
+        label = S.txFailedStatus;
         break;
       default:
         color = CwColors.ink3;

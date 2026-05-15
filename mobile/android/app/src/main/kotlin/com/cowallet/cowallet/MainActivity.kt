@@ -6,6 +6,7 @@ import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import com.cowallet.mpc.MpcStrongBoxHandler
 import com.cowallet.mpc.MpcKeystoreHandler
+import com.cowallet.mpc.CloudBackupHandler
 
 class MainActivity : FlutterFragmentActivity() {
   @RequiresApi(Build.VERSION_CODES.M)
@@ -14,5 +15,6 @@ class MainActivity : FlutterFragmentActivity() {
 
     MpcStrongBoxHandler.setup(flutterEngine, this)
     MpcKeystoreHandler.setup(flutterEngine, this)
+    CloudBackupHandler.setup(flutterEngine, this)
   }
 }

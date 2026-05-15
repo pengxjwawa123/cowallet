@@ -111,6 +111,26 @@ class MpcApi {
     );
   }
 
+  /// 上传预签名数据到服务器存储
+  /// POST /api/v1/mpc/presign/store
+  /// [walletId] 钱包ID
+  /// [sessionId] 预签名会话ID
+  /// [presigData] 预签名数据 (opaque bytes)
+  static Future<Result<Map<String, dynamic>>> storePresignData({
+    required String walletId,
+    required String sessionId,
+    required List<int> presigData,
+  }) async {
+    return await DioClient.post(
+      "/mpc/presign/store",
+      data: {
+        "wallet_id": walletId,
+        "session_id": sessionId,
+        "presig_data": presigData,
+      },
+    );
+  }
+
   /// 查询服务器端分片状态（心跳）
   /// GET /api/v1/shards/status
   static Future<Result<Map<String, dynamic>>> getServerShardStatus() async {

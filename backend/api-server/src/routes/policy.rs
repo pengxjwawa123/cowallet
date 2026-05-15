@@ -339,7 +339,7 @@ async fn evaluate_transaction(
     )
     .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid value"))?;
 
-    let chain_id = body.chain_id.unwrap_or(8453);
+    let chain_id = body.chain_id.ok_or_else(|| err(StatusCode::BAD_REQUEST, "chain_id is required"))?;
 
     // Compute transaction history for daily-limit / rate-limit rules
     let history = compute_tx_history(&state, &body.from, chain_id).await;

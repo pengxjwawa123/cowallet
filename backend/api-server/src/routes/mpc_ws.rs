@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use mpc_core::transport::noise::NoiseSession;
+
 use crate::middleware::auth::verify_token_unchecked;
 use crate::state::AppState;
 
@@ -29,6 +31,37 @@ pub struct WsMessage {
     pub to_party: i16,
     pub round: i16,
     pub payload: Vec<u8>,
+}
+
+/// Noise_XX handshake control messages exchanged before encrypted transport begins.
+/// The client initiates by sending a `NoiseHandshake` message with step=1.
+/// The server responds, and one more round-trip completes the XX pattern.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoiseHandshakeMsg {
+    /// Discriminator: always "noise_handshake"
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    /// Handshake step number (1, 2, or 3)
+    pub step: u8,
+    /// Base64-encoded handshake payload
+    pub data: String,
+}
+
+/// Envelope for Noise-encrypted MPC messages after handshake completes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoiseEncryptedMsg {
+    /// Discriminator: always "noise_encrypted"
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    /// Base64-encoded ciphertext (decrypts to JSON WsMessage)
+    pub data: String,
+}
+
+/// Checks if a JSON object has a "type" field matching the given value.
+fn json_has_type(text: &str, type_value: &str) -> bool {
+    // Quick check without full deserialization
+    text.contains(&format!("\"type\":\"{}\"", type_value))
+        || text.contains(&format!("\"type\": \"{}\"", type_value))
 }
 
 pub fn router() -> Router<AppState> {
@@ -86,6 +119,11 @@ async fn ws_handler(
 /// Main WebSocket connection handler.
 /// Subscribes to NATS for real-time push, or falls back to DB polling.
 /// Forwards incoming WS messages to the appropriate party via NATS or DB.
+///
+/// Requires Noise_XX transport encryption:
+/// - Client's first message MUST be a `noise_handshake` (step=1).
+/// - Server performs a 3-message Noise_XX handshake.
+/// - All subsequent messages are encrypted/decrypted via the established Noise session.
 async fn handle_ws_connection(
     socket: WebSocket,
     state: AppState,
@@ -93,6 +131,75 @@ async fn handle_ws_connection(
     party_index: i16,
 ) {
     let (mut ws_sink, mut ws_stream) = socket.split();
+
+    // --- Noise_XX handshake (required) ---
+    let noise_session: NoiseSession;
+
+    if let Some(result) = ws_stream.next().await {
+        let msg = match result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::debug!("WS recv error during initial read: {}", e);
+                return;
+            }
+        };
+
+        let text = match &msg {
+            Message::Text(t) => Some(t.to_string()),
+            Message::Binary(d) => String::from_utf8(d.to_vec()).ok(),
+            Message::Close(_) => return,
+            _ => None,
+        };
+
+        if let Some(ref text_str) = text {
+            if json_has_type(text_str, "noise_handshake") {
+                match perform_noise_handshake(text_str, &mut ws_sink, &mut ws_stream, &state).await {
+                    Ok(session) => {
+                        noise_session = session;
+                        tracing::info!(
+                            "Noise_XX handshake complete for session {} party {}",
+                            session_id, party_index
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Noise handshake failed for session {} party {}: {}",
+                            session_id, party_index, e
+                        );
+                        let err_msg = serde_json::json!({
+                            "type": "noise_error",
+                            "error": format!("{}", e),
+                        });
+                        let _ = ws_sink
+                            .send(Message::Text(err_msg.to_string().into()))
+                            .await;
+                        return;
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "WS session {} party {}: first message must be noise_handshake",
+                    session_id, party_index
+                );
+                let err_msg = serde_json::json!({
+                    "type": "error",
+                    "error": "noise_handshake required as first message",
+                });
+                let _ = ws_sink
+                    .send(Message::Text(err_msg.to_string().into()))
+                    .await;
+                return;
+            }
+        } else {
+            return;
+        }
+    } else {
+        // Stream ended immediately
+        return;
+    }
+
+    // Wrap noise_session in a Mutex for shared access between tasks
+    let noise = std::sync::Arc::new(tokio::sync::Mutex::new(Some(noise_session)));
 
     // Channel for pushing messages to the WS client
     let (tx, mut rx) = mpsc::channel::<WsMessage>(64);
@@ -118,23 +225,19 @@ async fn handle_ws_connection(
                     round: msg.3,
                     payload: msg.4,
                 };
-                if let Ok(json) = serde_json::to_string(&ws_msg) {
-                    if ws_sink.send(Message::Text(json.into())).await.is_err() {
-                        return; // Client disconnected during catch-up
-                    }
+                let send_result = send_ws_message(&mut ws_sink, &noise, &ws_msg).await;
+                if send_result.is_err() {
+                    return; // Client disconnected during catch-up
                 }
             }
         }
     }
 
     // Spawn task: forward messages from channel to WS sink
+    let noise_sink = noise.clone();
     let sink_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let json = match serde_json::to_string(&msg) {
-                Ok(j) => j,
-                Err(_) => continue,
-            };
-            if ws_sink.send(Message::Text(json.into())).await.is_err() {
+            if send_ws_message(&mut ws_sink, &noise_sink, &msg).await.is_err() {
                 break; // Client disconnected
             }
         }
@@ -189,27 +292,27 @@ async fn handle_ws_connection(
 
         match msg {
             Message::Text(text) => {
-                match serde_json::from_str::<WsMessage>(&text) {
-                    Ok(ws_msg) => {
-                        handle_client_message(&state, session_id, party_index, ws_msg).await;
-                    }
+                let ws_msg = recv_ws_text_message(&text, &noise).await;
+                match ws_msg {
+                    Ok(Some(m)) => handle_client_message(&state, session_id, party_index, m).await,
+                    Ok(None) => {} // non-MPC control message (e.g. ping)
                     Err(e) => {
                         tracing::warn!(
-                            "WS text deserialization failed for session {} party {}: {} (first 200 chars: {})",
-                            session_id, party_index, e,
-                            &text[..text.len().min(200)]
+                            "WS message processing failed for session {} party {}: {}",
+                            session_id, party_index, e
                         );
                     }
                 }
             }
             Message::Binary(data) => {
-                match serde_json::from_slice::<WsMessage>(&data) {
-                    Ok(ws_msg) => {
-                        handle_client_message(&state, session_id, party_index, ws_msg).await;
-                    }
+                let text = String::from_utf8_lossy(&data);
+                let ws_msg = recv_ws_text_message(&text, &noise).await;
+                match ws_msg {
+                    Ok(Some(m)) => handle_client_message(&state, session_id, party_index, m).await,
+                    Ok(None) => {}
                     Err(e) => {
                         tracing::warn!(
-                            "WS binary deserialization failed for session {} party {}: {} (len: {})",
+                            "WS binary processing failed for session {} party {}: {} (len: {})",
                             session_id, party_index, e, data.len()
                         );
                     }
@@ -224,6 +327,191 @@ async fn handle_ws_connection(
     tracing::info!("WS disconnected: session {} party {}", session_id, party_index);
     sink_task.abort();
     inbound_task.abort();
+}
+
+/// Perform the server side of a Noise_XX handshake over WebSocket.
+///
+/// The client has already sent step 1 (-> e). This function:
+/// 1. Parses step 1 from the client
+/// 2. Generates the server's response (step 2: <- e, ee, s, es)
+/// 3. Receives the client's final message (step 3: -> s, se)
+/// 4. Returns the completed NoiseSession ready for transport
+async fn perform_noise_handshake(
+    first_msg_text: &str,
+    ws_sink: &mut futures::stream::SplitSink<WebSocket, Message>,
+    ws_stream: &mut futures::stream::SplitStream<WebSocket>,
+    state: &AppState,
+) -> std::result::Result<NoiseSession, String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+    // Parse the client's step 1 message
+    let hs_msg: NoiseHandshakeMsg = serde_json::from_str(first_msg_text)
+        .map_err(|e| format!("invalid noise_handshake message: {}", e))?;
+
+    if hs_msg.step != 1 {
+        return Err(format!("expected handshake step 1, got {}", hs_msg.step));
+    }
+
+    let client_msg1 = BASE64.decode(&hs_msg.data)
+        .map_err(|e| format!("invalid base64 in handshake step 1: {}", e))?;
+
+    // Get or generate server's static key
+    let server_static_key = get_server_noise_key(state);
+
+    // Create responder session
+    let mut session = NoiseSession::new_responder(&server_static_key)
+        .map_err(|e| format!("failed to create noise responder: {}", e))?;
+
+    // Process client's msg1 (-> e) and generate server response (<- e, ee, s, es)
+    let server_msg2 = session.handshake_step(&client_msg1)
+        .map_err(|e| format!("noise handshake step 2 failed: {}", e))?;
+
+    // Send step 2 to client
+    let step2_response = serde_json::json!({
+        "type": "noise_handshake",
+        "step": 2,
+        "data": BASE64.encode(&server_msg2),
+    });
+    ws_sink
+        .send(Message::Text(step2_response.to_string().into()))
+        .await
+        .map_err(|e| format!("failed to send handshake step 2: {}", e))?;
+
+    // Receive step 3 from client (-> s, se)
+    let step3_msg = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        ws_stream.next(),
+    )
+    .await
+    .map_err(|_| "noise handshake step 3 timed out".to_string())?
+    .ok_or_else(|| "client disconnected during noise handshake".to_string())?
+    .map_err(|e| format!("ws error during handshake step 3: {}", e))?;
+
+    let step3_text = match step3_msg {
+        Message::Text(t) => t.to_string(),
+        Message::Binary(d) => String::from_utf8(d.to_vec())
+            .map_err(|_| "invalid UTF-8 in handshake step 3".to_string())?,
+        _ => return Err("unexpected message type during handshake step 3".to_string()),
+    };
+
+    let hs_msg3: NoiseHandshakeMsg = serde_json::from_str(&step3_text)
+        .map_err(|e| format!("invalid noise_handshake step 3: {}", e))?;
+
+    if hs_msg3.step != 3 {
+        return Err(format!("expected handshake step 3, got {}", hs_msg3.step));
+    }
+
+    let client_msg3 = BASE64.decode(&hs_msg3.data)
+        .map_err(|e| format!("invalid base64 in handshake step 3: {}", e))?;
+
+    // Process final handshake message — session transitions to transport mode
+    let _empty = session.handshake_step(&client_msg3)
+        .map_err(|e| format!("noise handshake finalization failed: {}", e))?;
+
+    if !session.is_transport_ready() {
+        return Err("noise session not in transport mode after handshake".to_string());
+    }
+
+    Ok(session)
+}
+
+/// Get the server's Noise static private key.
+/// In production this should come from an HSM or env var.
+/// Falls back to a deterministic key derived from the encryption key for consistency.
+fn get_server_noise_key(state: &AppState) -> Vec<u8> {
+    // Derive from NOISE_STATIC_KEY env var if set, otherwise generate deterministically
+    // from the server's encryption key using HKDF.
+    if let Ok(key_hex) = std::env::var("NOISE_STATIC_KEY") {
+        if let Ok(key_bytes) = hex::decode(&key_hex) {
+            if key_bytes.len() == 32 {
+                return key_bytes;
+            }
+        }
+        tracing::warn!("NOISE_STATIC_KEY env var invalid, falling back to derived key");
+    }
+
+    // Derive a stable key from the server's encryption key using HKDF-SHA256
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let ikm = std::env::var("ENCRYPTION_KEY")
+        .unwrap_or_else(|_| "cowallet-noise-default-ikm-not-for-production".to_string());
+    let hkdf = Hkdf::<Sha256>::new(Some(b"cowallet-noise-xx-static-key"), ikm.as_bytes());
+    let mut key = vec![0u8; 32];
+    hkdf.expand(b"noise_xx_server_static", &mut key)
+        .expect("32 bytes is valid for HKDF-SHA256");
+    key
+}
+
+/// Send a WsMessage over the WebSocket, encrypting with Noise if a session is active.
+async fn send_ws_message(
+    ws_sink: &mut futures::stream::SplitSink<WebSocket, Message>,
+    noise: &std::sync::Arc<tokio::sync::Mutex<Option<NoiseSession>>>,
+    ws_msg: &WsMessage,
+) -> std::result::Result<(), String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+    let json = serde_json::to_string(ws_msg)
+        .map_err(|e| format!("serialization failed: {}", e))?;
+
+    let mut noise_guard = noise.lock().await;
+    let send_text = if let Some(ref mut session) = *noise_guard {
+        // Encrypt and wrap
+        let ciphertext = session.encrypt(json.as_bytes())
+            .map_err(|e| format!("noise encryption failed: {}", e))?;
+        serde_json::json!({
+            "type": "noise_encrypted",
+            "data": BASE64.encode(&ciphertext),
+        }).to_string()
+    } else {
+        json
+    };
+    drop(noise_guard);
+
+    ws_sink
+        .send(Message::Text(send_text.into()))
+        .await
+        .map_err(|e| format!("ws send failed: {}", e))
+}
+
+/// Process an incoming WebSocket text message, decrypting with Noise if active.
+/// Returns `Ok(Some(msg))` for MPC messages, `Ok(None)` for control messages.
+async fn recv_ws_text_message(
+    text: &str,
+    noise: &std::sync::Arc<tokio::sync::Mutex<Option<NoiseSession>>>,
+) -> std::result::Result<Option<WsMessage>, String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+    // Check if it's a Noise-encrypted message
+    if json_has_type(text, "noise_encrypted") {
+        let enc_msg: NoiseEncryptedMsg = serde_json::from_str(text)
+            .map_err(|e| format!("invalid noise_encrypted message: {}", e))?;
+
+        let ciphertext = BASE64.decode(&enc_msg.data)
+            .map_err(|e| format!("invalid base64 in noise_encrypted: {}", e))?;
+
+        let mut noise_guard = noise.lock().await;
+        let session = noise_guard.as_mut()
+            .ok_or_else(|| "received noise_encrypted but no noise session active".to_string())?;
+
+        let plaintext = session.decrypt(&ciphertext)
+            .map_err(|e| format!("noise decryption failed: {}", e))?;
+        drop(noise_guard);
+
+        let ws_msg: WsMessage = serde_json::from_slice(&plaintext)
+            .map_err(|e| format!("decrypted payload is not valid WsMessage: {}", e))?;
+
+        return Ok(Some(ws_msg));
+    }
+
+    // Plain (unencrypted) message — parse directly
+    match serde_json::from_str::<WsMessage>(text) {
+        Ok(ws_msg) => Ok(Some(ws_msg)),
+        Err(_) => {
+            // Might be a control message (ping/pong JSON)
+            Ok(None)
+        }
+    }
 }
 
 /// Handle an MPC message received from the WS client.

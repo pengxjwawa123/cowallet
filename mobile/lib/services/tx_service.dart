@@ -6,6 +6,7 @@ import 'package:pointycastle/export.dart';
 import '../api/tx_api.dart';
 import '../platform/biometrics.dart';
 import 'chain_service.dart';
+import 'locator.dart';
 import 'wallet_service.dart';
 
 abstract class TxService {
@@ -42,16 +43,17 @@ class MpcTxService implements TxService {
   final WalletService _wallet;
   final ChainService _chain;
   final BiometricService _biometric;
-  final int chainId;
 
   MpcTxService({
     required WalletService wallet,
     required ChainService chain,
     required BiometricService biometrics,
-    this.chainId = 8453,
   })  : _wallet = wallet,
         _chain = chain,
         _biometric = biometrics;
+
+  /// The currently selected chain ID from the chain service.
+  int get chainId => _chain.currentConfig.chainId;
 
   @override
   Future<String> signAndSend({
@@ -181,6 +183,9 @@ class MpcTxService implements TxService {
     if (_chain is JsonRpcChainService && effectiveChainId != this.chainId) {
       (_chain as JsonRpcChainService).switchChain(ChainConfig.byId(this.chainId));
     }
+
+    // Trigger presign pool check after successful signing (non-blocking)
+    Services.presignPool.checkAndRefill();
 
     return submitResult.data!['tx_hash'] as String;
   }

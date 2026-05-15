@@ -57,7 +57,12 @@ class MpcKeystoreHandler(private val context: Context) : MethodChannel.MethodCal
         }
       }
       "storeEncryptedShard" -> {
-        val data = call.argument<ByteArray>("data")
+        // Flutter sends List<int> which arrives as List<Int> or ByteArray depending on codec
+        val data: ByteArray? = when (val raw = call.argument<Any>("data")) {
+          is ByteArray -> raw
+          is List<*> -> ByteArray(raw.size) { i -> (raw[i] as Number).toByte() }
+          else -> null
+        }
         if (data != null) {
           storeEncryptedShard(data, result)
         } else {

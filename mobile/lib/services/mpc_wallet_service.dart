@@ -302,6 +302,9 @@ class MpcWalletService implements WalletService {
   /// 刷新密钥分片，旧分片失效，公钥不变
   /// [walletId] 可选，指定要轮转的钱包
   Future<WalletInfo> runReshare({String? walletId}) async {
+    // Ensure the current device shard is loaded into Rust memory before reshare
+    await _ensureShardLoaded();
+
     final sessionResult = await MpcApi.createSession(
       sessionType: 'reshare',
       parties: [_deviceParty, _serverParty],
@@ -362,11 +365,26 @@ class MpcWalletService implements WalletService {
       // Finalize: new shard replaces old in memory
       final walletInfo = await MpcBridge.reshareFinalize(localSessionId);
 
+      // Persist the new device shard to hardware-backed storage
+      final newShardBytes = await MpcBridge.exportDeviceShard();
+      await SecureHardware.storeDeviceShard(Uint8List.fromList(newShardBytes));
+
       // Update stored address (should be unchanged)
       await SecureStorage.save('mpc_address', walletInfo.address);
 
+      // Update public key in case it changed (shouldn't, but be safe)
+      final pubKeyHex = walletInfo.publicKey
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
+      await SecureStorage.save('mpc_public_key', pubKeyHex);
+
       // Clear session state on success
       await MpcSessionStore.clearSession();
+
+      // Record key usage for health tracking
+      final health = KeyHealthService();
+      health.recordPhoneKeyUsage();
+      health.recordServerKeyUsage();
 
       return walletInfo;
     } catch (e) {
@@ -384,7 +402,15 @@ class MpcWalletService implements WalletService {
   /// 预计算签名材料，后续签名可瞬间完成
   /// [walletId] 钱包ID
   /// [count] 要生成的预签名数量
-  Future<int> runPresign({required String walletId, int count = 5}) async {
+  /// [onProgress] 可选的进度回调 (completedCount, totalCount)
+  Future<int> runPresign({
+    required String walletId,
+    int count = 5,
+    void Function(int completed, int total)? onProgress,
+  }) async {
+    // Ensure device shard is loaded into Rust memory before protocol execution
+    await _ensureShardLoaded();
+
     int generated = 0;
 
     for (int i = 0; i < count; i++) {
@@ -396,10 +422,17 @@ class MpcWalletService implements WalletService {
       );
 
       if (!sessionResult.isSuccess || sessionResult.data == null) {
+        if (generated == 0) {
+          throw MpcException(
+            'Failed to create presign session: ${sessionResult.errorMessage}',
+          );
+        }
+        // Partial success: some presigns generated before failure
         break;
       }
 
       final remoteSessionId = sessionResult.data!['session_id'] as String;
+      _currentSessionId = remoteSessionId;
 
       final ws = MpcWebSocket(sessionId: remoteSessionId, partyIndex: _deviceParty);
       try {
@@ -409,8 +442,19 @@ class MpcWalletService implements WalletService {
         final round1 = await MpcBridge.presignGenerateRound1();
         final localSessionId = round1.sessionId;
 
+        // Save session state for crash recovery
+        await MpcSessionStore.saveSession(MpcSessionState(
+          sessionId: localSessionId,
+          remoteSessionId: remoteSessionId,
+          sessionType: 'presign',
+          currentRound: 0,
+          createdAt: DateTime.now(),
+          metadata: {'wallet_id': walletId, 'index': i, 'total': count},
+        ));
+
         // Send Round 1 to server
         ws.sendRaw(toParty: _serverParty, round: 1, payload: round1.payload);
+        await MpcSessionStore.updateCurrentRound(1);
 
         // Wait for server's Round 1
         final serverR1 = await _waitForMessages(ws, expectedCount: 1);
@@ -423,10 +467,34 @@ class MpcWalletService implements WalletService {
 
         // Send Round 2
         ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
+        await MpcSessionStore.updateCurrentRound(2);
 
-        // Finalize presignature
-        await MpcBridge.presignFinalize(localSessionId);
+        // Finalize presignature and extract presig data
+        final presigData = await MpcBridge.presignFinalize(localSessionId);
+
+        // Upload presign data to server for storage
+        await MpcApi.storePresignData(
+          walletId: walletId,
+          sessionId: remoteSessionId,
+          presigData: presigData,
+        );
+
         generated++;
+        onProgress?.call(generated, count);
+
+        // Clear session state on success for this iteration
+        await MpcSessionStore.clearSession();
+      } catch (e) {
+        print('[MpcWalletService] Presign error (${i + 1}/$count): $e');
+        if (generated == 0) {
+          // No presigns generated at all - throw for UI to handle
+          throw MpcSessionInterruptedException(
+            'Presign session interrupted: $e',
+            sessionState: await MpcSessionStore.loadSession(),
+          );
+        }
+        // Partial success - stop the loop and return what we got
+        break;
       } finally {
         await ws.disconnect();
       }

@@ -4,6 +4,7 @@ import 'theme/theme.dart';
 import 'router/app_router.dart';
 import 'state/app_state.dart';
 import 'services/locator.dart';
+import 'services/push_service.dart';
 import 'api/auth_api.dart';
 import 'api/chains_api.dart';
 import 'config/api_config.dart';
@@ -33,10 +34,52 @@ class _CowalletAppState extends State<CowalletApp> {
   String _initialRoute = AppRouter.onboarding;
   bool _ready = false;
 
+  // Global navigator key for push notification navigation
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
+    _setupPushNotificationHandlers();
     _checkWalletState();
+  }
+
+  void _setupPushNotificationHandlers() {
+    Services.push.onNotificationTap = _handlePushNotificationTap;
+  }
+
+  void _handlePushNotificationTap(Map<String, dynamic> data) {
+    final type = data['type'] as String?;
+    final context = _navigatorKey.currentContext;
+    if (context == null) return;
+
+    switch (type) {
+      case PushType.txConfirmed:
+      case PushType.txFailed:
+        // Navigate to home and show tx detail in chat
+        final txHash = data['tx_hash'] as String?;
+        if (txHash != null) {
+          _navigatorKey.currentState?.pushNamedAndRemoveUntil(
+            AppRouter.home,
+            (route) => false,
+          );
+        }
+        break;
+      case PushType.securityAlert:
+        // Navigate to settings/security section
+        _navigatorKey.currentState?.pushNamedAndRemoveUntil(
+          AppRouter.home,
+          (route) => false,
+        );
+        break;
+      case PushType.mpcSignRequest:
+        // Navigate to home (approval will be handled via the stream listener)
+        _navigatorKey.currentState?.pushNamedAndRemoveUntil(
+          AppRouter.home,
+          (route) => false,
+        );
+        break;
+    }
   }
 
   Future<void> _checkWalletState() async {
@@ -68,6 +111,12 @@ class _CowalletAppState extends State<CowalletApp> {
 
       // Ensure valid token before rendering home (prevents 401 cascades)
       await _refreshSessionInBackground();
+
+      // Re-register push token now that auth is available
+      Services.push.reregisterToken();
+
+      // Start presign pool auto-refill monitoring
+      Services.presignPool.start();
 
       setState(() => _ready = true);
       _refreshBalanceInBackground(addr);
@@ -113,6 +162,8 @@ class _CowalletAppState extends State<CowalletApp> {
 
   @override
   void dispose() {
+    Services.push.dispose();
+    Services.presignPool.dispose();
     appState.dispose();
     super.dispose();
   }
@@ -129,6 +180,7 @@ class _CowalletAppState extends State<CowalletApp> {
     return ListenableBuilder(
       listenable: appState,
       builder: (context, _) => MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'CoWallet',
         debugShowCheckedModeBanner: false,
         theme: cwTheme(),

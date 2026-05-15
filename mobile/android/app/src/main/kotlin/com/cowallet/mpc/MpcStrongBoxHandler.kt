@@ -13,8 +13,8 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.Signature
 import java.util.Base64
-import javax.crypto.Cipher
 
 class MpcStrongBoxHandler(private val context: Context) : MethodChannel.MethodCallHandler {
   companion object {
@@ -199,14 +199,15 @@ class MpcStrongBoxHandler(private val context: Context) : MethodChannel.MethodCa
       val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
       keyStore.load(null)
 
-      val privateKey = keyStore.getKey(alias, null)
+      val privateKey = keyStore.getKey(alias, null) as java.security.PrivateKey?
         ?: throw Exception("Key not found: $keyId")
 
-      val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
-      cipher.init(Cipher.ENCRYPT_MODE, privateKey)
+      val sig = Signature.getInstance("SHA256withRSA")
+      sig.initSign(privateKey)
+      sig.update(hash)
 
-      val signature = cipher.doFinal(hash)
-      val signatureBase64 = Base64.getEncoder().encodeToString(signature)
+      val signatureBytes = sig.sign()
+      val signatureBase64 = Base64.getEncoder().encodeToString(signatureBytes)
 
       result.success(signatureBase64)
     } catch (e: Exception) {

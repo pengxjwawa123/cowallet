@@ -83,6 +83,13 @@ class TxApi {
     return Result.error(result.errorMessage ?? "获取交易历史失败", -1);
   }
 
+  /// 查询交易确认状态
+  /// [txHash] 交易哈希
+  /// 返回: { tx_hash, status, block_number, gas_used, confirmations, confirmed_at }
+  static Future<Result<Map<String, dynamic>>> getStatus(String txHash) async {
+    return await DioClient.get("/tx/status/$txHash");
+  }
+
   /// 模拟交易（eth_call）
   /// [to] 目标合约地址
   /// [value] 发送的ETH金额（可选）

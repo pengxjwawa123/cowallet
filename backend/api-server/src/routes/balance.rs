@@ -52,7 +52,7 @@ async fn get_balance(
         return Err(ApiError::invalid_address(&query.address));
     }
 
-    let chain_id = query.chain_id.unwrap_or(8453);
+    let chain_id = query.chain_id.ok_or_else(|| ApiError::bad_request("chain_id is required"))?;
 
     // When Covalent is not configured, use direct RPC
     if state.covalent_api_key.is_none() {

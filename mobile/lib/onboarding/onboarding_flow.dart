@@ -617,6 +617,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                 },
               ),
               const SizedBox(height: 12),
+              TextButton(
+                onPressed: () => Navigator.pushNamed(context, '/recovery'),
+                child: Text(
+                  S.recoverWallet,
+                  style: TextStyle(color: CwColors.ink3, fontSize: 14),
+                ),
+              ),
+              const SizedBox(height: 8),
               Text(
                 S.heroLegal,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(

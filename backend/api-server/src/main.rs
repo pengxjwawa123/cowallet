@@ -148,6 +148,7 @@ async fn main() {
         .nest("/policy", routes::policy::router())
         .nest("/ai", routes::ai::router())
         .nest("/yield", routes::yield_::router())
+        .nest("/swap", routes::swap::router())
         .nest("/shards", routes::shards::router())
         .nest("/wallets", routes::wallets::router())
         .nest("/balance", routes::balance::router())

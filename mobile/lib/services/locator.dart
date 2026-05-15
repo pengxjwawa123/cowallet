@@ -15,24 +15,30 @@ import 'tx_service.dart';
 import 'intent_executor.dart';
 import 'gas_service.dart';
 import 'notification_service.dart';
+import 'push_service.dart';
 import 'tx_history_service.dart';
 import 'mpc_wallet_service.dart';
+import 'policy_service.dart';
+import 'presign_pool_service.dart';
 
 class Services {
-  static late final BiometricService biometrics;
-  static late final SecureStorageService storage;
-  static late final WalletService wallet;
-  static late final MpcWalletService mpcWallet;
-  static late final ChainService chain;
-  static late final BalanceService balance;
-  static late final TxService tx;
-  static late final IntentExecutor intent;
-  static late final GasService gas;
-  static late final TxHistoryService txHistory;
-  static late final BackupShardService backup;
-  static late final ContactsService contacts;
-  static late final NotificationService notifications;
-  static late final SettingsService settings;
+  static late BiometricService biometrics;
+  static late SecureStorageService storage;
+  static late WalletService wallet;
+  static late MpcWalletService mpcWallet;
+  static late ChainService chain;
+  static late BalanceService balance;
+  static late TxService tx;
+  static late IntentExecutor intent;
+  static late GasService gas;
+  static late TxHistoryService txHistory;
+  static late BackupShardService backup;
+  static late ContactsService contacts;
+  static late NotificationService notifications;
+  static late PushService push;
+  static late SettingsService settings;
+  static late PolicyService policy;
+  static late PresignPoolService presignPool;
 
   // API clients (stateless, no initialization needed)
   static final mpcApi = MpcApi();
@@ -58,6 +64,8 @@ class Services {
     await contacts.load();
     notifications = NotificationService();
     await notifications.init();
+    push = PushService();
+    await push.init();
     settings = SettingsService();
     await settings.init();
     intent = IntentExecutor(
@@ -68,5 +76,7 @@ class Services {
       txHistory: txHistory,
       chain: chain,
     );
+    policy = PolicyService();
+    presignPool = PresignPoolService();
   }
 }

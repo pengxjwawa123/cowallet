@@ -61,13 +61,12 @@ fn usdc_address_for_chain(chain_id: u64) -> Option<Address> {
 }
 
 /// Infer chain ID from token symbol when not explicitly provided.
-fn infer_chain_id_from_token(token: &str) -> u64 {
+fn infer_chain_id_from_token(token: &str) -> Option<u64> {
     match token.to_uppercase().as_str() {
-        "POL" | "MATIC" => 137,
-        "BNB" => 56,
-        "ETH" => 8453,
-        // Stablecoins default to Base
-        _ => 8453,
+        "POL" | "MATIC" => Some(137),
+        "BNB" => Some(56),
+        "ETH" => Some(1),
+        _ => None,
     }
 }
 
@@ -305,33 +304,64 @@ impl ToolContext {
     // --- get_token_info ---
     async fn execute_get_token_info(&self, tool_id: &str, params: Value) -> ToolExecutionResult {
         let token_symbol: String = parse_param(&params, "token").unwrap_or_else(|| "ETH".into());
-        let chain_id: u64 = parse_param(&params, "chain_id")
-            .unwrap_or_else(|| infer_chain_id_from_token(&token_symbol));
+        let chain_id_param: Option<u64> = parse_param(&params, "chain_id");
         let symbol_upper = token_symbol.to_uppercase();
 
         let owner = parse_wallet_address(self.wallet_address.as_deref());
         let address_str = owner.map(|a| format!("0x{:x}", a));
 
+        // Determine which chain to query: explicit param > infer from token > search all chains
+        let chain_id = chain_id_param
+            .or_else(|| infer_chain_id_from_token(&token_symbol))
+            .unwrap_or(0); // 0 = search all chains
+
         // Get balance from Covalent if available
         let mut balance_info = serde_json::json!(null);
+        let mut resolved_chain_id = chain_id;
         if let (Some(api_key), Some(ref addr)) = (&self.app_state.covalent_api_key, &address_str) {
-            if let Ok(balances) = crate::services::covalent::get_balances(
-                &self.app_state.http, api_key, addr, chain_id,
-            ).await {
-                if let Some(token) = balances.iter().find(|b| b.symbol.to_uppercase() == symbol_upper) {
-                    balance_info = serde_json::json!({
-                        "balance": token.balance_formatted,
-                        "balance_raw": token.balance,
-                        "usd_value": token.usd,
-                        "usd_24h": token.usd_24h,
-                        "quote_rate": token.quote_rate,
-                        "quote_rate_24h": token.quote_rate_24h,
-                        "contract_address": token.contract_address,
-                        "decimals": token.decimals,
-                        "is_native": token.native_token,
-                        "logo_url": token.logo_url,
-                        "last_transferred_at": token.last_transferred_at,
-                    });
+            if chain_id == 0 {
+                // Multi-chain search: find which chain has this token
+                let all_chains: &[u64] = &[1, 137, 8453, 42161, 10, 56];
+                for &cid in all_chains {
+                    if let Ok(balances) = crate::services::covalent::get_balances(
+                        &self.app_state.http, api_key, addr, cid,
+                    ).await {
+                        if let Some(token) = balances.iter().find(|b| b.symbol.to_uppercase() == symbol_upper) {
+                            resolved_chain_id = cid;
+                            balance_info = serde_json::json!({
+                                "balance": token.balance_formatted,
+                                "balance_raw": token.balance,
+                                "usd_value": token.usd,
+                                "usd_24h": token.usd_24h,
+                                "quote_rate": token.quote_rate,
+                                "quote_rate_24h": token.quote_rate_24h,
+                                "contract_address": token.contract_address,
+                                "is_native": token.native_token,
+                            });
+                            break;
+                        }
+                    }
+                }
+            } else {
+                if let Ok(balances) = crate::services::covalent::get_balances(
+                    &self.app_state.http, api_key, addr, chain_id,
+                ).await {
+                    if let Some(token) = balances.iter().find(|b| b.symbol.to_uppercase() == symbol_upper) {
+                        resolved_chain_id = chain_id;
+                        balance_info = serde_json::json!({
+                            "balance": token.balance_formatted,
+                            "balance_raw": token.balance,
+                            "usd_value": token.usd,
+                            "usd_24h": token.usd_24h,
+                            "quote_rate": token.quote_rate,
+                            "quote_rate_24h": token.quote_rate_24h,
+                            "contract_address": token.contract_address,
+                            "decimals": token.decimals,
+                            "is_native": token.native_token,
+                            "logo_url": token.logo_url,
+                            "last_transferred_at": token.last_transferred_at,
+                        });
+                    }
                 }
             }
         }
@@ -348,7 +378,7 @@ impl ToolContext {
                 .filter(|s| !s.is_empty());
             if let Some(addr) = contract_addr {
                 price_usd = self.app_state.price_cache
-                    .get_token_price_by_address(&self.app_state.http, chain_id, addr)
+                    .get_token_price_by_address(&self.app_state.http, resolved_chain_id, addr)
                     .await;
             }
         }
@@ -405,7 +435,7 @@ impl ToolContext {
             "token": token_meta,
             "balance": balance_info,
             "price_usd": price_usd,
-            "chain_id": chain_id,
+            "chain_id": resolved_chain_id,
             "wallet_address": address_str,
         });
 
@@ -450,8 +480,20 @@ impl ToolContext {
         };
 
         let token_str: String = parse_param(&params, "token").unwrap_or_else(|| "ETH".into());
-        let chain_id: u64 = parse_param(&params, "chain_id")
-            .unwrap_or_else(|| infer_chain_id_from_token(&token_str));
+        let chain_id: u64 = match parse_param(&params, "chain_id")
+            .or_else(|| infer_chain_id_from_token(&token_str))
+        {
+            Some(id) => id,
+            None => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "send_transaction".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some("Cannot determine target chain. Please ask the user which chain to use for this operation. Multi-chain tokens (USDC, USDT, DAI, WETH, LINK) require an explicit chain_id.".into()),
+                };
+            }
+        };
         let send_all: bool = parse_param(&params, "send_all").unwrap_or(false);
         let from_address = match parse_wallet_address(self.wallet_address.as_deref()) {
             Some(a) => a,
@@ -1157,39 +1199,132 @@ impl ToolContext {
         };
 
         let slippage: f64 = parse_param(&params, "slippage").unwrap_or(0.5);
-
-        let from_price = self.app_state.price_cache
-            .get_usd_price(&self.app_state.http, &from_token)
-            .await;
-        let to_price = self.app_state.price_cache
-            .get_usd_price(&self.app_state.http, &to_token)
-            .await;
-
-        let estimated_output = match (from_price, to_price) {
-            (Some(fp), Some(tp)) if tp > 0.0 => {
-                let amt: f64 = amount.parse().unwrap_or(0.0);
-                let output = amt * fp / tp;
-                if tp >= 1.0 { format!("{:.2}", output) } else { format!("{:.6}", output) }
-            }
-            _ => {
+        let chain_id: u64 = match parse_param(&params, "chain_id")
+            .or_else(|| infer_chain_id_from_token(&from_token))
+        {
+            Some(id) => id,
+            None => {
                 return ToolExecutionResult {
                     tool_id: tool_id.to_string(),
                     tool_name: "swap_token".into(),
                     success: false,
                     result: Value::Null,
-                    error: Some(format!("无法获取 {}/{} 价格", from_token, to_token)),
+                    error: Some("Cannot determine target chain. Please ask the user which chain to use for this swap. Multi-chain tokens (USDC, USDT, DAI, WETH, LINK) require an explicit chain_id.".into()),
                 };
             }
         };
 
+        let from_upper = from_token.to_uppercase();
+        let to_upper = to_token.to_uppercase();
+
+        // Resolve token addresses for 0x API
+        let sell_addr = match crate::services::dex::token_address(&from_upper, chain_id) {
+            Some(addr) => addr.to_string(),
+            None => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some(format!("不支持的代币: {} (chain {})", from_upper, chain_id)),
+                };
+            }
+        };
+        let buy_addr = match crate::services::dex::token_address(&to_upper, chain_id) {
+            Some(addr) => addr.to_string(),
+            None => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some(format!("不支持的代币: {} (chain {})", to_upper, chain_id)),
+                };
+            }
+        };
+
+        // Convert amount to raw units
+        let sell_decimals = crate::services::dex::token_decimals(&from_upper);
+        let raw_amount = match crate::services::dex::amount_to_raw(&amount, sell_decimals) {
+            Ok(raw) => raw,
+            Err(e) => {
+                return ToolExecutionResult {
+                    tool_id: tool_id.to_string(),
+                    tool_name: "swap_token".into(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some(format!("无效金额: {}", e)),
+                };
+            }
+        };
+
+        // Try to get a real quote from 0x API
+        let buy_decimals = crate::services::dex::token_decimals(&to_upper);
+        let (estimated_output, exchange_rate, price_impact, gas_estimate, sources) =
+            match crate::services::dex::get_quote(
+                &self.app_state.http,
+                self.app_state.zerox_api_key.as_deref(),
+                chain_id,
+                &sell_addr,
+                &buy_addr,
+                &raw_amount,
+            )
+            .await
+            {
+                Ok(quote) => {
+                    let output_formatted = crate::services::dex::raw_to_amount(&quote.buy_amount, buy_decimals);
+                    (
+                        output_formatted,
+                        quote.price.clone(),
+                        quote.price_impact.clone(),
+                        quote.estimated_gas.clone(),
+                        quote.sources.clone(),
+                    )
+                }
+                Err(e) => {
+                    tracing::warn!("[DEX] 0x quote failed, falling back to price estimate: {}", e);
+                    // Fallback to price-based estimation
+                    let from_price = self.app_state.price_cache
+                        .get_usd_price(&self.app_state.http, &from_upper)
+                        .await;
+                    let to_price = self.app_state.price_cache
+                        .get_usd_price(&self.app_state.http, &to_upper)
+                        .await;
+
+                    match (from_price, to_price) {
+                        (Some(fp), Some(tp)) if tp > 0.0 => {
+                            let amt: f64 = amount.parse().unwrap_or(0.0);
+                            let output = amt * fp / tp;
+                            let output_str = if tp >= 1.0 { format!("{:.2}", output) } else { format!("{:.6}", output) };
+                            let rate = format!("{:.6}", fp / tp);
+                            (output_str, rate, None, "200000".to_string(), vec!["price_estimate".to_string()])
+                        }
+                        _ => {
+                            return ToolExecutionResult {
+                                tool_id: tool_id.to_string(),
+                                tool_name: "swap_token".into(),
+                                success: false,
+                                result: Value::Null,
+                                error: Some(format!("无法获取 {}/{} 报价", from_upper, to_upper)),
+                            };
+                        }
+                    }
+                }
+            };
+
         let result = serde_json::json!({
             "status": "pending_confirmation",
-            "from_token": from_token.to_uppercase(),
-            "to_token": to_token.to_uppercase(),
+            "from_token": from_upper,
+            "to_token": to_upper,
             "amount": amount,
             "estimated_output": estimated_output,
+            "exchange_rate": exchange_rate,
+            "price_impact": price_impact,
+            "gas_estimate": gas_estimate,
             "slippage": slippage,
-            "route": format!("{} → {}", from_token.to_uppercase(), to_token.to_uppercase()),
+            "chain_id": chain_id,
+            "sources": sources,
+            "route": format!("{} → {}", from_upper, to_upper),
             "warning": "兑换需要您确认后执行。实际到账金额可能因市场波动略有差异。",
         });
 

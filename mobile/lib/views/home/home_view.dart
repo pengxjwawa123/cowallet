@@ -427,11 +427,11 @@ class _HomeViewState extends State<HomeView> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SectionLabel(title: S.tryTalking),
-          _tryCard(context, '💬', S.try1h, S.try1s, S.try1h),
+          _tryCard(context, '👀', S.try1h, S.try1s, S.try1h),
           const SizedBox(height: 10),
-          _tryCard(context, '💰', S.try2h, S.try2s, S.try2h),
+          _tryCard(context, '💸', S.try2h, S.try2s, S.try2h),
           const SizedBox(height: 10),
-          _tryCard(context, '🎁', S.try3h, S.try3s, S.try3h),
+          _tryCard(context, '📋', S.try3h, S.try3s, S.try3h),
         ],
       ),
     );
@@ -489,7 +489,9 @@ class _HomeViewState extends State<HomeView> {
           SectionLabel(
             title: S.recentActivity,
             trailing: S.seeAll,
-            onTrailingTap: () {},
+            onTrailingTap: () {
+              Navigator.of(context).pushNamed(AppRouter.txHistory);
+            },
           ),
           _buildActivityContent(context),
         ],

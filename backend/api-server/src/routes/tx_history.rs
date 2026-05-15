@@ -255,7 +255,7 @@ async fn get_covalent_history(
         return Err(validation_error("invalid address format"));
     }
 
-    let chain_id = q.chain_id.unwrap_or(8453);
+    let chain_id = q.chain_id.ok_or_else(|| validation_error("chain_id is required"))?;
 
     let api_key = state
         .covalent_api_key

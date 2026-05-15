@@ -170,10 +170,10 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                             "to_address": { "type": "string", "description": "Recipient 0x address" },
                             "value": { "type": "string", "description": "Amount to send (human readable, e.g. '0.1'). Set '0' when send_all is true." },
                             "token": { "type": "string", "description": "Token symbol: ETH, USDC, POL, BNB, etc. Default: ETH" },
-                            "chain_id": { "type": "integer", "description": "Target chain ID. MUST match the token's native chain: ETH→1, Base ETH→8453, POL/MATIC→137, BNB→56, ARB ETH→42161, OP ETH→10. Required for non-ETH native tokens." },
+                            "chain_id": { "type": "integer", "description": "Target chain ID. MUST match the token's native chain: ETH→1, Base ETH→8453, POL/MATIC→137, BNB→56, ARB ETH→42161, OP ETH→10. REQUIRED — you must ask the user if you cannot determine the chain." },
                             "send_all": { "type": "boolean", "description": "Set true when user wants to send entire balance. Client will auto-deduct gas fees." }
                         },
-                        "required": ["to_address", "value"]
+                        "required": ["to_address", "value", "chain_id"]
                     }),
                 },
             },
@@ -193,9 +193,9 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                             "to_token": { "type": "string", "description": "Destination token symbol" },
                             "amount": { "type": "string", "description": "Amount of from_token to swap (human readable)" },
                             "slippage": { "type": "number", "description": "Max slippage tolerance in percent. Default: 0.5" },
-                            "chain_id": { "type": "integer", "description": "Target chain ID for the swap. ETH→1 or 8453, POL/MATIC→137, BNB→56, ARB→42161, OP→10. Default: 8453" }
+                            "chain_id": { "type": "integer", "description": "Target chain ID for the swap. ETH→1 or 8453, POL/MATIC→137, BNB→56, ARB→42161, OP→10. REQUIRED — you must ask the user if you cannot determine the chain." }
                         },
-                        "required": ["from_token", "to_token", "amount"]
+                        "required": ["from_token", "to_token", "amount", "chain_id"]
                     }),
                 },
             },
@@ -297,8 +297,11 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，用户的加密钱包 AI 助手
 - ETH → 默认以太坊主网(1)，如果用户指定了 Base/Arb/OP 则对应链
 - POL/MATIC → Polygon(137)
 - BNB → BSC(56)
-- USDC/USDT 等多链代币 → 默认 Base(8453)
+- USDC/USDT/DAI/WETH/LINK 等多链代币 → **必须询问用户在哪条链上操作，不能假设默认链**
 - "全部转出"/"send all"/"清空" → send_all: true, value: "0"
+
+## 重要：多链代币必须确认链
+当用户的请求涉及多链代币（USDC, USDT, DAI, WETH, LINK 等存在于多条链上的代币），且无法从上下文判断目标链时，你**必须**使用 clarify 工具询问用户要在哪条链上操作。绝不能自行假设默认链。chain_id 是 send_transaction 和 swap_token 的必填参数。
 
 ## 工具分类
 - **自动执行**：get_balance, get_wallet_address, get_transaction_history, get_supported_chains, security_audit

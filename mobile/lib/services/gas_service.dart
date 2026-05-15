@@ -28,6 +28,12 @@ class GasService {
 
   GasService(this._chain);
 
+  /// Invalidate cached gas price (e.g. after chain switch).
+  void clearCache() {
+    _cachedGasPrice = null;
+    _cacheTime = null;
+  }
+
   Future<BigInt> _getGasPrice() async {
     if (_cachedGasPrice != null &&
         _cacheTime != null &&

@@ -4,7 +4,12 @@ import '../../l10n/strings.dart';
 import '../../models/tx_record.dart';
 import '../../services/locator.dart';
 import '../../services/gas_service.dart';
+import '../../services/policy_service.dart';
+import '../../services/chain_service.dart' as rpc;
+import '../../config/api_config.dart';
+import '../../main.dart';
 import '../../widgets/top_toast.dart';
+import 'tx_tracking_view.dart';
 
 class SendView extends StatefulWidget {
   const SendView({super.key});
@@ -146,6 +151,32 @@ class _SendViewState extends State<SendView> {
 
     if (confirmed != true || !mounted) return;
 
+    // Biometric authentication gate before MPC signing
+    final bioOk = await Services.biometrics.authenticate(
+      reason: S.biometricAuthReason,
+    );
+    if (!bioOk) {
+      if (mounted) {
+        showTopToast(context, S.bioAuthFailed, backgroundColor: CwColors.danger);
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    // Policy engine check — verify tx is within configured limits/rules
+    final policyResult = await _checkPolicy(to, amountText, amountNum);
+    if (!mounted) return;
+
+    if (policyResult.decision == PolicyDecision.deny) {
+      _showPolicyDeniedDialog(policyResult);
+      return;
+    }
+
+    if (policyResult.decision == PolicyDecision.requireApproval) {
+      final approved = await _showPolicyApprovalSheet(policyResult);
+      if (approved != true || !mounted) return;
+    }
+
     setState(() => _sending = true);
     try {
       String txHash;
@@ -178,26 +209,151 @@ class _SendViewState extends State<SendView> {
       ));
 
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(S.txSuccess),
-          content: Text('${S.txHashLabel}:\n$txHash'),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(S.done),
-            ),
-          ],
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TxTrackingView(
+            txHash: txHash,
+            toAddress: to,
+            amount: amountText,
+            token: _selectedToken,
+          ),
         ),
       );
-      if (mounted) Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
       showTopToast(context, '${S.txFailed}: $e', backgroundColor: CwColors.danger);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<PolicyCheckResult> _checkPolicy(
+    String to,
+    String amountText,
+    double amountNum,
+  ) async {
+    final appState = CowalletApp.of(context);
+    final chainId = appState.selectedChain.chainId;
+    final address = await Services.wallet.getAddress();
+
+    return Services.policy.checkTransaction(
+      from: address,
+      to: to,
+      value: _parseAmount(amountText).toString(),
+      token: _selectedToken,
+      chainId: chainId,
+      amountUsd: amountNum, // approximate; backend may re-price
+    );
+  }
+
+  void _showPolicyDeniedDialog(PolicyCheckResult result) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.block_rounded, color: CwColors.danger, size: 40),
+        title: Text(S.policyDeniedTitle),
+        content: Text(
+          result.reason ?? S.policyDeniedDefault,
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(S.policyOk),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool?> _showPolicyApprovalSheet(PolicyCheckResult result) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: CwColors.bgPaper,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: CwColors.lineStrong,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Icon(Icons.warning_amber_rounded,
+                  color: CwColors.warn, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                S.policyApprovalTitle,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: CwColors.ink1,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                result.reason ?? S.policyApprovalDefault,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: CwColors.ink3,
+                ),
+              ),
+              if (result.policyName != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: CwColors.bgSubtle,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    result.policyName!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: CwColors.ink3,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: Text(S.cancel),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(S.policyApprovalProceed),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -327,29 +483,78 @@ class _SendViewState extends State<SendView> {
   }
 
   Widget _chainInfo(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: CwColors.bgSubtle,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.link, color: CwColors.ink3, size: 18),
-          const SizedBox(width: 8),
-          Text(S.network, style: Theme.of(context).textTheme.bodySmall),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    final appState = CowalletApp.of(context);
+    return ListenableBuilder(
+      listenable: appState,
+      builder: (context, _) {
+        final chain = appState.selectedChain;
+        return GestureDetector(
+          onTap: () => _showChainSelector(context),
+          child: Container(
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: CwColors.bgCard,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: CwColors.line),
+              color: CwColors.bgSubtle,
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Text('Base',
-                style: Theme.of(context).textTheme.labelLarge),
+            child: Row(
+              children: [
+                const Icon(Icons.link, color: CwColors.ink3, size: 18),
+                const SizedBox(width: 8),
+                Text(S.network, style: Theme.of(context).textTheme.bodySmall),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: CwColors.bgCard,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: CwColors.line),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(chain.displayName,
+                          style: Theme.of(context).textTheme.labelLarge),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.keyboard_arrow_down_rounded,
+                          size: 16, color: CwColors.ink3),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  void _showChainSelector(BuildContext context) {
+    final appState = CowalletApp.of(context);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: CwColors.bgPaper,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => _SendChainList(
+        selectedChainId: appState.selectedChain.chainId,
+        onSelect: (chain) {
+          appState.setChain(chain);
+          // Switch the RPC chain service to match
+          final rpcConfig = rpc.ChainConfig.byId(chain.chainId);
+          (Services.chain as rpc.JsonRpcChainService).switchChain(rpcConfig);
+          // Invalidate gas price cache for the new chain
+          Services.gas.clearCache();
+          // Clear stale gas estimate and re-fetch for new chain
+          setState(() {
+            _gasEstimate = null;
+            _gasError = null;
+          });
+          _gasDebounceId++;
+          _fetchGas();
+          Navigator.pop(sheetContext);
+        },
       ),
     );
   }
@@ -390,5 +595,196 @@ class _SendViewState extends State<SendView> {
         Text(value, style: Theme.of(context).textTheme.labelLarge),
       ],
     );
+  }
+}
+
+/// Chain list bottom sheet for the send view.
+/// Reuses the same visual style as ChainSelector's sheet.
+class _SendChainList extends StatelessWidget {
+  final int selectedChainId;
+  final ValueChanged<ChainConfig> onSelect;
+
+  const _SendChainList({
+    required this.selectedChainId,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: CwColors.lineStrong,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Title
+              Text(
+                S.selectNetwork,
+                style: const TextStyle(
+                  fontFamily: 'NotoSerifSC',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: CwColors.ink1,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Scrollable chain list
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _sectionHeader(S.mainnets),
+                      const SizedBox(height: 8),
+                      ...ChainConfig.supportedMainnets.map((c) => _chainTile(context, c)),
+                      const SizedBox(height: 16),
+                      _sectionHeader(S.testnets),
+                      const SizedBox(height: 8),
+                      ...ChainConfig.supportedTestnets.map((c) => _chainTile(context, c)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionHeader(String title) {
+    return Text(
+      title,
+      style: const TextStyle(
+        fontFamily: 'JetBrainsMono',
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.8,
+        color: CwColors.ink3,
+      ),
+    );
+  }
+
+  Widget _chainTile(BuildContext context, ChainConfig chain) {
+    final isSelected = chain.chainId == selectedChainId;
+
+    return GestureDetector(
+      onTap: () => onSelect(chain),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? CwColors.accentSoft2 : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: isSelected
+              ? Border.all(color: CwColors.accent.withValues(alpha: 0.3))
+              : null,
+        ),
+        child: Row(
+          children: [
+            // Chain color dot
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: _chainColor(chain),
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // Name + symbol
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    chain.displayName,
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 14,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: CwColors.ink1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    chain.symbol,
+                    style: const TextStyle(
+                      fontFamily: 'JetBrainsMono',
+                      fontSize: 11,
+                      color: CwColors.ink3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Testnet badge
+            if (chain.isTestnet)
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: CwColors.warn.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  S.testnetBadge,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    color: CwColors.warn,
+                  ),
+                ),
+              ),
+
+            // Checkmark
+            if (isSelected)
+              const Icon(Icons.check_rounded, size: 18, color: CwColors.accent),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Color _chainColor(ChainConfig chain) {
+    switch (chain.name) {
+      case 'ethereum':
+      case 'sepolia':
+        return const Color(0xFF627EEA);
+      case 'base':
+      case 'base-sepolia':
+        return const Color(0xFF0052FF);
+      case 'arbitrum':
+        return const Color(0xFF28A0F0);
+      case 'optimism':
+        return const Color(0xFFFF0420);
+      case 'bsc':
+        return const Color(0xFFF3BA2F);
+      case 'polygon':
+        return const Color(0xFF8247E5);
+      default:
+        return CwColors.ink3;
+    }
   }
 }

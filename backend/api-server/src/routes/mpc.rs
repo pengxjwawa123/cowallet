@@ -357,7 +357,7 @@ pub async fn recv_messages(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     } else {
-        // No filter — return all (backwards compatible)
+        // No party filter — return all messages for this session
         sqlx::query_as(
             "SELECT id, from_party, to_party, round, payload, verified, created_at
              FROM mpc_messages
