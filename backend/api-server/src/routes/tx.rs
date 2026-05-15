@@ -15,7 +15,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/submit", post(submit))
-        .route("/status/:tx_hash", get(tx_status))
+        .route("/status/{tx_hash}", get(tx_status))
         .route("/summary", get(spending_summary))
         .route("/simulate", post(simulate))
         .route("/estimate-gas", post(estimate_gas))
