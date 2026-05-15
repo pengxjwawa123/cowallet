@@ -19,11 +19,6 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-/// Debug helper: convert bytes to hex string (no external dependency)
-pub fn hex_str(bytes: impl AsRef<[u8]>) -> String {
-    bytes.as_ref().iter().map(|b| format!("{:02x}", b)).collect()
-}
-
 /// A distributed signing session implementing DKLS23.
 ///
 /// This implementation follows the 2-round threshold ECDSA protocol
@@ -523,20 +518,6 @@ impl SignSession {
             // partial_s = k_0^{-1} * m (safe to send: without knowing k_0, useless)
             let partial_s = k_i_inv * m;
 
-            // === DIAGNOSTIC: device generate_round2 ===
-            eprintln!("[SIGN-DIAG-DEVICE-R2] party_index={}", self.party_index);
-            eprintln!("[SIGN-DIAG-DEVICE-R2] r={}", hex_str(r.to_bytes()));
-            eprintln!("[SIGN-DIAG-DEVICE-R2] x_i={}", hex_str(x_i.to_bytes()));
-            eprintln!("[SIGN-DIAG-DEVICE-R2] lagrange={}", hex_str(lagrange.to_bytes()));
-            eprintln!("[SIGN-DIAG-DEVICE-R2] x_prime_i={}", hex_str(x_prime_i.to_bytes()));
-            eprintln!("[SIGN-DIAG-DEVICE-R2] k_i_inv={}", hex_str(k_i_inv.to_bytes()));
-            eprintln!("[SIGN-DIAG-DEVICE-R2] partial_s={}", hex_str(partial_s.to_bytes()));
-            eprintln!("[SIGN-DIAG-DEVICE-R2] msg_hash={}", hex_str(self.message_hash));
-            if let Some(ref share) = self.my_share {
-                eprintln!("[SIGN-DIAG-DEVICE-R2] pubkey={}", hex_str(&share.public_key));
-            }
-            // === END DIAGNOSTIC ===
-
             // Serialize Enc(k_0^{-1} * x'_0)
             let encrypted_bytes = serde_json::to_vec(&encrypted_share)
                 .map_err(|e| MpcError::SigningFailed(format!("paillier serialization failed: {}", e)))?;
@@ -709,20 +690,6 @@ impl SignSession {
             MpcError::SigningFailed("k_1 not set".into()))?;
         let k_1_inv = my_k.invert().unwrap_or(Scalar::ONE);
 
-        // === DIAGNOSTIC: server_compute_signature ===
-        eprintln!("[SIGN-DIAG-SERVER] party_index={}", self.party_index);
-        eprintln!("[SIGN-DIAG-SERVER] r={}", hex_str(r.to_bytes()));
-        eprintln!("[SIGN-DIAG-SERVER] x_1={}", hex_str(share_bytes));
-        eprintln!("[SIGN-DIAG-SERVER] lagrange={}", hex_str(lagrange.to_bytes()));
-        eprintln!("[SIGN-DIAG-SERVER] x_prime_1={}", hex_str(x_prime_1.to_bytes()));
-        eprintln!("[SIGN-DIAG-SERVER] k_1_inv={}", hex_str(k_1_inv.to_bytes()));
-        eprintln!("[SIGN-DIAG-SERVER] partial_s(from_device)={}", hex_str(partial_s.to_bytes()));
-        eprintln!("[SIGN-DIAG-SERVER] msg_hash={}", hex_str(self.message_hash));
-        if let Some(ref share) = self.my_share {
-            eprintln!("[SIGN-DIAG-SERVER] pubkey={}", hex_str(&share.public_key));
-        }
-        // === END DIAGNOSTIC ===
-
         // Compute Enc(s) using three terms:
         //   s = k_0^{-1}*k_1^{-1}*m + k_0^{-1}*k_1^{-1}*r*x'_0 + k_0^{-1}*k_1^{-1}*r*x'_1
         // term1 = k_1^{-1} * partial_s  (plaintext, since partial_s = k_0^{-1}*m)
@@ -799,18 +766,6 @@ impl SignSession {
 
         let s_big = paillier.secret.decrypt(&paillier.public, &c_s);
 
-        // === DIAGNOSTIC: device_receive_signature ===
-        eprintln!("[SIGN-DIAG-DEVICE] party_index={}", self.party_index);
-        eprintln!("[SIGN-DIAG-DEVICE] r={}", hex_str(r.to_bytes()));
-        eprintln!("[SIGN-DIAG-DEVICE] msg_hash={}", hex_str(self.message_hash));
-        eprintln!("[SIGN-DIAG-DEVICE] s_big(decrypted)={}", s_big.to_str_radix(16));
-        eprintln!("[SIGN-DIAG-DEVICE] paillier_n_bits={}", paillier.public.n.bits());
-        if let Some(ref share) = self.my_share {
-            eprintln!("[SIGN-DIAG-DEVICE] pubkey={}", hex_str(&share.public_key));
-            eprintln!("[SIGN-DIAG-DEVICE] x_0={}", hex_str(&share.secret_share.as_bytes()[..32]));
-        }
-        // === END DIAGNOSTIC ===
-
         // Reduce mod q and handle potential negative wrapping
         let n = &paillier.public.n;
         let half_n = n / BigUint::from(2u64);
@@ -836,13 +791,6 @@ impl SignSession {
         let s_was_high: bool = s.is_high().into();
         let s_normalized = if s_was_high { -s } else { s };
         let s_final_bytes: [u8; 32] = s_normalized.to_bytes().into();
-
-        // === DIAGNOSTIC: final signature values ===
-        eprintln!("[SIGN-DIAG-DEVICE] s_mod_q={}", hex_str(s.to_bytes()));
-        eprintln!("[SIGN-DIAG-DEVICE] s_was_high={}", s_was_high);
-        eprintln!("[SIGN-DIAG-DEVICE] s_final={}", hex_str(&s_final_bytes));
-        eprintln!("[SIGN-DIAG-DEVICE] r_final={}", hex_str(&r_bytes));
-        // === END DIAGNOSTIC ===
 
         // Determine correct recovery id by trying both and verifying against known public key
         let v = self.determine_recovery_id(&r_bytes, &s_final_bytes)?;
@@ -899,8 +847,6 @@ impl SignSession {
 
     /// Determine the correct recovery ID by trying both v=27 and v=28
     /// and verifying which one recovers to our known public key.
-    /// Returns an error if neither recovery ID produces the expected public key,
-    /// which indicates mismatched key shares between device and server.
     fn determine_recovery_id(&self, r_bytes: &[u8; 32], s_bytes: &[u8; 32]) -> Result<u8> {
         use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
 
@@ -945,10 +891,8 @@ impl SignSession {
             }
         }
 
-        // Ecrecover didn't match — fall back to computing recovery ID from R point y-parity.
-        // This can happen when the Paillier-homomorphic path produces a valid signature
-        // that doesn't round-trip through ecrecover against the stored public key.
-        eprintln!("[SIGN-WARN] ecrecover didn't match stored pubkey, using R-point fallback");
+        // Fallback: use computed recovery id if ecrecover didn't match
+        // (shouldn't happen if signature is correct)
         let aggregate_r = self.aggregate_r_point
             .ok_or_else(|| MpcError::SigningFailed("aggregate R not set for fallback".into()))?;
         self.compute_recovery_id(&aggregate_r, &Scalar::ONE)

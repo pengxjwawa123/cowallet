@@ -200,22 +200,9 @@ impl MpcParticipant {
         config: SessionConfig,
         wallet_id: Option<Uuid>,
     ) -> Result<(), String> {
-        // Resolve wallet_id: if not provided, look up user's active wallet from DB
-        let resolved_wallet_id = if wallet_id.is_some() {
-            wallet_id
-        } else {
-            let row: Option<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM wallets WHERE user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1"
-            )
-            .bind(user_id)
-            .fetch_optional(&self.db)
-            .await
-            .map_err(|e| format!("failed to lookup wallet: {}", e))?;
-            row.map(|r| r.0)
-        };
-
         // Verify server shard exists before accepting the session
-        if let Some(wid) = resolved_wallet_id {
+        // Use wallet-specific shard if wallet_id is provided
+        if let Some(wid) = wallet_id {
             let _key_share = self.shard_store.load_key_share_for_wallet(user_id, wid).await?
                 .ok_or_else(|| format!("no server shard for user {} wallet {}, DKG must complete first", user_id, wid))?;
         } else {
@@ -226,7 +213,7 @@ impl MpcParticipant {
         // Try to reserve a presignature for this signing session.
         // If available, the pre-computed k_1 can be used instead of generating fresh
         // randomness during Round 1, reducing online signing latency.
-        if let (Some(wid), Some(presign_mgr)) = (resolved_wallet_id, &self.presign_manager) {
+        if let (Some(wid), Some(presign_mgr)) = (wallet_id, &self.presign_manager) {
             match presign_mgr.reserve_presignature(wid, session_id).await {
                 Ok(Some(presig_data)) => {
                     tracing::info!(
@@ -257,10 +244,10 @@ impl MpcParticipant {
             phase: SessionPhase::SignAwaitingRound1,
             config,
             created_at: Instant::now(),
-            wallet_id: resolved_wallet_id,
+            wallet_id,
         });
 
-        tracing::info!("Server Sign session {} initialized (wallet: {:?}), awaiting client Round 1", session_id, resolved_wallet_id);
+        tracing::info!("Server Sign session {} initialized (wallet: {:?}), awaiting client Round 1", session_id, wallet_id);
         Ok(())
     }
 
@@ -435,46 +422,23 @@ impl MpcParticipant {
                         .ok_or_else(|| format!("no server shard for user {}", user_id))?
                 };
 
-                // Verify loaded shard's public key matches the wallet's eth_address
-                let shard_eth_addr = key_share.eth_address();
-                let shard_addr_hex = format!("0x{}", hex::encode(shard_eth_addr));
-                if let Some(wid) = wallet_id {
-                    let wallet_addr: Option<(Vec<u8>,)> = sqlx::query_as(
-                        "SELECT eth_address FROM wallets WHERE id = $1"
-                    )
-                    .bind(wid)
-                    .fetch_optional(&self.db)
-                    .await
-                    .map_err(|e| format!("wallet address lookup failed: {}", e))?;
-
-                    if let Some((db_addr_bytes,)) = wallet_addr {
-                        let db_addr_hex = format!("0x{}", hex::encode(&db_addr_bytes));
-                        if shard_eth_addr.as_slice() != db_addr_bytes.as_slice() {
-                            tracing::error!(
-                                "[MPC Sign] SHARD MISMATCH! session={} wallet={} shard_addr={} db_addr={}",
-                                session_id, wid, shard_addr_hex, db_addr_hex
-                            );
-                            return Err(format!(
-                                "server shard address mismatch: shard derives to {} but wallet has {}. \
-                                 Key shares are corrupted or from different DKG sessions.",
-                                shard_addr_hex, db_addr_hex
-                            ));
-                        }
-                    }
-                }
-
-                tracing::info!(
-                    "[MPC Sign] session={} user={} wallet={:?} shard_addr={} party={} total_parties={}",
-                    session_id, user_id, wallet_id, shard_addr_hex, key_share.party, key_share.total_parties,
+                tracing::debug!(
+                    "[MPC Sign] session={} user={} wallet={:?}",
+                    session_id, user_id, wallet_id,
                 );
 
                 let mut sign = SignSession::new_distributed(config, key_share, msg_hash);
 
-                // TODO: Presignature disabled for debugging — always generate fresh nonce
-                // to isolate whether presig is causing address mismatch
-                let server_r1 = sign.generate_round1()
-                    .map_err(|e| format!("sign generate_round1 failed: {}", e))?;
-                tracing::info!("Sign session {}: using FRESH nonce (presig disabled for debug)", session_id);
+                // Use reserved presignature if available, otherwise generate fresh
+                let server_r1 = if let Some(presig) = self.reserved_presignatures.get(&session_id) {
+                    let k_bytes: [u8; 32] = presig.k.as_slice().try_into()
+                        .map_err(|_| "presign k wrong length".to_string())?;
+                    sign.generate_round1_with_presign(&k_bytes, &presig.big_r)
+                        .map_err(|e| format!("sign generate_round1_with_presign failed: {}", e))?
+                } else {
+                    sign.generate_round1()
+                        .map_err(|e| format!("sign generate_round1 failed: {}", e))?
+                };
 
                 // Now process client's R_0
                 // Strip the trailing 32-byte msg_hash that the client appended

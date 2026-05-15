@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../api/mpc_api.dart';
-import '../api/wallet_api.dart';
 import '../bridge/mpc_bridge.dart';
 import '../network/mpc_websocket.dart';
 import '../platform/cloud_backup.dart';
@@ -25,7 +24,7 @@ class MpcWalletService implements WalletService {
   static const int _deviceParty = 0;
   static const int _serverParty = 1;
   static const int _backupParty = 2;
-  static const Duration _wsTimeout = Duration(seconds: 30);
+  static const Duration _wsTimeout = Duration(seconds: 5);
 
   /// 执行完整的 DKG 密钥生成协议
   /// [walletId] 可选，用于多钱包场景
@@ -44,25 +43,18 @@ class MpcWalletService implements WalletService {
     final sessionId = sessionResult.data!['session_id'] as String;
     _currentSessionId = sessionId;
 
-    final ws = MpcWebSocket(sessionId: sessionId, partyIndex: _deviceParty, disableAutoReconnect: true);
+    final ws = MpcWebSocket(sessionId: sessionId, partyIndex: _deviceParty);
     try {
       await ws.connect();
 
-      // Collect server messages from both WS and HTTP polling.
-      // Server's Round 1 is already in DB (generated during createSession),
-      // so we poll HTTP as primary source rather than relying on WS catch-up race.
+      // Subscribe to messages immediately after connect to capture catch-up messages
       final serverMessages = <MpcMessage>[];
       final messagesReady = Completer<List<MpcMessage>>();
       final subscription = ws.messages.listen((msg) {
         if (msg.fromParty == _serverParty) {
-          final alreadyHas = serverMessages.any(
-            (m) => m.round == msg.round && m.fromParty == msg.fromParty,
-          );
-          if (!alreadyHas) {
-            serverMessages.add(msg);
-            if (serverMessages.length >= 2 && !messagesReady.isCompleted) {
-              messagesReady.complete(serverMessages);
-            }
+          serverMessages.add(msg);
+          if (serverMessages.length >= 2 && !messagesReady.isCompleted) {
+            messagesReady.complete(serverMessages);
           }
         }
       });
@@ -78,34 +70,13 @@ class MpcWalletService implements WalletService {
         createdAt: DateTime.now(),
       ));
 
-      // Fetch server's Round 1 via HTTP immediately — it's guaranteed to be in DB
-      // since createSession generates it synchronously before returning.
-      final serverR1Poll = await MpcApi.receiveMessages(
-        sessionId,
-        party: _deviceParty,
-      );
-      if (serverR1Poll.isSuccess && serverR1Poll.data != null) {
-        for (final raw in serverR1Poll.data!) {
-          final m = Map<String, dynamic>.from(raw as Map);
-          if (m['from_party'] == _serverParty) {
-            serverMessages.add(MpcMessage(
-              fromParty: m['from_party'] as int,
-              toParty: m['to_party'] as int,
-              round: m['round'] as int,
-              payload: (m['payload'] as List<dynamic>).cast<int>(),
-            ));
-          }
-        }
-      }
-      if (serverMessages.isEmpty) {
-        throw MpcException('Server failed to generate DKG Round 1 — session may have failed on server');
-      }
-
       final round1Json = await MpcBridge.dkgGenerateRound1(localSessionId);
+      // Server expects the raw payload bytes from the ProtocolMessage, not the full JSON.
+      // Extract the "payload" field (array of ints) from the JSON.
       final round1Msg = jsonDecode(round1Json) as Map<String, dynamic>;
       final round1Payload = List<int>.from(round1Msg['payload'] as List);
 
-      // Send Round 1 via HTTP (reliable delivery, triggers server Round 2)
+      // Send Round 1 via HTTP (reliable delivery)
       await MpcApi.sendMessage(
         sessionId: sessionId,
         fromParty: _deviceParty,
@@ -117,31 +88,23 @@ class MpcWalletService implements WalletService {
       // Update progress
       await MpcSessionStore.updateCurrentRound(1);
 
-      // Wait for server's Round 2 (triggered by our Round 1 send).
-      // We already have Round 1, so we only need 1 more message.
-      if (serverMessages.length < 2) {
-        final allServerMessages = await messagesReady.future.timeout(
-          _wsTimeout,
-          onTimeout: () async {
-            // Fallback to HTTP polling for Round 2
-            final polled = await _pollMessagesFallback(
-              sessionId: sessionId,
+      // Wait for server's Round 1 + Round 2 (listener started before send)
+      final allServerMessages = await messagesReady.future.timeout(
+        _wsTimeout,
+        onTimeout: () async {
+          await subscription.cancel();
+          // Fallback to HTTP polling
+          if (_currentSessionId != null) {
+            return await _pollMessagesFallback(
+              sessionId: _currentSessionId!,
               party: _deviceParty,
               expectedCount: 2,
             );
-            return polled;
-          },
-        );
-        // Merge any polled messages we don't already have
-        for (final msg in allServerMessages) {
-          final alreadyHas = serverMessages.any(
-            (m) => m.round == msg.round && m.fromParty == msg.fromParty,
-          );
-          if (!alreadyHas) serverMessages.add(msg);
-        }
-      }
+          }
+          throw MpcException('Timeout waiting for server response via WebSocket');
+        },
+      );
       await subscription.cancel();
-      final allServerMessages = serverMessages;
 
       // Server returns raw payload bytes; wrap them into ProtocolMessage JSON for the FFI.
       final serverRound1Msgs = allServerMessages
@@ -195,15 +158,6 @@ class MpcWalletService implements WalletService {
       await SecureStorage.save('mpc_address', walletInfo.address);
       await SecureStorage.save('mpc_session_id', sessionId);
 
-      // Retrieve and store wallet_id from the completed session
-      final sessionInfo = await MpcApi.getSession(sessionId);
-      if (sessionInfo.isSuccess && sessionInfo.data != null) {
-        final wid = sessionInfo.data!['wallet_id'] as String?;
-        if (wid != null && wid.isNotEmpty) {
-          await SecureStorage.save('mpc_wallet_id', wid);
-        }
-      }
-
       // Persist device shard to hardware-backed storage and public key to secure storage
       final deviceShardBytes = await MpcBridge.exportDeviceShard();
       await SecureHardware.storeDeviceShard(Uint8List.fromList(deviceShardBytes));
@@ -247,21 +201,6 @@ class MpcWalletService implements WalletService {
       shardBytes: shardBytes.toList(),
       publicKey: publicKey,
     );
-
-    // Verify the loaded shard derives to the expected wallet address.
-    // Catches shard corruption or mismatch before wasting a signing round-trip.
-    final expectedAddr = await SecureStorage.get('mpc_address');
-    if (expectedAddr != null && expectedAddr.isNotEmpty) {
-      final keyStatus = await MpcBridge.getKeyStatus();
-      if (keyStatus.address.isNotEmpty &&
-          keyStatus.address.toLowerCase() != expectedAddr.toLowerCase()) {
-        print('[MpcWalletService] SHARD MISMATCH: loaded shard derives to '
-            '${keyStatus.address} but expected $expectedAddr');
-        throw MpcException(
-          'Device shard mismatch: loaded shard derives to ${keyStatus.address} '
-          'but wallet address is $expectedAddr. Please re-generate wallet keys.');
-      }
-    }
   }
 
   /// 执行分布式签名协议 (2-party ECDSA, 私钥从未被重组)
@@ -307,7 +246,7 @@ class MpcWalletService implements WalletService {
 
       // Send Round 1 + msg_hash via WebSocket
       final round1WithHash = [...round1.payload, ...msgHash];
-      await ws.sendRaw(toParty: _serverParty, round: 1, payload: round1WithHash);
+      ws.sendRaw(toParty: _serverParty, round: 1, payload: round1WithHash);
 
       await MpcSessionStore.updateCurrentRound(1);
 
@@ -322,7 +261,7 @@ class MpcWalletService implements WalletService {
       );
 
       // Send DeviceContribution
-      await ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
+      ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
 
       await MpcSessionStore.updateCurrentRound(2);
 
@@ -363,9 +302,6 @@ class MpcWalletService implements WalletService {
   /// 刷新密钥分片，旧分片失效，公钥不变
   /// [walletId] 可选，指定要轮转的钱包
   Future<WalletInfo> runReshare({String? walletId}) async {
-    // Ensure the current device shard is loaded into Rust memory before reshare
-    await _ensureShardLoaded();
-
     final sessionResult = await MpcApi.createSession(
       sessionType: 'reshare',
       parties: [_deviceParty, _serverParty],
@@ -380,7 +316,7 @@ class MpcWalletService implements WalletService {
     final remoteSessionId = sessionResult.data!['session_id'] as String;
     _currentSessionId = remoteSessionId;
 
-    final ws = MpcWebSocket(sessionId: remoteSessionId, partyIndex: _deviceParty, disableAutoReconnect: true);
+    final ws = MpcWebSocket(sessionId: remoteSessionId, partyIndex: _deviceParty);
     try {
       await ws.connect();
 
@@ -404,7 +340,7 @@ class MpcWalletService implements WalletService {
         final msg = jsonDecode(msgJson) as Map<String, dynamic>;
         final to = msg['to'] as int;
         if (to == _serverParty) {
-          await ws.sendRaw(
+          ws.sendRaw(
             toParty: _serverParty,
             round: 1,
             payload: utf8.encode(msgJson),
@@ -426,26 +362,11 @@ class MpcWalletService implements WalletService {
       // Finalize: new shard replaces old in memory
       final walletInfo = await MpcBridge.reshareFinalize(localSessionId);
 
-      // Persist the new device shard to hardware-backed storage
-      final newShardBytes = await MpcBridge.exportDeviceShard();
-      await SecureHardware.storeDeviceShard(Uint8List.fromList(newShardBytes));
-
       // Update stored address (should be unchanged)
       await SecureStorage.save('mpc_address', walletInfo.address);
 
-      // Update public key in case it changed (shouldn't, but be safe)
-      final pubKeyHex = walletInfo.publicKey
-          .map((b) => b.toRadixString(16).padLeft(2, '0'))
-          .join();
-      await SecureStorage.save('mpc_public_key', pubKeyHex);
-
       // Clear session state on success
       await MpcSessionStore.clearSession();
-
-      // Record key usage for health tracking
-      final health = KeyHealthService();
-      health.recordPhoneKeyUsage();
-      health.recordServerKeyUsage();
 
       return walletInfo;
     } catch (e) {
@@ -463,15 +384,7 @@ class MpcWalletService implements WalletService {
   /// 预计算签名材料，后续签名可瞬间完成
   /// [walletId] 钱包ID
   /// [count] 要生成的预签名数量
-  /// [onProgress] 可选的进度回调 (completedCount, totalCount)
-  Future<int> runPresign({
-    required String walletId,
-    int count = 5,
-    void Function(int completed, int total)? onProgress,
-  }) async {
-    // Ensure device shard is loaded into Rust memory before protocol execution
-    await _ensureShardLoaded();
-
+  Future<int> runPresign({required String walletId, int count = 5}) async {
     int generated = 0;
 
     for (int i = 0; i < count; i++) {
@@ -483,17 +396,10 @@ class MpcWalletService implements WalletService {
       );
 
       if (!sessionResult.isSuccess || sessionResult.data == null) {
-        if (generated == 0) {
-          throw MpcException(
-            'Failed to create presign session: ${sessionResult.errorMessage}',
-          );
-        }
-        // Partial success: some presigns generated before failure
         break;
       }
 
       final remoteSessionId = sessionResult.data!['session_id'] as String;
-      _currentSessionId = remoteSessionId;
 
       final ws = MpcWebSocket(sessionId: remoteSessionId, partyIndex: _deviceParty);
       try {
@@ -503,19 +409,8 @@ class MpcWalletService implements WalletService {
         final round1 = await MpcBridge.presignGenerateRound1();
         final localSessionId = round1.sessionId;
 
-        // Save session state for crash recovery
-        await MpcSessionStore.saveSession(MpcSessionState(
-          sessionId: localSessionId,
-          remoteSessionId: remoteSessionId,
-          sessionType: 'presign',
-          currentRound: 0,
-          createdAt: DateTime.now(),
-          metadata: {'wallet_id': walletId, 'index': i, 'total': count},
-        ));
-
         // Send Round 1 to server
-        await ws.sendRaw(toParty: _serverParty, round: 1, payload: round1.payload);
-        await MpcSessionStore.updateCurrentRound(1);
+        ws.sendRaw(toParty: _serverParty, round: 1, payload: round1.payload);
 
         // Wait for server's Round 1
         final serverR1 = await _waitForMessages(ws, expectedCount: 1);
@@ -527,35 +422,11 @@ class MpcWalletService implements WalletService {
         );
 
         // Send Round 2
-        await ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
-        await MpcSessionStore.updateCurrentRound(2);
+        ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
 
-        // Finalize presignature and extract presig data
-        final presigData = await MpcBridge.presignFinalize(localSessionId);
-
-        // Upload presign data to server for storage
-        await MpcApi.storePresignData(
-          walletId: walletId,
-          sessionId: remoteSessionId,
-          presigData: presigData,
-        );
-
+        // Finalize presignature
+        await MpcBridge.presignFinalize(localSessionId);
         generated++;
-        onProgress?.call(generated, count);
-
-        // Clear session state on success for this iteration
-        await MpcSessionStore.clearSession();
-      } catch (e) {
-        print('[MpcWalletService] Presign error (${i + 1}/$count): $e');
-        if (generated == 0) {
-          // No presigns generated at all - throw for UI to handle
-          throw MpcSessionInterruptedException(
-            'Presign session interrupted: $e',
-            sessionState: await MpcSessionStore.loadSession(),
-          );
-        }
-        // Partial success - stop the loop and return what we got
-        break;
       } finally {
         await ws.disconnect();
       }
@@ -640,27 +511,7 @@ class MpcWalletService implements WalletService {
 
   @override
   Future<SignResult> signWithSession(List<int> msgHash) async {
-    String? walletId = await SecureStorage.get('mpc_wallet_id');
-
-    // If wallet_id not stored locally, fetch from backend and cache it
-    if (walletId == null || walletId.isEmpty) {
-      final address = await getAddress();
-      final walletsResult = await WalletApi.listWallets();
-      if (walletsResult.isSuccess && walletsResult.data != null) {
-        for (final w in walletsResult.data!) {
-          final wAddr = w['eth_address'] as String? ?? '';
-          if (wAddr.toLowerCase() == address.toLowerCase()) {
-            walletId = w['id'] as String?;
-            if (walletId != null) {
-              await SecureStorage.save('mpc_wallet_id', walletId);
-            }
-            break;
-          }
-        }
-      }
-    }
-
-    final signature = await runSign(msgHash, walletId: walletId);
+    final signature = await runSign(msgHash);
     return SignResult(signature: signature, sessionId: _currentSessionId);
   }
 

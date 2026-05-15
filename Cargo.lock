@@ -2325,7 +2325,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "anyhow",
- "base64",
  "bincode",
  "chain-evm",
  "flutter_rust_bridge",

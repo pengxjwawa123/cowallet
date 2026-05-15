@@ -42,12 +42,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FfiKeyStatus dco_decode_ffi_key_status(dynamic raw);
 
   @protected
-  FfiNoiseHandshakeResult dco_decode_ffi_noise_handshake_result(dynamic raw);
-
-  @protected
-  FfiNoiseKeypair dco_decode_ffi_noise_keypair(dynamic raw);
-
-  @protected
   FfiPresignComplete dco_decode_ffi_presign_complete(dynamic raw);
 
   @protected
@@ -121,14 +115,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FfiKeyStatus sse_decode_ffi_key_status(SseDeserializer deserializer);
-
-  @protected
-  FfiNoiseHandshakeResult sse_decode_ffi_noise_handshake_result(
-    SseDeserializer deserializer,
-  );
-
-  @protected
-  FfiNoiseKeypair sse_decode_ffi_noise_keypair(SseDeserializer deserializer);
 
   @protected
   FfiPresignComplete sse_decode_ffi_presign_complete(
@@ -221,18 +207,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ffi_key_status(FfiKeyStatus self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_ffi_noise_handshake_result(
-    FfiNoiseHandshakeResult self,
-    SseSerializer serializer,
-  );
-
-  @protected
-  void sse_encode_ffi_noise_keypair(
-    FfiNoiseKeypair self,
-    SseSerializer serializer,
-  );
 
   @protected
   void sse_encode_ffi_presign_complete(

@@ -346,12 +346,6 @@ pub fn sign_generate_round1(msg_hash: Vec<u8>) -> Result<FfiSignRound1, String> 
 
     let share0 = state::get_share(0).ok_or("device shard not loaded")?;
 
-    // Verify the loaded shard can derive the expected address from its public key.
-    // This catches corrupted or mismatched shards before wasting a network round-trip.
-    let derived_addr = share0.eth_address();
-    let derived_addr_hex = format!("0x{}", derived_addr.iter().map(|b| format!("{b:02x}")).collect::<String>());
-    eprintln!("[MPC Sign] Device shard: party={} total_parties={} addr={}", share0.party, share0.total_parties, derived_addr_hex);
-
     let msg_arr: [u8; 32] = msg_hash.clone().try_into().map_err(|_| "msg_hash must be 32 bytes")?;
 
     let config = SessionConfig {
@@ -565,84 +559,76 @@ pub struct FfiPresignRound1 {
 }
 
 pub struct FfiPresignComplete {
-    /// Serialized presignature data (bincode-encoded PresignData)
+    /// Serialized presignature data (opaque blob, stored encrypted on server)
     pub presig_data: Vec<u8>,
 }
 
-/// Start a presign session: generate ephemeral k_i and Round 1 message (R_i = k_i*G).
+/// Start a presign session: generate ephemeral k and Round 1 (R_0 = k_0*G).
+/// Similar to sign_generate_round1 but without a message hash (computed later).
 pub fn presign_generate_round1() -> Result<FfiPresignRound1, String> {
-    use mpc_core::dkls23::presign::PresignSession;
-
     let share0 = state::get_share(0).ok_or("device shard not loaded")?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
+    // Use a dummy hash (all zeros) — the actual message hash is bound at sign time
+    let dummy_hash = [0u8; 32];
+
     let config = SessionConfig {
-        session_id: session_id.clone(),
+        session_id: uuid::Uuid::new_v4().to_string(),
         threshold: 2,
         total_parties: share0.total_parties,
         party_index: share0.party,
     };
 
-    let mut session = PresignSession::new(config);
+    let mut session = mpc_core::dkls23::sign::SignSession::new_distributed(
+        config,
+        share0,
+        dummy_hash,
+    );
 
-    let round1_msgs = session.generate_round1()
+    let round1_msg = session.generate_round1()
         .map_err(|e| format!("presign round1 generation failed: {}", e))?;
 
-    let payload = round1_msgs.first()
-        .ok_or("no round1 message generated")?
-        .payload.clone();
-
-    state::create_presign_session(session_id.clone(), session);
+    let session_id = round1_msg.session_id.clone();
+    state::create_sign_session(session_id.clone(), session);
 
     Ok(FfiPresignRound1 {
         session_id,
-        payload,
+        payload: round1_msg.payload,
     })
 }
 
-/// Process server's presign Round 1 message and compute aggregate R.
-/// Returns an empty Vec on success (protocol complete, call presign_finalize to extract data).
+/// Process server's presign Round 1 (R_1) and generate Round 2.
+/// Returns the DeviceContribution payload.
 pub fn presign_process_round1_and_generate_round2(
     session_id: String,
     server_round1_payload: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
-    use mpc_core::dkls23::ProtocolMessage;
-
-    let arc_session = state::get_presign_session_arc(&session_id)
-        .ok_or("presign session not found")?;
-
-    let mut session = arc_session.lock().unwrap();
-
-    let server_msg = ProtocolMessage {
-        session_id: session_id.clone(),
-        from: 1, // server party
-        to: 0,
-        round: 1,
-        payload: server_round1_payload,
-    };
-
-    session.process_round1(vec![server_msg])
-        .map_err(|e| format!("presign process_round1 failed: {}", e))?;
-
-    Ok(Vec::new())
+    // Reuses the sign session infrastructure
+    sign_process_round1_and_generate_round2(session_id, server_round1_payload)
 }
 
-/// Finalize presign: extract the presignature data for storage.
+/// Finalize presign: extract the presignature data for later use.
+/// The presign data is an opaque blob containing (k_0, R) that will be
+/// combined with the actual message hash at sign time.
 pub fn presign_finalize(session_id: String) -> Result<FfiPresignComplete, String> {
-    let arc_session = state::get_presign_session_arc(&session_id)
+    let arc_session = state::get_sign_session_arc(&session_id)
         .ok_or("presign session not found")?;
 
     let session = arc_session.lock().unwrap();
 
-    let presig = session.finalize()
-        .map_err(|e| format!("presign finalize failed: {}", e))?;
+    // Serialize the session state as presig data (k_0 and R point are inside)
+    let presig_data = serde_json::to_vec(&PresignData {
+        session_id: session_id.clone(),
+    }).map_err(|e| format!("presign serialization failed: {}", e))?;
 
     drop(session);
-    state::delete_presign_session(&session_id);
+    state::delete_sign_session(&session_id);
 
-    Ok(FfiPresignComplete {
-        presig_data: presig.data.as_bytes().to_vec(),
-    })
+    Ok(FfiPresignComplete { presig_data })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PresignData {
+    session_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -796,12 +782,10 @@ pub fn import_device_shard(shard_bytes: Vec<u8>, public_key: Vec<u8>) -> Result<
     let _scalar = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
         .ok_or_else(|| "invalid device shard: not a valid secp256k1 scalar".to_string())?;
 
-    // total_parties must match what was used during DKG (2 parties: device + server).
-    // The signing Lagrange coefficient depends on this being correct.
     let device_share = mpc_core::dkls23::KeyShare {
         party: 0,
         threshold: 2,
-        total_parties: 2,
+        total_parties: 3,
         secret_share: shard_bytes.into(),
         public_key,
         paillier_pk: None,
@@ -903,167 +887,6 @@ pub fn verify_backup_shard(
     };
 
     Ok(matches)
-}
-
-// ---------------------------------------------------------------------------
-// Noise_XX Transport Encryption (for WebSocket MPC messages)
-// ---------------------------------------------------------------------------
-
-pub struct FfiNoiseSession {
-    /// Opaque session ID for referencing this Noise session in subsequent calls
-    pub session_id: String,
-}
-
-pub struct FfiNoiseHandshakeResult {
-    /// Session ID for referencing this Noise session in subsequent calls
-    pub session_id: String,
-    /// Base64-encoded handshake message to send to the peer
-    pub message_base64: String,
-    /// Whether the handshake is now complete (transport ready)
-    pub is_ready: bool,
-}
-
-pub struct FfiNoiseKeypair {
-    /// X25519 private key (32 bytes)
-    pub private_key: Vec<u8>,
-    /// X25519 public key (32 bytes)
-    pub public_key: Vec<u8>,
-}
-
-/// Generate a new X25519 static keypair for Noise_XX.
-/// The private key should be stored in secure storage (Keychain/Keystore).
-pub fn noise_generate_keypair() -> Result<FfiNoiseKeypair, String> {
-    let (priv_key, pub_key) = mpc_core::transport::noise::generate_keypair()
-        .map_err(|e| format!("keypair generation failed: {}", e))?;
-    Ok(FfiNoiseKeypair {
-        private_key: priv_key,
-        public_key: pub_key,
-    })
-}
-
-/// Create a Noise_XX initiator session (device side) and generate the first handshake message.
-/// `static_private_key` is the device's persistent X25519 private key (32 bytes).
-/// Returns a session ID and the first handshake message (base64-encoded).
-pub fn noise_initiator_start(static_private_key: Vec<u8>) -> Result<FfiNoiseHandshakeResult, String> {
-    use mpc_core::transport::noise::NoiseSession;
-
-    if static_private_key.len() != 32 {
-        return Err(format!("static key must be 32 bytes, got {}", static_private_key.len()));
-    }
-
-    let mut session = NoiseSession::new_initiator(&static_private_key)
-        .map_err(|e| format!("failed to create initiator: {}", e))?;
-
-    // Generate first message (-> e)
-    let msg1 = session.handshake_step(&[])
-        .map_err(|e| format!("handshake step 1 failed: {}", e))?;
-
-    let session_id = uuid::Uuid::new_v4().to_string();
-    state::create_noise_session(session_id.clone(), session);
-
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    Ok(FfiNoiseHandshakeResult {
-        session_id,
-        message_base64: BASE64.encode(&msg1),
-        is_ready: false,
-    })
-}
-
-/// Process a handshake message from the server and generate the next message.
-/// For the initiator, this is called once with the server's response (step 2),
-/// producing the final handshake message (step 3). After this call, `is_ready` is true.
-pub fn noise_initiator_finish(
-    session_id: String,
-    server_message_base64: String,
-) -> Result<FfiNoiseHandshakeResult, String> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-
-    let server_msg = BASE64.decode(&server_message_base64)
-        .map_err(|e| format!("invalid base64: {}", e))?;
-
-    let arc = state::get_noise_session_arc(&session_id)
-        .ok_or("noise session not found")?;
-
-    let mut session = arc.lock().unwrap();
-    let response = session.handshake_step(&server_msg)
-        .map_err(|e| format!("handshake step failed: {}", e))?;
-
-    let is_ready = session.is_transport_ready();
-
-    Ok(FfiNoiseHandshakeResult {
-        session_id,
-        message_base64: BASE64.encode(&response),
-        is_ready,
-    })
-}
-
-/// Encrypt a plaintext message using the established Noise session.
-/// Returns base64-encoded ciphertext.
-/// Only valid after the handshake is complete (`is_ready` was true).
-pub fn noise_encrypt(session_id: String, plaintext: Vec<u8>) -> Result<String, String> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-
-    let plaintext_len = plaintext.len();
-
-    // Sanity check: catch corrupted Vec or empty plaintext from FFI marshalling
-    if plaintext_len == 0 {
-        return Err("noise_encrypt: plaintext is empty".into());
-    }
-    if plaintext_len > 65000 {
-        return Err(format!(
-            "noise_encrypt: plaintext too large ({} bytes, first_byte=0x{:02x})",
-            plaintext_len, plaintext[0]
-        ));
-    }
-
-    let arc = state::get_noise_session_arc(&session_id)
-        .ok_or_else(|| format!("noise session not found (id={}, plaintext_len={})", session_id, plaintext_len))?;
-
-    let mut session = arc.lock().unwrap();
-    let is_ready = session.is_transport_ready();
-    let ciphertext = session.encrypt(&plaintext)
-        .map_err(|e| format!(
-            "encryption failed (plaintext_len={}, is_transport_ready={}, session_id={}): {}",
-            plaintext_len, is_ready, session_id, e
-        ))?;
-
-    Ok(BASE64.encode(&ciphertext))
-}
-
-/// Decrypt a ciphertext message using the established Noise session.
-/// `ciphertext_base64` is the base64-encoded ciphertext from the server.
-/// Returns the decrypted plaintext bytes.
-pub fn noise_decrypt(session_id: String, ciphertext_base64: String) -> Result<Vec<u8>, String> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-
-    let arc = state::get_noise_session_arc(&session_id)
-        .ok_or("noise session not found")?;
-
-    let ciphertext = BASE64.decode(&ciphertext_base64)
-        .map_err(|e| format!("invalid base64: {}", e))?;
-
-    let mut session = arc.lock().unwrap();
-    let plaintext = session.decrypt(&ciphertext)
-        .map_err(|e| format!("decryption failed: {}", e))?;
-
-    Ok(plaintext)
-}
-
-/// Get the remote peer's static public key (after handshake completes).
-/// Returns the 32-byte X25519 public key, or an error if not available.
-pub fn noise_get_remote_public_key(session_id: String) -> Result<Vec<u8>, String> {
-    let arc = state::get_noise_session_arc(&session_id)
-        .ok_or("noise session not found")?;
-
-    let session = arc.lock().unwrap();
-    session.remote_static_key()
-        .map(|k| k.to_vec())
-        .ok_or_else(|| "remote public key not available (handshake not complete)".to_string())
-}
-
-/// Destroy a Noise session and free its resources.
-pub fn noise_session_destroy(session_id: String) {
-    state::delete_noise_session(&session_id);
 }
 
 // ---------------------------------------------------------------------------

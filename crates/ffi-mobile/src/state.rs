@@ -2,22 +2,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use mpc_core::dkls23::dkg::DkgSession;
-use mpc_core::dkls23::presign::PresignSession;
 use mpc_core::dkls23::reshare::ReshareSession;
 use mpc_core::dkls23::sign::SignSession;
 use mpc_core::dkls23::{KeyShare, PartyIndex};
-use mpc_core::transport::noise::NoiseSession;
 
 static SHARDS: Mutex<Option<HashMap<PartyIndex, KeyShare>>> = Mutex::new(None);
 static DKG_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Mutex<DkgSession>>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static SIGN_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Mutex<SignSession>>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-static PRESIGN_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Mutex<PresignSession>>>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static RESHARE_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Mutex<ReshareSession>>>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-static NOISE_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Mutex<NoiseSession>>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn store_shares(shares: Vec<KeyShare>) {
@@ -87,27 +81,6 @@ pub fn delete_sign_session(session_id: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// Presign Session management
-// ---------------------------------------------------------------------------
-
-pub fn create_presign_session(session_id: String, session: PresignSession) {
-    let arc_session = Arc::new(Mutex::new(session));
-    PRESIGN_SESSIONS.lock().unwrap().insert(session_id, arc_session);
-}
-
-pub fn get_presign_session_arc(session_id: &str) -> Option<Arc<Mutex<PresignSession>>> {
-    PRESIGN_SESSIONS
-        .lock()
-        .unwrap()
-        .get(session_id)
-        .map(Arc::clone)
-}
-
-pub fn delete_presign_session(session_id: &str) {
-    PRESIGN_SESSIONS.lock().unwrap().remove(session_id);
-}
-
-// ---------------------------------------------------------------------------
 // Reshare Session management
 // ---------------------------------------------------------------------------
 
@@ -126,27 +99,6 @@ pub fn get_reshare_session_arc(session_id: &str) -> Option<Arc<Mutex<ReshareSess
 
 pub fn delete_reshare_session(session_id: &str) {
     RESHARE_SESSIONS.lock().unwrap().remove(session_id);
-}
-
-// ---------------------------------------------------------------------------
-// Noise Session management
-// ---------------------------------------------------------------------------
-
-pub fn create_noise_session(session_id: String, session: NoiseSession) {
-    let arc_session = Arc::new(Mutex::new(session));
-    NOISE_SESSIONS.lock().unwrap().insert(session_id, arc_session);
-}
-
-pub fn get_noise_session_arc(session_id: &str) -> Option<Arc<Mutex<NoiseSession>>> {
-    NOISE_SESSIONS
-        .lock()
-        .unwrap()
-        .get(session_id)
-        .map(Arc::clone)
-}
-
-pub fn delete_noise_session(session_id: &str) {
-    NOISE_SESSIONS.lock().unwrap().remove(session_id);
 }
 
 // ---------------------------------------------------------------------------
