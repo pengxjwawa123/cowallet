@@ -25,12 +25,44 @@ pub struct WsQuery {
 }
 
 /// JSON message format sent over the WebSocket.
+/// Payload is base64-encoded for compact transport over Noise-encrypted WebSocket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsMessage {
     pub from_party: i16,
     pub to_party: i16,
     pub round: i16,
+    #[serde(with = "payload_b64")]
     pub payload: Vec<u8>,
+}
+
+/// Serde module: serializes Vec<u8> as base64 string, deserializes from either
+/// base64 string or JSON int array (backwards compatible with old clients).
+mod payload_b64 {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use serde::{self, Deserialize, Deserializer, Serializer, de};
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        serializer.serialize_str(&BASE64.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where D: Deserializer<'de> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => {
+                BASE64.decode(&s).map_err(de::Error::custom)
+            }
+            serde_json::Value::Array(arr) => {
+                arr.iter()
+                    .map(|v| v.as_u64().ok_or_else(|| de::Error::custom("invalid byte")).and_then(|n| {
+                        u8::try_from(n).map_err(|_| de::Error::custom("byte out of range"))
+                    }))
+                    .collect()
+            }
+            _ => Err(de::Error::custom("payload must be base64 string or byte array")),
+        }
+    }
 }
 
 /// Noise_XX handshake control messages exchanged before encrypted transport begins.

@@ -220,11 +220,36 @@ impl NoiseSession {
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let transport = match &mut self.state {
             SessionState::Transport(t) => t,
-            _ => return Err(MpcError::Transport("cannot encrypt: handshake not complete".into())),
+            state => {
+                let state_name = match state {
+                    SessionState::InitiatorStart(_) => "InitiatorStart",
+                    SessionState::InitiatorWaitResp(_) => "InitiatorWaitResp",
+                    SessionState::ResponderStart(_) => "ResponderStart",
+                    SessionState::ResponderWaitFinal(_) => "ResponderWaitFinal",
+                    SessionState::Transport(_) => unreachable!(),
+                    SessionState::Poisoned => "Poisoned",
+                };
+                return Err(MpcError::Transport(format!(
+                    "cannot encrypt: session in {} state (not Transport)", state_name
+                )));
+            }
         };
-        let mut buf = vec![0u8; plaintext.len() + 16]; // +16 for AEAD tag
+        if plaintext.len() > 65519 {
+            return Err(MpcError::Transport(format!(
+                "plaintext too large for Noise frame: {} bytes (max 65519)",
+                plaintext.len()
+            )));
+        }
+        // Allocate output buffer with generous padding. Previously used plaintext.len()+16
+        // (exactly TAGLEN) but this failed on some Android devices with Error::Input from
+        // snow, despite the math being correct. Use 256 extra bytes to rule out any
+        // platform-specific alignment or rounding issues.
+        let buf_len = plaintext.len() + 256;
+        let mut buf = vec![0u8; buf_len];
         let len = transport.write_message(plaintext, &mut buf)
-            .map_err(|e| MpcError::Transport(format!("encryption failed: {}", e)))?;
+            .map_err(|e| MpcError::Transport(format!(
+                "encryption failed (plaintext_len={}, buf_len={}): {}", plaintext.len(), buf_len, e
+            )))?;
         buf.truncate(len);
         Ok(buf)
     }

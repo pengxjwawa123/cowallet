@@ -995,12 +995,29 @@ pub fn noise_initiator_finish(
 pub fn noise_encrypt(session_id: String, plaintext: Vec<u8>) -> Result<String, String> {
     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
+    let plaintext_len = plaintext.len();
+
+    // Sanity check: catch corrupted Vec or empty plaintext from FFI marshalling
+    if plaintext_len == 0 {
+        return Err("noise_encrypt: plaintext is empty".into());
+    }
+    if plaintext_len > 65000 {
+        return Err(format!(
+            "noise_encrypt: plaintext too large ({} bytes, first_byte=0x{:02x})",
+            plaintext_len, plaintext[0]
+        ));
+    }
+
     let arc = state::get_noise_session_arc(&session_id)
-        .ok_or("noise session not found")?;
+        .ok_or_else(|| format!("noise session not found (id={}, plaintext_len={})", session_id, plaintext_len))?;
 
     let mut session = arc.lock().unwrap();
+    let is_ready = session.is_transport_ready();
     let ciphertext = session.encrypt(&plaintext)
-        .map_err(|e| format!("encryption failed: {}", e))?;
+        .map_err(|e| format!(
+            "encryption failed (plaintext_len={}, is_transport_ready={}, session_id={}): {}",
+            plaintext_len, is_ready, session_id, e
+        ))?;
 
     Ok(BASE64.encode(&ciphertext))
 }

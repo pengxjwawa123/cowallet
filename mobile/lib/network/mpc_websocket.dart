@@ -29,11 +29,18 @@ class MpcMessage {
   });
 
   factory MpcMessage.fromJson(Map<String, dynamic> json) {
+    final rawPayload = json['payload'];
+    final List<int> payload;
+    if (rawPayload is String) {
+      payload = base64Decode(rawPayload);
+    } else {
+      payload = (rawPayload as List<dynamic>).cast<int>();
+    }
     return MpcMessage(
       fromParty: json['from_party'] as int,
       toParty: json['to_party'] as int,
       round: json['round'] as int,
-      payload: (json['payload'] as List<dynamic>).cast<int>(),
+      payload: payload,
       messageId: json['id'] as int?,
     );
   }
@@ -42,7 +49,7 @@ class MpcMessage {
         'from_party': fromParty,
         'to_party': toParty,
         'round': round,
-        'payload': payload,
+        'payload': base64Encode(Uint8List.fromList(payload)),
       };
 }
 
@@ -201,19 +208,47 @@ class MpcWebSocket {
       _reconnectAttempts = 0;
       print('[MpcWebSocket] WebSocket connected');
 
-      // Perform Noise_XX handshake before accepting MPC messages
+      // Set up the single stream subscription FIRST, then use it for both
+      // handshake and normal message processing. This avoids the
+      // "Stream has already been listened to" error.
+      final handshakeCompleter = Completer<void>();
+      final rawMessages = <dynamic>[];
+
+      _subscription = _channel!.stream.listen(
+        (data) {
+          if (!handshakeCompleter.isCompleted) {
+            // During handshake, buffer messages for the handshake handler
+            rawMessages.add(data);
+          } else {
+            // After handshake, normal message processing
+            _onMessage(data);
+          }
+        },
+        onError: (error) {
+          if (!handshakeCompleter.isCompleted) {
+            handshakeCompleter.completeError(error);
+          } else {
+            _onError(error);
+          }
+        },
+        onDone: () {
+          if (!handshakeCompleter.isCompleted) {
+            handshakeCompleter.completeError(
+              Exception('WebSocket closed during Noise handshake'),
+            );
+          } else {
+            _onDone();
+          }
+        },
+      );
+
+      // Perform Noise_XX handshake using the buffered messages
       _state = MpcWebSocketState.noiseHandshaking;
-      await _performNoiseHandshake();
+      await _performNoiseHandshake(rawMessages);
+      handshakeCompleter.complete();
 
       _state = MpcWebSocketState.connected;
       print('[MpcWebSocket] Connected with Noise_XX encryption');
-
-      // 监听消息
-      _subscription = _channel!.stream.listen(
-        _onMessage,
-        onError: _onError,
-        onDone: _onDone,
-      );
 
       // 启动心跳
       _startHeartbeat();
@@ -261,34 +296,35 @@ class MpcWebSocket {
   /// 发送MPC消息（Noise加密）
   Future<void> send(MpcMessage message) async {
     if (_state != MpcWebSocketState.connected || _channel == null) {
-      print('[MpcWebSocket] Cannot send: not connected');
-      return;
+      throw MpcSendFailedException('Cannot send: not connected (state=$_state)');
+    }
+
+    if (_noiseSessionId == null) {
+      throw MpcSendFailedException('Cannot send: Noise session not established');
     }
 
     String jsonStr = jsonEncode(message.toJson());
+    final plaintextBytes = Uint8List.fromList(utf8.encode(jsonStr));
+    print('[MpcWebSocket] Encrypting: plaintext_len=${plaintextBytes.length}, session=$_noiseSessionId');
 
-    try {
-      final ciphertextBase64 = await native.noiseEncrypt(
-        sessionId: _noiseSessionId!,
-        plaintext: Uint8List.fromList(utf8.encode(jsonStr)),
-      );
-      final envelope = jsonEncode({
-        'type': 'noise_encrypted',
-        'data': ciphertextBase64,
-      });
-      _channel!.sink.add(envelope);
-    } catch (e) {
-      print('[MpcWebSocket] Noise encryption failed: $e');
-    }
+    final ciphertextBase64 = await native.noiseEncrypt(
+      sessionId: _noiseSessionId!,
+      plaintext: plaintextBytes,
+    );
+    final envelope = jsonEncode({
+      'type': 'noise_encrypted',
+      'data': ciphertextBase64,
+    });
+    _channel!.sink.add(envelope);
   }
 
   /// 发送原始MPC消息参数
-  void sendRaw({
+  Future<void> sendRaw({
     required int toParty,
     required int round,
     required List<int> payload,
   }) {
-    send(MpcMessage(
+    return send(MpcMessage(
       fromParty: partyIndex,
       toParty: toParty,
       round: round,
@@ -443,7 +479,7 @@ class MpcWebSocket {
   ///   2. Server sends <- e, ee, s, es (response)
   ///   3. Device sends -> s, se (final)
   /// After completion, all messages are encrypted/decrypted via the Noise session.
-  Future<void> _performNoiseHandshake() async {
+  Future<void> _performNoiseHandshake(List<dynamic> rawMessages) async {
     final staticKey = await _getOrCreateStaticKey();
 
     // Step 1: Create initiator session and generate first handshake message
@@ -460,8 +496,8 @@ class MpcWebSocket {
     });
     _channel!.sink.add(step1Msg);
 
-    // Wait for server's step 2 response
-    final step2Response = await _channel!.stream.first;
+    // Wait for server's step 2 response via the shared subscription buffer
+    final step2Response = await _waitForRawMessage(rawMessages);
     final String step2Text;
     if (step2Response is String) {
       step2Text = step2Response;
@@ -493,6 +529,19 @@ class MpcWebSocket {
     _channel!.sink.add(step3Msg);
 
     print('[MpcWebSocket] Noise_XX handshake complete, transport encrypted');
+  }
+
+  /// Wait for a raw message to arrive in the buffer (used during handshake).
+  Future<dynamic> _waitForRawMessage(List<dynamic> buffer) async {
+    // Poll until a message arrives (with timeout)
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (buffer.isEmpty) {
+      if (DateTime.now().isAfter(deadline)) {
+        throw Exception('Noise handshake timeout: no response from server');
+      }
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+    return buffer.removeAt(0);
   }
 
   /// Load the device's Noise static private key from secure storage,
@@ -601,4 +650,15 @@ class MpcSessionExpiredException implements Exception {
 
   @override
   String toString() => 'MpcSessionExpiredException: $message';
+}
+
+/// Exception indicating that sending an MPC message failed
+/// (Noise encryption error, connection not ready, etc).
+class MpcSendFailedException implements Exception {
+  final String message;
+
+  MpcSendFailedException(this.message);
+
+  @override
+  String toString() => 'MpcSendFailedException: $message';
 }

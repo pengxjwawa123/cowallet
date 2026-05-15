@@ -282,7 +282,7 @@ class MpcWalletService implements WalletService {
 
       // Send Round 1 + msg_hash via WebSocket
       final round1WithHash = [...round1.payload, ...msgHash];
-      ws.sendRaw(toParty: _serverParty, round: 1, payload: round1WithHash);
+      await ws.sendRaw(toParty: _serverParty, round: 1, payload: round1WithHash);
 
       await MpcSessionStore.updateCurrentRound(1);
 
@@ -297,7 +297,7 @@ class MpcWalletService implements WalletService {
       );
 
       // Send DeviceContribution
-      ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
+      await ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
 
       await MpcSessionStore.updateCurrentRound(2);
 
@@ -379,7 +379,7 @@ class MpcWalletService implements WalletService {
         final msg = jsonDecode(msgJson) as Map<String, dynamic>;
         final to = msg['to'] as int;
         if (to == _serverParty) {
-          ws.sendRaw(
+          await ws.sendRaw(
             toParty: _serverParty,
             round: 1,
             payload: utf8.encode(msgJson),
@@ -489,7 +489,7 @@ class MpcWalletService implements WalletService {
         ));
 
         // Send Round 1 to server
-        ws.sendRaw(toParty: _serverParty, round: 1, payload: round1.payload);
+        await ws.sendRaw(toParty: _serverParty, round: 1, payload: round1.payload);
         await MpcSessionStore.updateCurrentRound(1);
 
         // Wait for server's Round 1
@@ -502,7 +502,7 @@ class MpcWalletService implements WalletService {
         );
 
         // Send Round 2
-        ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
+        await ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
         await MpcSessionStore.updateCurrentRound(2);
 
         // Finalize presignature and extract presig data
