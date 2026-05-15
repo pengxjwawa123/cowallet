@@ -82,7 +82,10 @@ pub async fn create_session(
 
     tracing::info!("Created MPC session {} for user {}", session_id, claims.sub);
 
-    // Notify the server MPC participant to join this session
+    // Notify the server MPC participant to join this session.
+    // If this fails, mark the session as failed immediately — a session without
+    // a server participant can never complete, and leaving it "active" causes
+    // the client to connect and wait forever for Round 1 that will never arrive.
     if let Some(participant) = &state.mpc_participant {
         if let Err(e) = participant.on_session_created(
             session_id,
@@ -93,7 +96,13 @@ pub async fn create_session(
             body.wallet_id,
         ).await {
             tracing::error!("Server participant failed to join session {}: {}", session_id, e);
-            // Non-fatal: session still exists, client can retry
+            let _ = sqlx::query(
+                "UPDATE mpc_sessions SET status = 'failed' WHERE id = $1"
+            )
+            .bind(session_id)
+            .execute(db)
+            .await;
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 

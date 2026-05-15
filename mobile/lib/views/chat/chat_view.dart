@@ -813,7 +813,7 @@ class ChatViewState extends State<ChatView> {
             bottomRight: Radius.circular(4),
           ),
         ),
-        child: Text(
+        child: SelectableText(
           msg.text,
           style: const TextStyle(fontSize: 14, height: 1.5, color: Colors.white),
         ),

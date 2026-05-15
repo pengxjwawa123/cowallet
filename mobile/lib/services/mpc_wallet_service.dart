@@ -47,14 +47,21 @@ class MpcWalletService implements WalletService {
     try {
       await ws.connect();
 
-      // Subscribe to messages immediately after connect to capture catch-up messages
+      // Collect server messages from both WS and HTTP polling.
+      // Server's Round 1 is already in DB (generated during createSession),
+      // so we poll HTTP as primary source rather than relying on WS catch-up race.
       final serverMessages = <MpcMessage>[];
       final messagesReady = Completer<List<MpcMessage>>();
       final subscription = ws.messages.listen((msg) {
         if (msg.fromParty == _serverParty) {
-          serverMessages.add(msg);
-          if (serverMessages.length >= 2 && !messagesReady.isCompleted) {
-            messagesReady.complete(serverMessages);
+          final alreadyHas = serverMessages.any(
+            (m) => m.round == msg.round && m.fromParty == msg.fromParty,
+          );
+          if (!alreadyHas) {
+            serverMessages.add(msg);
+            if (serverMessages.length >= 2 && !messagesReady.isCompleted) {
+              messagesReady.complete(serverMessages);
+            }
           }
         }
       });
@@ -70,13 +77,34 @@ class MpcWalletService implements WalletService {
         createdAt: DateTime.now(),
       ));
 
+      // Fetch server's Round 1 via HTTP immediately — it's guaranteed to be in DB
+      // since createSession generates it synchronously before returning.
+      final serverR1Poll = await MpcApi.receiveMessages(
+        sessionId,
+        party: _deviceParty,
+      );
+      if (serverR1Poll.isSuccess && serverR1Poll.data != null) {
+        for (final raw in serverR1Poll.data!) {
+          final m = Map<String, dynamic>.from(raw as Map);
+          if (m['from_party'] == _serverParty) {
+            serverMessages.add(MpcMessage(
+              fromParty: m['from_party'] as int,
+              toParty: m['to_party'] as int,
+              round: m['round'] as int,
+              payload: (m['payload'] as List<dynamic>).cast<int>(),
+            ));
+          }
+        }
+      }
+      if (serverMessages.isEmpty) {
+        throw MpcException('Server failed to generate DKG Round 1 — session may have failed on server');
+      }
+
       final round1Json = await MpcBridge.dkgGenerateRound1(localSessionId);
-      // Server expects the raw payload bytes from the ProtocolMessage, not the full JSON.
-      // Extract the "payload" field (array of ints) from the JSON.
       final round1Msg = jsonDecode(round1Json) as Map<String, dynamic>;
       final round1Payload = List<int>.from(round1Msg['payload'] as List);
 
-      // Send Round 1 via HTTP (reliable delivery)
+      // Send Round 1 via HTTP (reliable delivery, triggers server Round 2)
       await MpcApi.sendMessage(
         sessionId: sessionId,
         fromParty: _deviceParty,
@@ -88,23 +116,31 @@ class MpcWalletService implements WalletService {
       // Update progress
       await MpcSessionStore.updateCurrentRound(1);
 
-      // Wait for server's Round 1 + Round 2 (listener started before send)
-      final allServerMessages = await messagesReady.future.timeout(
-        _wsTimeout,
-        onTimeout: () async {
-          await subscription.cancel();
-          // Fallback to HTTP polling
-          if (_currentSessionId != null) {
-            return await _pollMessagesFallback(
-              sessionId: _currentSessionId!,
+      // Wait for server's Round 2 (triggered by our Round 1 send).
+      // We already have Round 1, so we only need 1 more message.
+      if (serverMessages.length < 2) {
+        final allServerMessages = await messagesReady.future.timeout(
+          _wsTimeout,
+          onTimeout: () async {
+            // Fallback to HTTP polling for Round 2
+            final polled = await _pollMessagesFallback(
+              sessionId: sessionId,
               party: _deviceParty,
               expectedCount: 2,
             );
-          }
-          throw MpcException('Timeout waiting for server response via WebSocket');
-        },
-      );
+            return polled;
+          },
+        );
+        // Merge any polled messages we don't already have
+        for (final msg in allServerMessages) {
+          final alreadyHas = serverMessages.any(
+            (m) => m.round == msg.round && m.fromParty == msg.fromParty,
+          );
+          if (!alreadyHas) serverMessages.add(msg);
+        }
+      }
       await subscription.cancel();
+      final allServerMessages = serverMessages;
 
       // Server returns raw payload bytes; wrap them into ProtocolMessage JSON for the FFI.
       final serverRound1Msgs = allServerMessages
