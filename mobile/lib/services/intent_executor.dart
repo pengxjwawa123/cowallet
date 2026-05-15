@@ -253,12 +253,12 @@ class IntentExecutor {
       final msg = e.toString();
       final txHash = params['to'] ?? 'unknown';
 
-      if (msg.contains('Biometric')) {
-        Services.notifications.showTxFailed(txHash, S.bioAuthFailed);
+      if (msg.contains('authentication') || msg.contains('Biometric')) {
+        Services.notifications.showTxFailed(txHash, S.authFailed);
         return ActionResult.fail(
           S.lang == Lang.zh
-              ? '生物认证失败,转账已取消'
-              : 'Biometric auth failed, transfer cancelled',
+              ? '身份验证失败，转账已取消'
+              : 'Authentication failed, transfer cancelled',
         );
       }
       if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {
@@ -418,11 +418,11 @@ class IntentExecutor {
       );
     } catch (e) {
       final msg = e.toString();
-      if (msg.contains('Biometric')) {
+      if (msg.contains('authentication') || msg.contains('Biometric')) {
         return ActionResult.fail(
           S.lang == Lang.zh
-              ? '生物认证失败,兑换已取消'
-              : 'Biometric auth failed, swap cancelled',
+              ? '身份验证失败，兑换已取消'
+              : 'Authentication failed, swap cancelled',
         );
       }
       if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {

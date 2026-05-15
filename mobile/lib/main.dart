@@ -34,8 +34,8 @@ class _CowalletAppState extends State<CowalletApp> {
   String _initialRoute = AppRouter.onboarding;
   bool _ready = false;
 
-  // Global navigator key for push notification navigation
-  final _navigatorKey = GlobalKey<NavigatorState>();
+  // Use shared navigator key from Services
+  GlobalKey<NavigatorState> get _navigatorKey => Services.navigatorKey;
 
   @override
   void initState() {

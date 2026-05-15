@@ -4,7 +4,7 @@ import 'package:convert/convert.dart';
 import 'package:pointycastle/export.dart';
 
 import '../api/tx_api.dart';
-import '../platform/biometrics.dart';
+import '../l10n/strings.dart';
 import 'chain_service.dart';
 import 'locator.dart';
 import 'wallet_service.dart';
@@ -42,15 +42,12 @@ class TxSigningException implements Exception {
 class MpcTxService implements TxService {
   final WalletService _wallet;
   final ChainService _chain;
-  final BiometricService _biometric;
 
   MpcTxService({
     required WalletService wallet,
     required ChainService chain,
-    required BiometricService biometrics,
   })  : _wallet = wallet,
-        _chain = chain,
-        _biometric = biometrics;
+        _chain = chain;
 
   /// The currently selected chain ID from the chain service.
   int get chainId => _chain.currentConfig.chainId;
@@ -94,13 +91,10 @@ class MpcTxService implements TxService {
     final dataBytes =
         hasCalldata ? Uint8List.fromList(hex.decode(data.replaceFirst('0x', ''))) : Uint8List(0);
 
-    // Biometric authentication before signing
-    final biometricEnabled = await _biometric.isEnabled();
-    if (biometricEnabled) {
-      final authed = await _biometric.authenticate(
-        reason: 'Approve transaction',
-      );
-      if (!authed) throw TxSigningException('Biometric authentication failed');
+    // MANDATORY user authentication before signing — never skip
+    final authed = await Services.authenticate(reason: S.biometricAuthReason);
+    if (!authed) {
+      throw TxSigningException('User authentication required to sign transaction');
     }
 
     // Build EIP-1559 unsigned transaction for signing hash

@@ -95,19 +95,17 @@ class LocalAuthBiometricService implements BiometricService {
   Future<bool> authenticate({required String reason}) async {
     _debug('authenticate called with reason: $reason');
     try {
-      // First check if biometric is available on this device
       final available = await isAvailable();
       _debug('authenticate: available=$available');
       if (!available) {
-        _debug('authenticate failed: biometric not available on device');
+        _debug('authenticate: biometric not available');
         return false;
       }
 
-      // Check if user has any biometric enrolled
       final hasEnrolled = await hasEnrolledBiometrics();
       _debug('authenticate: hasEnrolled=$hasEnrolled');
       if (!hasEnrolled) {
-        _debug('authenticate failed: no biometric enrolled');
+        _debug('authenticate: no biometric enrolled');
         return false;
       }
 
@@ -115,7 +113,7 @@ class LocalAuthBiometricService implements BiometricService {
       final result = await _auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
-          biometricOnly: true, // Force biometric only, no PIN/password fallback
+          biometricOnly: true,
           useErrorDialogs: true,
           stickyAuth: true,
         ),

@@ -1,4 +1,6 @@
+import 'package:flutter/widgets.dart';
 import '../bridge/frb_generated/frb_generated.dart';
+import '../widgets/pin_verify_dialog.dart';
 import '../platform/biometrics.dart';
 import '../platform/biometrics_impl.dart';
 import '../platform/cloud_backup.dart';
@@ -22,6 +24,7 @@ import 'policy_service.dart';
 import 'presign_pool_service.dart';
 
 class Services {
+  static final navigatorKey = GlobalKey<NavigatorState>();
   static late BiometricService biometrics;
   static late SecureStorageService storage;
   static late WalletService wallet;
@@ -56,7 +59,6 @@ class Services {
     tx = MpcTxService(
       wallet: wallet,
       chain: chain,
-      biometrics: biometrics,
     );
     txHistory = TxHistoryService(storage: storage, chain: chain);
     await txHistory.load();
@@ -78,5 +80,17 @@ class Services {
     );
     policy = PolicyService();
     presignPool = PresignPoolService();
+  }
+
+  /// Unified authentication: biometric if user enabled it, otherwise app PIN.
+  /// All sensitive operations MUST use this — never call biometrics.authenticate directly.
+  static Future<bool> authenticate({required String reason}) async {
+    final biometricEnabled = await biometrics.isEnabled();
+    if (biometricEnabled) {
+      return biometrics.authenticate(reason: reason);
+    }
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return false;
+    return PinVerifyDialog.show(ctx, reason: reason);
   }
 }

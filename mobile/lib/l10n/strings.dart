@@ -241,7 +241,8 @@ class S {
   static String get gasEstimateFailed => _p('Gas 估算失败', 'Gas estimation failed');
   static String get invalidAddress => _p('无效的收款地址', 'Invalid recipient address');
   static String get invalidAmount => _p('无效的金额', 'Invalid amount');
-  static String get bioAuthFailed => _p('生物认证失败,转账已取消', 'Biometric auth failed, transfer cancelled');
+  static String get bioAuthFailed => _p('身份验证失败，转账已取消', 'Authentication failed, transfer cancelled');
+  static String get authFailed => _p('身份验证失败', 'Authentication failed');
 
   // Policy engine
   static String get policyChecking => _p('正在检查交易策略…', 'Checking transaction policy…');

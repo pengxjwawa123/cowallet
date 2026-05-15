@@ -112,9 +112,7 @@ class _SettingsViewState extends State<SettingsView> {
   Future<void> _toggleBiometric(bool value) async {
     if (!_biometricAvailable || !_hasEnrolledBiometrics) return;
 
-    final authenticated = await Services.biometrics.authenticate(
-      reason: S.biometricAuthReason,
-    );
+    final authenticated = await Services.authenticate(reason: S.biometricAuthReason);
     if (!authenticated) return;
 
     await Services.biometrics.setEnabled(value);

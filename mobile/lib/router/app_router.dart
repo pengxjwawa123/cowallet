@@ -5,8 +5,6 @@ import '../views/chat/chat_view.dart';
 import '../views/yield/defi_hub_view.dart';
 import '../views/settings/settings_view.dart';
 import '../views/keys/keys_view.dart';
-import '../views/send/send_view.dart';
-import '../views/receive/receive_view.dart';
 import '../views/scan/scan_view.dart';
 import '../views/contacts/contacts_view.dart';
 import '../views/recovery/recovery_view.dart';
@@ -20,8 +18,6 @@ class AppRouter {
   static const onboarding = '/onboarding';
   static const recovery = '/recovery';
   static const keys = '/keys';
-  static const send = '/send';
-  static const receive = '/receive';
   static const scan = '/scan';
   static const contacts = '/contacts';
   static const txHistory = '/tx-history';
@@ -34,10 +30,6 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const RecoveryView());
       case keys:
         return MaterialPageRoute(builder: (_) => const KeysView());
-      case send:
-        return MaterialPageRoute(builder: (_) => const SendView());
-      case receive:
-        return MaterialPageRoute(builder: (_) => const ReceiveView());
       case scan:
         return MaterialPageRoute(builder: (_) => const ScanView());
       case contacts:

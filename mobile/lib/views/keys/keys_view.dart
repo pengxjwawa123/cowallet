@@ -80,9 +80,7 @@ class _KeysViewState extends State<KeysView> {
   Future<bool> _authenticate() async {
     if (_isAuthenticated) return true;
 
-    final authenticated = await Services.biometrics.authenticate(
-      reason: S.biometricAuthReason,
-    );
+    final authenticated = await Services.authenticate(reason: S.biometricAuthReason);
 
     if (authenticated && mounted) {
       setState(() => _isAuthenticated = true);

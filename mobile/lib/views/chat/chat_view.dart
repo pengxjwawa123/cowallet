@@ -7,6 +7,7 @@ import '../../widgets/cw_orb.dart';
 import '../../main.dart';
 import '../../services/locator.dart';
 import '../../services/chain_service.dart';
+import '../../services/tx_tracker_service.dart';
 import '../../api/ai_api.dart';
 import '../../utils/secure_storage.dart';
 import 'widgets/balance_widget.dart';
@@ -83,6 +84,7 @@ class ChatViewState extends State<ChatView> {
   final _scrollController = ScrollController();
   final _messages = <ChatMsg>[];
   final _focusNode = FocusNode();
+  final _txTracker = TxTrackerService();
 
   String? _sessionId;
   StreamSubscription? _streamSub;
@@ -93,6 +95,7 @@ class ChatViewState extends State<ChatView> {
     _scrollController.dispose();
     _focusNode.dispose();
     _streamSub?.cancel();
+    _txTracker.dispose();
     super.dispose();
   }
 
@@ -227,6 +230,13 @@ class ChatViewState extends State<ChatView> {
               _messages[aiMsgIndex].text += tokenText;
             });
             _scrollToBottom();
+            break;
+
+          case 'replace':
+            final replaceText = event.data['text'] as String? ?? '';
+            setState(() {
+              _messages[aiMsgIndex].text = replaceText;
+            });
             break;
 
           case 'tool_call':
@@ -966,6 +976,7 @@ class ChatViewState extends State<ChatView> {
           success: msg.widgetData['success'] ?? true,
           amount: msg.widgetData['amount'],
           token: msg.widgetData['token'],
+          tracker: _txTracker,
         );
       case WidgetType.txDetail:
         return ChatTxDetailWidget(data: msg.widgetData);
