@@ -7,77 +7,10 @@ import 'mpc_wallet_service.dart';
 
 /// Manages MPC session recovery and resumption after interruptions.
 /// Wraps MpcWalletService with automatic session persistence and recovery.
-///
-/// Integrates with [MpcWebSocket]'s protocol-aware reconnection:
-/// - Sets the message ID watermark on the WebSocket so recovery fetches only new messages
-/// - Listens to [MpcWebSocket.onReconnected] to detect session expiry mid-protocol
-/// - Updates the persisted session state as rounds progress
 class MpcSessionManager {
   final MpcWalletService _mpcService;
 
   MpcSessionManager(this._mpcService);
-
-  /// Configures an [MpcWebSocket] for protocol-aware reconnection.
-  /// Call this after creating the WebSocket but before [MpcWebSocket.connect].
-  ///
-  /// Sets the message watermark from persisted session state and wires
-  /// the [onReconnected] callback to update local session state or
-  /// signal session expiry via the returned [Completer].
-  ///
-  /// Returns a [Completer] that completes with an error if the session
-  /// expires server-side during a reconnection. Protocol code should
-  /// race against this future to detect unrecoverable failures.
-  Completer<void> configureWebSocketRecovery(MpcWebSocket ws) {
-    final sessionExpiredCompleter = Completer<void>();
-
-    // Set watermark from persisted state so reconnection skips already-seen messages.
-    MpcSessionStore.loadSession().then((session) {
-      if (session != null && session.remoteSessionId == ws.sessionId) {
-        ws.setLastMessageId(session.lastMessageId);
-      }
-    });
-
-    ws.onReconnected = (result) {
-      switch (result) {
-        case ReconnectRecoveryResult.success:
-          // Update persisted watermark so next recovery is accurate.
-          _updatePersistedWatermark(ws);
-          break;
-        case ReconnectRecoveryResult.sessionExpired:
-          if (!sessionExpiredCompleter.isCompleted) {
-            sessionExpiredCompleter.completeError(
-              MpcSessionExpiredException(
-                'MPC session ${ws.sessionId} expired during reconnection',
-              ),
-            );
-          }
-          break;
-        case ReconnectRecoveryResult.failed:
-          // Connection lost, WebSocket will keep retrying.
-          break;
-      }
-    };
-
-    ws.onReconnectFailed = () {
-      if (!sessionExpiredCompleter.isCompleted) {
-        sessionExpiredCompleter.completeError(
-          MpcSessionInterruptedException(
-            'WebSocket reconnection failed after max attempts',
-          ),
-        );
-      }
-    };
-
-    return sessionExpiredCompleter;
-  }
-
-  /// Persist the current message watermark from the WebSocket into session store.
-  Future<void> _updatePersistedWatermark(MpcWebSocket ws) async {
-    final lastId = ws.lastReceivedMessageId;
-    if (lastId > 0) {
-      await MpcSessionStore.updateLastMessageId(lastId);
-    }
-  }
 
   /// Check if there's a session that can be resumed.
   Future<bool> canResume() async {
@@ -123,28 +56,23 @@ class MpcSessionManager {
   }
 
   /// Run DKG with automatic session persistence and recovery.
-  /// Retries up to [maxRetries] times on connection failures.
-  Future<WalletInfo> runDkgWithRecovery({String? walletId, int maxRetries = 2}) async {
-    // Clear any stale session first
+  Future<WalletInfo> runDkgWithRecovery({String? walletId}) async {
+    // Check for existing session
     final existing = await checkResumableSession();
     if (existing != null && existing.sessionType == 'keygen') {
-      print('[MpcSessionManager] Clearing stale DKG session ${existing.remoteSessionId}');
-      await MpcSessionStore.clearSession();
-    }
-
-    // Attempt DKG with retries (each attempt creates a new session)
-    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      print('[MpcSessionManager] Attempting to resume DKG session ${existing.remoteSessionId}');
       try {
-        return await _runDkgWithPersistence(walletId: walletId);
-      } catch (e) {
-        print('[MpcSessionManager] DKG attempt ${attempt + 1}/${maxRetries + 1} failed: $e');
+        final result = await _resumeDkg(existing);
         await MpcSessionStore.clearSession();
-        if (attempt >= maxRetries) rethrow;
-        // Brief delay before retry
-        await Future.delayed(Duration(seconds: 1));
+        return result;
+      } catch (e) {
+        print('[MpcSessionManager] Resume failed: $e, starting fresh');
+        await MpcSessionStore.clearSession();
       }
     }
-    throw MpcSessionInterruptedException('DKG failed after ${maxRetries + 1} attempts');
+
+    // Start new session with persistence
+    return await _runDkgWithPersistence(walletId: walletId);
   }
 
   /// Run Sign with automatic session persistence and recovery.
@@ -238,4 +166,55 @@ class MpcSessionManager {
     throw MpcSessionInterruptedException('Reshare session cannot be resumed, restart required');
   }
 
+  /// Fetch missed messages from backend (for message replay).
+  Future<List<MpcMessage>> _fetchMissedMessages({
+    required String sessionId,
+    required int party,
+    required int afterId,
+  }) async {
+    final result = await MpcApi.receiveMessages(
+      sessionId,
+      party: party,
+      afterId: afterId,
+    );
+
+    if (!result.isSuccess || result.data == null) {
+      return [];
+    }
+
+    return result.data!.map((raw) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      return MpcMessage(
+        fromParty: m['from_party'] as int,
+        toParty: m['to_party'] as int,
+        round: m['round'] as int,
+        payload: (m['payload'] as List<dynamic>).cast<int>(),
+      );
+    }).toList();
+  }
+
+  /// Exponential backoff retry for transient network errors.
+  Future<T> _retryWithBackoff<T>(
+    Future<T> Function() operation, {
+    int maxAttempts = 3,
+    Duration initialDelay = const Duration(seconds: 1),
+  }) async {
+    int attempt = 0;
+    Duration delay = initialDelay;
+
+    while (true) {
+      try {
+        return await operation();
+      } catch (e) {
+        attempt++;
+        if (attempt >= maxAttempts) {
+          rethrow;
+        }
+
+        print('[MpcSessionManager] Retry $attempt/$maxAttempts after ${delay.inSeconds}s: $e');
+        await Future.delayed(delay);
+        delay *= 2; // Exponential backoff
+      }
+    }
+  }
 }

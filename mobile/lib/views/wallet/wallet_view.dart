@@ -22,7 +22,6 @@ class _WalletViewState extends State<WalletView> {
   bool _loadingPresignStatus = false;
   bool _generatingPresigns = false;
   int _selectedCount = 5;
-  int _presignProgress = 0;
 
   @override
   void initState() {
@@ -60,28 +59,17 @@ class _WalletViewState extends State<WalletView> {
   Future<void> _generatePresignatures() async {
     if (_generatingPresigns) return;
 
-    setState(() {
-      _generatingPresigns = true;
-      _presignProgress = 0;
-    });
+    setState(() => _generatingPresigns = true);
 
     try {
       final walletAddress = await Services.mpcWallet.getAddress();
       final generated = await Services.mpcWallet.runPresign(
         walletId: walletAddress,
         count: _selectedCount,
-        onProgress: (completed, total) {
-          if (mounted) {
-            setState(() => _presignProgress = completed);
-          }
-        },
       );
 
       if (mounted) {
-        setState(() {
-          _generatingPresigns = false;
-          _presignProgress = 0;
-        });
+        setState(() => _generatingPresigns = false);
 
         showTopToast(context, '${S.generationSuccess} ($generated/$_selectedCount)', backgroundColor: CwColors.success);
 
@@ -89,10 +77,7 @@ class _WalletViewState extends State<WalletView> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _generatingPresigns = false;
-          _presignProgress = 0;
-        });
+        setState(() => _generatingPresigns = false);
 
         showTopToast(context, '${S.generationFailed}: $e', backgroundColor: CwColors.danger);
       }
@@ -389,18 +374,17 @@ class _WalletViewState extends State<WalletView> {
           const SizedBox(height: 12),
 
           // Top tokens for this chain
-          ...tokens.map((token) => _tokenRowInChain(context, token, chainId)),
+          ...tokens.map((token) => _tokenRowInChain(context, token)),
         ],
       ),
     );
   }
 
-  Widget _tokenRowInChain(BuildContext context, token, int chainId) {
+  Widget _tokenRowInChain(BuildContext context, token) {
     final symbol = token.symbol as String;
     final balance = token.balance as String;
     final usd = token.usd as String;
     final logoUrl = token.logoUrl as String?;
-    final chainName = ChainConfig.byChainId(chainId)?.displayName ?? 'Chain $chainId';
 
     String emoji = '🪙';
     Color iconBg = CwColors.ink4.withValues(alpha: 0.1);
@@ -420,7 +404,7 @@ class _WalletViewState extends State<WalletView> {
     return GestureDetector(
       onTap: () => AppShell.goToChatAndSend(
         context,
-        S.actionTokenInfoOnChain(symbol, balance, usd, chainName),
+        S.actionTokenInfo(symbol, balance, usd),
       ),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 12),
@@ -837,9 +821,7 @@ class _WalletViewState extends State<WalletView> {
                     )
                   : const Icon(Icons.add_circle_outline, size: 18),
               label: Text(
-                _generatingPresigns
-                    ? '${S.generating} $_presignProgress/$_selectedCount'
-                    : S.generatePresignatures,
+                _generatingPresigns ? S.generating : S.generatePresignatures,
                 style: const TextStyle(fontSize: 13),
               ),
               style: OutlinedButton.styleFrom(
