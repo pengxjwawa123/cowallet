@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../api/mpc_api.dart';
+import '../api/wallet_api.dart';
 import '../bridge/mpc_bridge.dart';
 import '../network/mpc_websocket.dart';
 import '../platform/cloud_backup.dart';
@@ -624,7 +625,26 @@ class MpcWalletService implements WalletService {
 
   @override
   Future<SignResult> signWithSession(List<int> msgHash) async {
-    final walletId = await SecureStorage.get('mpc_wallet_id');
+    String? walletId = await SecureStorage.get('mpc_wallet_id');
+
+    // If wallet_id not stored locally, fetch from backend and cache it
+    if (walletId == null || walletId.isEmpty) {
+      final address = await getAddress();
+      final walletsResult = await WalletApi.listWallets();
+      if (walletsResult.isSuccess && walletsResult.data != null) {
+        for (final w in walletsResult.data!) {
+          final wAddr = w['eth_address'] as String? ?? '';
+          if (wAddr.toLowerCase() == address.toLowerCase()) {
+            walletId = w['id'] as String?;
+            if (walletId != null) {
+              await SecureStorage.save('mpc_wallet_id', walletId);
+            }
+            break;
+          }
+        }
+      }
+    }
+
     final signature = await runSign(msgHash, walletId: walletId);
     return SignResult(signature: signature, sessionId: _currentSessionId);
   }

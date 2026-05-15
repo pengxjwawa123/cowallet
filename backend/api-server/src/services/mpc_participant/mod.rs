@@ -442,16 +442,11 @@ impl MpcParticipant {
 
                 let mut sign = SignSession::new_distributed(config, key_share, msg_hash);
 
-                // Use reserved presignature if available, otherwise generate fresh
-                let server_r1 = if let Some(presig) = self.reserved_presignatures.get(&session_id) {
-                    let k_bytes: [u8; 32] = presig.k.as_slice().try_into()
-                        .map_err(|_| "presign k wrong length".to_string())?;
-                    sign.generate_round1_with_presign(&k_bytes, &presig.big_r)
-                        .map_err(|e| format!("sign generate_round1_with_presign failed: {}", e))?
-                } else {
-                    sign.generate_round1()
-                        .map_err(|e| format!("sign generate_round1 failed: {}", e))?
-                };
+                // TODO: Presignature disabled for debugging — always generate fresh nonce
+                // to isolate whether presig is causing address mismatch
+                let server_r1 = sign.generate_round1()
+                    .map_err(|e| format!("sign generate_round1 failed: {}", e))?;
+                tracing::info!("Sign session {}: using FRESH nonce (presig disabled for debug)", session_id);
 
                 // Now process client's R_0
                 // Strip the trailing 32-byte msg_hash that the client appended
