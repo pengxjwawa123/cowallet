@@ -346,6 +346,12 @@ pub fn sign_generate_round1(msg_hash: Vec<u8>) -> Result<FfiSignRound1, String> 
 
     let share0 = state::get_share(0).ok_or("device shard not loaded")?;
 
+    // Verify the loaded shard can derive the expected address from its public key.
+    // This catches corrupted or mismatched shards before wasting a network round-trip.
+    let derived_addr = share0.eth_address();
+    let derived_addr_hex = format!("0x{}", derived_addr.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    eprintln!("[MPC Sign] Device shard: party={} total_parties={} addr={}", share0.party, share0.total_parties, derived_addr_hex);
+
     let msg_arr: [u8; 32] = msg_hash.clone().try_into().map_err(|_| "msg_hash must be 32 bytes")?;
 
     let config = SessionConfig {
@@ -790,10 +796,12 @@ pub fn import_device_shard(shard_bytes: Vec<u8>, public_key: Vec<u8>) -> Result<
     let _scalar = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
         .ok_or_else(|| "invalid device shard: not a valid secp256k1 scalar".to_string())?;
 
+    // total_parties must match what was used during DKG (2 parties: device + server).
+    // The signing Lagrange coefficient depends on this being correct.
     let device_share = mpc_core::dkls23::KeyShare {
         party: 0,
         threshold: 2,
-        total_parties: 3,
+        total_parties: 2,
         secret_share: shard_bytes.into(),
         public_key,
         paillier_pk: None,

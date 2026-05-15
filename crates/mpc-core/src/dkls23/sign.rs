@@ -847,6 +847,8 @@ impl SignSession {
 
     /// Determine the correct recovery ID by trying both v=27 and v=28
     /// and verifying which one recovers to our known public key.
+    /// Returns an error if neither recovery ID produces the expected public key,
+    /// which indicates mismatched key shares between device and server.
     fn determine_recovery_id(&self, r_bytes: &[u8; 32], s_bytes: &[u8; 32]) -> Result<u8> {
         use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey};
 
@@ -891,11 +893,13 @@ impl SignSession {
             }
         }
 
-        // Fallback: use computed recovery id if ecrecover didn't match
-        // (shouldn't happen if signature is correct)
-        let aggregate_r = self.aggregate_r_point
-            .ok_or_else(|| MpcError::SigningFailed("aggregate R not set for fallback".into()))?;
-        self.compute_recovery_id(&aggregate_r, &Scalar::ONE)
+        // Neither recovery ID matches — the signature doesn't correspond to our public key.
+        // This means device shard and server shard are from different DKG sessions.
+        Err(MpcError::SigningFailed(
+            "signature recovery failed: no recovery ID matches the expected public key. \
+             This indicates the device shard and server shard are mismatched (from different DKG sessions). \
+             Please re-run key generation to synchronize shards.".into()
+        ))
     }
 
     /// Local/simulated signing (for testing only, reconstructs full key).

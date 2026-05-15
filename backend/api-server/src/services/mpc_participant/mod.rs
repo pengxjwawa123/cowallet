@@ -435,9 +435,37 @@ impl MpcParticipant {
                         .ok_or_else(|| format!("no server shard for user {}", user_id))?
                 };
 
-                tracing::debug!(
-                    "[MPC Sign] session={} user={} wallet={:?}",
-                    session_id, user_id, wallet_id,
+                // Verify loaded shard's public key matches the wallet's eth_address
+                let shard_eth_addr = key_share.eth_address();
+                let shard_addr_hex = format!("0x{}", hex::encode(shard_eth_addr));
+                if let Some(wid) = wallet_id {
+                    let wallet_addr: Option<(Vec<u8>,)> = sqlx::query_as(
+                        "SELECT eth_address FROM wallets WHERE id = $1"
+                    )
+                    .bind(wid)
+                    .fetch_optional(&self.db)
+                    .await
+                    .map_err(|e| format!("wallet address lookup failed: {}", e))?;
+
+                    if let Some((db_addr_bytes,)) = wallet_addr {
+                        let db_addr_hex = format!("0x{}", hex::encode(&db_addr_bytes));
+                        if shard_eth_addr.as_slice() != db_addr_bytes.as_slice() {
+                            tracing::error!(
+                                "[MPC Sign] SHARD MISMATCH! session={} wallet={} shard_addr={} db_addr={}",
+                                session_id, wid, shard_addr_hex, db_addr_hex
+                            );
+                            return Err(format!(
+                                "server shard address mismatch: shard derives to {} but wallet has {}. \
+                                 Key shares are corrupted or from different DKG sessions.",
+                                shard_addr_hex, db_addr_hex
+                            ));
+                        }
+                    }
+                }
+
+                tracing::info!(
+                    "[MPC Sign] session={} user={} wallet={:?} shard_addr={} party={} total_parties={}",
+                    session_id, user_id, wallet_id, shard_addr_hex, key_share.party, key_share.total_parties,
                 );
 
                 let mut sign = SignSession::new_distributed(config, key_share, msg_hash);

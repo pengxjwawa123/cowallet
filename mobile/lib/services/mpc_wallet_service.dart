@@ -247,6 +247,21 @@ class MpcWalletService implements WalletService {
       shardBytes: shardBytes.toList(),
       publicKey: publicKey,
     );
+
+    // Verify the loaded shard derives to the expected wallet address.
+    // Catches shard corruption or mismatch before wasting a signing round-trip.
+    final expectedAddr = await SecureStorage.get('mpc_address');
+    if (expectedAddr != null && expectedAddr.isNotEmpty) {
+      final keyStatus = await MpcBridge.getKeyStatus();
+      if (keyStatus.address.isNotEmpty &&
+          keyStatus.address.toLowerCase() != expectedAddr.toLowerCase()) {
+        print('[MpcWalletService] SHARD MISMATCH: loaded shard derives to '
+            '${keyStatus.address} but expected $expectedAddr');
+        throw MpcException(
+          'Device shard mismatch: loaded shard derives to ${keyStatus.address} '
+          'but wallet address is $expectedAddr. Please re-generate wallet keys.');
+      }
+    }
   }
 
   /// 执行分布式签名协议 (2-party ECDSA, 私钥从未被重组)
