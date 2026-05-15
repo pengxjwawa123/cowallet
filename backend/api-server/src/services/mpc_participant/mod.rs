@@ -200,9 +200,22 @@ impl MpcParticipant {
         config: SessionConfig,
         wallet_id: Option<Uuid>,
     ) -> Result<(), String> {
+        // Resolve wallet_id: if not provided, look up user's active wallet from DB
+        let resolved_wallet_id = if wallet_id.is_some() {
+            wallet_id
+        } else {
+            let row: Option<(Uuid,)> = sqlx::query_as(
+                "SELECT id FROM wallets WHERE user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1"
+            )
+            .bind(user_id)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| format!("failed to lookup wallet: {}", e))?;
+            row.map(|r| r.0)
+        };
+
         // Verify server shard exists before accepting the session
-        // Use wallet-specific shard if wallet_id is provided
-        if let Some(wid) = wallet_id {
+        if let Some(wid) = resolved_wallet_id {
             let _key_share = self.shard_store.load_key_share_for_wallet(user_id, wid).await?
                 .ok_or_else(|| format!("no server shard for user {} wallet {}, DKG must complete first", user_id, wid))?;
         } else {
@@ -213,7 +226,7 @@ impl MpcParticipant {
         // Try to reserve a presignature for this signing session.
         // If available, the pre-computed k_1 can be used instead of generating fresh
         // randomness during Round 1, reducing online signing latency.
-        if let (Some(wid), Some(presign_mgr)) = (wallet_id, &self.presign_manager) {
+        if let (Some(wid), Some(presign_mgr)) = (resolved_wallet_id, &self.presign_manager) {
             match presign_mgr.reserve_presignature(wid, session_id).await {
                 Ok(Some(presig_data)) => {
                     tracing::info!(
@@ -244,10 +257,10 @@ impl MpcParticipant {
             phase: SessionPhase::SignAwaitingRound1,
             config,
             created_at: Instant::now(),
-            wallet_id,
+            wallet_id: resolved_wallet_id,
         });
 
-        tracing::info!("Server Sign session {} initialized (wallet: {:?}), awaiting client Round 1", session_id, wallet_id);
+        tracing::info!("Server Sign session {} initialized (wallet: {:?}), awaiting client Round 1", session_id, resolved_wallet_id);
         Ok(())
     }
 

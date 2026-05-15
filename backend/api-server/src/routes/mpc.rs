@@ -41,6 +41,8 @@ pub(crate) struct SessionResponse {
     status: String,
     current_round: i32,
     last_activity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wallet_id: Option<String>,
 }
 
 /// Create a new MPC session
@@ -111,6 +113,7 @@ pub async fn create_session(
         status: "active".to_string(),
         current_round: 0,
         last_activity: None,
+        wallet_id: body.wallet_id.map(|w| w.to_string()),
     }))
 }
 
@@ -121,8 +124,8 @@ pub async fn get_session(
 ) -> Result<Json<SessionResponse>, StatusCode> {
     let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    let row: (String, i32, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
-        "SELECT status, current_round, last_activity FROM mpc_sessions WHERE id = $1"
+    let row: (String, i32, Option<chrono::DateTime<Utc>>, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT status, current_round, last_activity, wallet_id FROM mpc_sessions WHERE id = $1"
     )
     .bind(id)
     .fetch_one(db)
@@ -134,6 +137,7 @@ pub async fn get_session(
         status: row.0,
         current_round: row.1,
         last_activity: row.2.map(|t| t.to_rfc3339()),
+        wallet_id: row.3.map(|w| w.to_string()),
     }))
 }
 

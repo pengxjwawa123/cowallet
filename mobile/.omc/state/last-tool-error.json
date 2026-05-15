@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"export PATH=\\\"/Users/mac/development/flutter/bin:$PATH\\\" && dart analyze lib/services/push_service.dart lib/services/locator.dart lib/main.dart 2>&1\",\"timeout\":60000,\"description\":\"Run dar...",
-  "error": "Exit code 2\nAnalyzing push_service.dart, locator.dart, main.dart...\n\nwarning - lib/services/push_service.dart:9:8 - Unused import: '../config/api_config.dart'. Try removing the import directive. - unused_import\n   info - lib/main.dart:91:7 - Don't invoke 'print' in production code. Try using a logging framework. - avoid_print\n\n2 issues found.",
-  "timestamp": "2026-05-14T11:49:46.648Z",
-  "retry_count": 5
+  "tool_input_preview": "{\"command\":\"xcode-select -p 2>&1 && xcodebuild -version 2>&1\",\"description\":\"Check Xcode setup\"}",
+  "error": "Exit code 1\n/Library/Developer/CommandLineTools\nxcode-select: error: tool 'xcodebuild' requires Xcode, but active developer directory '/Library/Developer/CommandLineTools' is a command line tools instance",
+  "timestamp": "2026-05-15T09:29:15.671Z",
+  "retry_count": 1
 }

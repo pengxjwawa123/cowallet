@@ -194,6 +194,15 @@ class MpcWalletService implements WalletService {
       await SecureStorage.save('mpc_address', walletInfo.address);
       await SecureStorage.save('mpc_session_id', sessionId);
 
+      // Retrieve and store wallet_id from the completed session
+      final sessionInfo = await MpcApi.getSession(sessionId);
+      if (sessionInfo.isSuccess && sessionInfo.data != null) {
+        final wid = sessionInfo.data!['wallet_id'] as String?;
+        if (wid != null && wid.isNotEmpty) {
+          await SecureStorage.save('mpc_wallet_id', wid);
+        }
+      }
+
       // Persist device shard to hardware-backed storage and public key to secure storage
       final deviceShardBytes = await MpcBridge.exportDeviceShard();
       await SecureHardware.storeDeviceShard(Uint8List.fromList(deviceShardBytes));
@@ -615,7 +624,8 @@ class MpcWalletService implements WalletService {
 
   @override
   Future<SignResult> signWithSession(List<int> msgHash) async {
-    final signature = await runSign(msgHash);
+    final walletId = await SecureStorage.get('mpc_wallet_id');
+    final signature = await runSign(msgHash, walletId: walletId);
     return SignResult(signature: signature, sessionId: _currentSessionId);
   }
 
