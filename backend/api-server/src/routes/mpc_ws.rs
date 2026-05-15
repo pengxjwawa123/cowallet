@@ -68,6 +68,7 @@ mod payload_b64 {
 /// Noise_XX handshake control messages exchanged before encrypted transport begins.
 /// The client initiates by sending a `NoiseHandshake` message with step=1.
 /// The server responds, and one more round-trip completes the XX pattern.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoiseHandshakeMsg {
     /// Discriminator: always "noise_handshake"
@@ -152,10 +153,7 @@ async fn ws_handler(
 /// Subscribes to NATS for real-time push, or falls back to DB polling.
 /// Forwards incoming WS messages to the appropriate party via NATS or DB.
 ///
-/// Requires Noise_XX transport encryption:
-/// - Client's first message MUST be a `noise_handshake` (step=1).
-/// - Server performs a 3-message Noise_XX handshake.
-/// - All subsequent messages are encrypted/decrypted via the established Noise session.
+/// Accepts plain JSON messages directly (no Noise handshake required).
 async fn handle_ws_connection(
     socket: WebSocket,
     state: AppState,
@@ -164,74 +162,13 @@ async fn handle_ws_connection(
 ) {
     let (mut ws_sink, mut ws_stream) = socket.split();
 
-    // --- Noise_XX handshake (required) ---
-    let noise_session: NoiseSession;
+    tracing::info!(
+        "WS connected: session {} party {} (plain JSON transport)",
+        session_id, party_index
+    );
 
-    if let Some(result) = ws_stream.next().await {
-        let msg = match result {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::debug!("WS recv error during initial read: {}", e);
-                return;
-            }
-        };
-
-        let text = match &msg {
-            Message::Text(t) => Some(t.to_string()),
-            Message::Binary(d) => String::from_utf8(d.to_vec()).ok(),
-            Message::Close(_) => return,
-            _ => None,
-        };
-
-        if let Some(ref text_str) = text {
-            if json_has_type(text_str, "noise_handshake") {
-                match perform_noise_handshake(text_str, &mut ws_sink, &mut ws_stream, &state).await {
-                    Ok(session) => {
-                        noise_session = session;
-                        tracing::info!(
-                            "Noise_XX handshake complete for session {} party {}",
-                            session_id, party_index
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Noise handshake failed for session {} party {}: {}",
-                            session_id, party_index, e
-                        );
-                        let err_msg = serde_json::json!({
-                            "type": "noise_error",
-                            "error": format!("{}", e),
-                        });
-                        let _ = ws_sink
-                            .send(Message::Text(err_msg.to_string().into()))
-                            .await;
-                        return;
-                    }
-                }
-            } else {
-                tracing::warn!(
-                    "WS session {} party {}: first message must be noise_handshake",
-                    session_id, party_index
-                );
-                let err_msg = serde_json::json!({
-                    "type": "error",
-                    "error": "noise_handshake required as first message",
-                });
-                let _ = ws_sink
-                    .send(Message::Text(err_msg.to_string().into()))
-                    .await;
-                return;
-            }
-        } else {
-            return;
-        }
-    } else {
-        // Stream ended immediately
-        return;
-    }
-
-    // Wrap noise_session in a Mutex for shared access between tasks
-    let noise = std::sync::Arc::new(tokio::sync::Mutex::new(Some(noise_session)));
+    // No Noise session — plain JSON transport
+    let noise = std::sync::Arc::new(tokio::sync::Mutex::new(None::<NoiseSession>));
 
     // Channel for pushing messages to the WS client
     let (tx, mut rx) = mpsc::channel::<WsMessage>(64);
@@ -368,6 +305,7 @@ async fn handle_ws_connection(
 /// 2. Generates the server's response (step 2: <- e, ee, s, es)
 /// 3. Receives the client's final message (step 3: -> s, se)
 /// 4. Returns the completed NoiseSession ready for transport
+#[allow(dead_code)]
 async fn perform_noise_handshake(
     first_msg_text: &str,
     ws_sink: &mut futures::stream::SplitSink<WebSocket, Message>,
@@ -450,6 +388,7 @@ async fn perform_noise_handshake(
 /// Get the server's Noise static private key.
 /// In production this should come from an HSM or env var.
 /// Falls back to a deterministic key derived from the encryption key for consistency.
+#[allow(dead_code)]
 fn get_server_noise_key(state: &AppState) -> Vec<u8> {
     // Derive from NOISE_STATIC_KEY env var if set, otherwise generate deterministically
     // from the server's encryption key using HKDF.

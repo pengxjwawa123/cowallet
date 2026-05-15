@@ -7,7 +7,7 @@ import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `default_gas_estimate`, `get_signing_shares`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FfiRound2Result`, `PresignData`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `FfiNoiseSession`, `FfiRound2Result`
 
 /// Generate a new MPC wallet using local-mode TSS (2-of-3).
 /// Returns the derived Ethereum address and public key.
@@ -136,13 +136,12 @@ Future<void> reshareProcessRound1({
 Future<FfiReshareComplete> reshareFinalize({required String sessionId}) =>
     RustLib.instance.api.crateApiReshareFinalize(sessionId: sessionId);
 
-/// Start a presign session: generate ephemeral k and Round 1 (R_0 = k_0*G).
-/// Similar to sign_generate_round1 but without a message hash (computed later).
+/// Start a presign session: generate ephemeral k_i and Round 1 message (R_i = k_i*G).
 Future<FfiPresignRound1> presignGenerateRound1() =>
     RustLib.instance.api.crateApiPresignGenerateRound1();
 
-/// Process server's presign Round 1 (R_1) and generate Round 2.
-/// Returns the DeviceContribution payload.
+/// Process server's presign Round 1 message and compute aggregate R.
+/// Returns an empty Vec on success (protocol complete, call presign_finalize to extract data).
 Future<Uint8List> presignProcessRound1AndGenerateRound2({
   required String sessionId,
   required List<int> serverRound1Payload,
@@ -151,9 +150,7 @@ Future<Uint8List> presignProcessRound1AndGenerateRound2({
   serverRound1Payload: serverRound1Payload,
 );
 
-/// Finalize presign: extract the presignature data for later use.
-/// The presign data is an opaque blob containing (k_0, R) that will be
-/// combined with the actual message hash at sign time.
+/// Finalize presign: extract the presignature data for storage.
 Future<FfiPresignComplete> presignFinalize({required String sessionId}) =>
     RustLib.instance.api.crateApiPresignFinalize(sessionId: sessionId);
 
@@ -221,6 +218,62 @@ Future<bool> verifyBackupShard({
   deviceShardBytes: deviceShardBytes,
   expectedPublicKey: expectedPublicKey,
 );
+
+/// Generate a new X25519 static keypair for Noise_XX.
+/// The private key should be stored in secure storage (Keychain/Keystore).
+Future<FfiNoiseKeypair> noiseGenerateKeypair() =>
+    RustLib.instance.api.crateApiNoiseGenerateKeypair();
+
+/// Create a Noise_XX initiator session (device side) and generate the first handshake message.
+/// `static_private_key` is the device's persistent X25519 private key (32 bytes).
+/// Returns a session ID and the first handshake message (base64-encoded).
+Future<FfiNoiseHandshakeResult> noiseInitiatorStart({
+  required List<int> staticPrivateKey,
+}) => RustLib.instance.api.crateApiNoiseInitiatorStart(
+  staticPrivateKey: staticPrivateKey,
+);
+
+/// Process a handshake message from the server and generate the next message.
+/// For the initiator, this is called once with the server's response (step 2),
+/// producing the final handshake message (step 3). After this call, `is_ready` is true.
+Future<FfiNoiseHandshakeResult> noiseInitiatorFinish({
+  required String sessionId,
+  required String serverMessageBase64,
+}) => RustLib.instance.api.crateApiNoiseInitiatorFinish(
+  sessionId: sessionId,
+  serverMessageBase64: serverMessageBase64,
+);
+
+/// Encrypt a plaintext message using the established Noise session.
+/// Returns base64-encoded ciphertext.
+/// Only valid after the handshake is complete (`is_ready` was true).
+Future<String> noiseEncrypt({
+  required String sessionId,
+  required List<int> plaintext,
+}) => RustLib.instance.api.crateApiNoiseEncrypt(
+  sessionId: sessionId,
+  plaintext: plaintext,
+);
+
+/// Decrypt a ciphertext message using the established Noise session.
+/// `ciphertext_base64` is the base64-encoded ciphertext from the server.
+/// Returns the decrypted plaintext bytes.
+Future<Uint8List> noiseDecrypt({
+  required String sessionId,
+  required String ciphertextBase64,
+}) => RustLib.instance.api.crateApiNoiseDecrypt(
+  sessionId: sessionId,
+  ciphertextBase64: ciphertextBase64,
+);
+
+/// Get the remote peer's static public key (after handshake completes).
+/// Returns the 32-byte X25519 public key, or an error if not available.
+Future<Uint8List> noiseGetRemotePublicKey({required String sessionId}) =>
+    RustLib.instance.api.crateApiNoiseGetRemotePublicKey(sessionId: sessionId);
+
+/// Destroy a Noise session and free its resources.
+Future<void> noiseSessionDestroy({required String sessionId}) =>
+    RustLib.instance.api.crateApiNoiseSessionDestroy(sessionId: sessionId);
 
 /// Legacy: Sign locally for testing (reconstructs full key — NOT for production).
 Future<Uint8List> signHash({required List<int> msgHash}) =>
@@ -415,8 +468,59 @@ class FfiKeyStatus {
           address == other.address;
 }
 
+class FfiNoiseHandshakeResult {
+  /// Session ID for referencing this Noise session in subsequent calls
+  final String sessionId;
+
+  /// Base64-encoded handshake message to send to the peer
+  final String messageBase64;
+
+  /// Whether the handshake is now complete (transport ready)
+  final bool isReady;
+
+  const FfiNoiseHandshakeResult({
+    required this.sessionId,
+    required this.messageBase64,
+    required this.isReady,
+  });
+
+  @override
+  int get hashCode =>
+      sessionId.hashCode ^ messageBase64.hashCode ^ isReady.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FfiNoiseHandshakeResult &&
+          runtimeType == other.runtimeType &&
+          sessionId == other.sessionId &&
+          messageBase64 == other.messageBase64 &&
+          isReady == other.isReady;
+}
+
+class FfiNoiseKeypair {
+  /// X25519 private key (32 bytes)
+  final Uint8List privateKey;
+
+  /// X25519 public key (32 bytes)
+  final Uint8List publicKey;
+
+  const FfiNoiseKeypair({required this.privateKey, required this.publicKey});
+
+  @override
+  int get hashCode => privateKey.hashCode ^ publicKey.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FfiNoiseKeypair &&
+          runtimeType == other.runtimeType &&
+          privateKey == other.privateKey &&
+          publicKey == other.publicKey;
+}
+
 class FfiPresignComplete {
-  /// Serialized presignature data (opaque blob, stored encrypted on server)
+  /// Serialized presignature data (bincode-encoded PresignData)
   final Uint8List presigData;
 
   const FfiPresignComplete({required this.presigData});
@@ -597,114 +701,3 @@ class FfiWalletInfo {
           address == other.address &&
           publicKey == other.publicKey;
 }
-
-// ---------------------------------------------------------------------------
-// Noise_XX Transport Encryption
-// ---------------------------------------------------------------------------
-
-class FfiNoiseKeypair {
-  /// X25519 private key (32 bytes)
-  final Uint8List privateKey;
-
-  /// X25519 public key (32 bytes)
-  final Uint8List publicKey;
-
-  const FfiNoiseKeypair({required this.privateKey, required this.publicKey});
-
-  @override
-  int get hashCode => privateKey.hashCode ^ publicKey.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is FfiNoiseKeypair &&
-          runtimeType == other.runtimeType &&
-          privateKey == other.privateKey &&
-          publicKey == other.publicKey;
-}
-
-class FfiNoiseHandshakeResult {
-  /// UUID of the Noise session (needed for subsequent operations)
-  final String sessionId;
-
-  /// Base64-encoded handshake message to send to the peer
-  final String messageBase64;
-
-  /// Whether the handshake is now complete (transport ready)
-  final bool isReady;
-
-  const FfiNoiseHandshakeResult({
-    required this.sessionId,
-    required this.messageBase64,
-    required this.isReady,
-  });
-
-  @override
-  int get hashCode =>
-      sessionId.hashCode ^ messageBase64.hashCode ^ isReady.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is FfiNoiseHandshakeResult &&
-          runtimeType == other.runtimeType &&
-          sessionId == other.sessionId &&
-          messageBase64 == other.messageBase64 &&
-          isReady == other.isReady;
-}
-
-/// Generate a new X25519 static keypair for Noise_XX.
-/// The private key should be stored in secure storage (Keychain/Keystore).
-Future<FfiNoiseKeypair> noiseGenerateKeypair() =>
-    RustLib.instance.api.crateApiNoiseGenerateKeypair();
-
-/// Create a Noise_XX initiator session (device side) and generate the first handshake message.
-/// `staticPrivateKey` is the device's persistent X25519 private key (32 bytes).
-/// Returns a session ID and the first handshake message (base64-encoded).
-Future<FfiNoiseHandshakeResult> noiseInitiatorStart({
-  required Uint8List staticPrivateKey,
-}) => RustLib.instance.api.crateApiNoiseInitiatorStart(
-  staticPrivateKey: staticPrivateKey,
-);
-
-/// Process a handshake message from the server and generate the next message.
-/// For the initiator, this is called once with the server's response (step 2),
-/// producing the final handshake message (step 3). After this call, `is_ready` is true.
-Future<FfiNoiseHandshakeResult> noiseInitiatorFinish({
-  required String sessionId,
-  required String serverMessageBase64,
-}) => RustLib.instance.api.crateApiNoiseInitiatorFinish(
-  sessionId: sessionId,
-  serverMessageBase64: serverMessageBase64,
-);
-
-/// Encrypt a plaintext message using the established Noise session.
-/// Returns base64-encoded ciphertext.
-/// Only valid after the handshake is complete (`isReady` was true).
-Future<String> noiseEncrypt({
-  required String sessionId,
-  required Uint8List plaintext,
-}) => RustLib.instance.api.crateApiNoiseEncrypt(
-  sessionId: sessionId,
-  plaintext: plaintext,
-);
-
-/// Decrypt a ciphertext message using the established Noise session.
-/// `ciphertextBase64` is the base64-encoded ciphertext from the server.
-/// Returns the decrypted plaintext bytes.
-Future<Uint8List> noiseDecrypt({
-  required String sessionId,
-  required String ciphertextBase64,
-}) => RustLib.instance.api.crateApiNoiseDecrypt(
-  sessionId: sessionId,
-  ciphertextBase64: ciphertextBase64,
-);
-
-/// Get the remote peer's static public key (after handshake completes).
-/// Returns the 32-byte X25519 public key, or an error if not available.
-Future<Uint8List> noiseGetRemotePublicKey({required String sessionId}) =>
-    RustLib.instance.api.crateApiNoiseGetRemotePublicKey(sessionId: sessionId);
-
-/// Destroy a Noise session and free its resources.
-Future<void> noiseSessionDestroy({required String sessionId}) =>
-    RustLib.instance.api.crateApiNoiseSessionDestroy(sessionId: sessionId);

@@ -6,7 +6,6 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../api/mpc_api.dart';
 import '../config/api_config.dart';
 import '../utils/secure_storage.dart';
-import '../bridge/noise_bridge.dart' as native;
 
 /// MPC协议消息
 class MpcMessage {
@@ -58,7 +57,6 @@ enum MpcWebSocketState {
   disconnected,
   connecting,
   connected,
-  noiseHandshaking,
   reconnecting,
   /// Session has expired on the server and cannot be recovered.
   sessionExpired,
@@ -77,13 +75,10 @@ enum ReconnectRecoveryResult {
 /// 管理MPC会话的WebSocket连接，用于实时传输MPC协议消息。
 /// 连接地址: ws://host/api/v1/mpc/session/{sessionId}/ws?party={partyIndex}&token={jwt}
 ///
-/// All connections use Noise_XX transport encryption.
-/// The device's static key is loaded from secure storage or generated on first use.
-///
 /// Protocol-aware reconnection:
-/// After a disconnect mid-protocol, the WebSocket reconnects, re-handshakes Noise,
-/// then fetches missed messages via the HTTP fallback API and feeds them into the
-/// message stream so the protocol session can continue without replaying completed rounds.
+/// After a disconnect mid-protocol, the WebSocket reconnects then fetches missed
+/// messages via the HTTP fallback API and feeds them into the message stream so
+/// the protocol session can continue without replaying completed rounds.
 class MpcWebSocket {
   final String sessionId;
   final int partyIndex;
@@ -95,9 +90,6 @@ class MpcWebSocket {
   Timer? _heartbeatTimer;
   int _reconnectAttempts = 0;
   MpcWebSocketState _state = MpcWebSocketState.disconnected;
-
-  /// Noise session ID (from Rust FFI).
-  String? _noiseSessionId;
 
   /// Tracks the highest message ID received so far (for incremental polling).
   int _lastReceivedMessageId = 0;
@@ -119,7 +111,6 @@ class MpcWebSocket {
 
   static const int _maxReconnectAttempts = 5;
   static const Duration _heartbeatInterval = Duration(seconds: 30);
-  static const String _noiseKeyStorageKey = 'noise_static_private_key';
 
   /// When true, disables auto-reconnect on disconnect. Use for non-resumable
   /// protocols (DKG, reshare) where reconnection is pointless.
@@ -179,12 +170,10 @@ class MpcWebSocket {
 
   /// 连接WebSocket
   /// 如果已连接则先断开再重连
-  /// Performs Noise_XX handshake after WS connect.
   /// On reconnection (not first connect), also fetches missed messages.
   Future<void> connect() async {
     if (_state == MpcWebSocketState.connected ||
-        _state == MpcWebSocketState.connecting ||
-        _state == MpcWebSocketState.noiseHandshaking) {
+        _state == MpcWebSocketState.connecting) {
       return;
     }
 
@@ -208,47 +197,14 @@ class MpcWebSocket {
       _reconnectAttempts = 0;
       print('[MpcWebSocket] WebSocket connected');
 
-      // Set up the single stream subscription FIRST, then use it for both
-      // handshake and normal message processing. This avoids the
-      // "Stream has already been listened to" error.
-      final handshakeCompleter = Completer<void>();
-      final rawMessages = <dynamic>[];
-
       _subscription = _channel!.stream.listen(
-        (data) {
-          if (!handshakeCompleter.isCompleted) {
-            // During handshake, buffer messages for the handshake handler
-            rawMessages.add(data);
-          } else {
-            // After handshake, normal message processing
-            _onMessage(data);
-          }
-        },
-        onError: (error) {
-          if (!handshakeCompleter.isCompleted) {
-            handshakeCompleter.completeError(error);
-          } else {
-            _onError(error);
-          }
-        },
-        onDone: () {
-          if (!handshakeCompleter.isCompleted) {
-            handshakeCompleter.completeError(
-              Exception('WebSocket closed during Noise handshake'),
-            );
-          } else {
-            _onDone();
-          }
-        },
+        (data) => _onMessage(data),
+        onError: (error) => _onError(error),
+        onDone: () => _onDone(),
       );
 
-      // Perform Noise_XX handshake using the buffered messages
-      _state = MpcWebSocketState.noiseHandshaking;
-      await _performNoiseHandshake(rawMessages);
-      handshakeCompleter.complete();
-
       _state = MpcWebSocketState.connected;
-      print('[MpcWebSocket] Connected with Noise_XX encryption');
+      print('[MpcWebSocket] Connected (plain JSON transport)');
 
       // 启动心跳
       _startHeartbeat();
@@ -280,12 +236,6 @@ class MpcWebSocket {
     await _channel?.sink.close();
     _channel = null;
 
-    // Clean up Noise session if active
-    if (_noiseSessionId != null) {
-      await native.noiseSessionDestroy(sessionId: _noiseSessionId!);
-      _noiseSessionId = null;
-    }
-
     _state = MpcWebSocketState.disconnected;
     print('[MpcWebSocket] Disconnected');
 
@@ -293,29 +243,14 @@ class MpcWebSocket {
     _messageController = null;
   }
 
-  /// 发送MPC消息（Noise加密）
+  /// 发送MPC消息（plain JSON）
   Future<void> send(MpcMessage message) async {
     if (_state != MpcWebSocketState.connected || _channel == null) {
       throw MpcSendFailedException('Cannot send: not connected (state=$_state)');
     }
 
-    if (_noiseSessionId == null) {
-      throw MpcSendFailedException('Cannot send: Noise session not established');
-    }
-
     String jsonStr = jsonEncode(message.toJson());
-    final plaintextBytes = Uint8List.fromList(utf8.encode(jsonStr));
-    print('[MpcWebSocket] Encrypting: plaintext_len=${plaintextBytes.length}, session=$_noiseSessionId');
-
-    final ciphertextBase64 = await native.noiseEncrypt(
-      sessionId: _noiseSessionId!,
-      plaintext: plaintextBytes,
-    );
-    final envelope = jsonEncode({
-      'type': 'noise_encrypted',
-      'data': ciphertextBase64,
-    });
-    _channel!.sink.add(envelope);
+    _channel!.sink.add(jsonStr);
   }
 
   /// 发送原始MPC消息参数
@@ -332,8 +267,8 @@ class MpcWebSocket {
     ));
   }
 
-  /// 处理收到的消息（Noise解密）
-  Future<void> _onMessage(dynamic data) async {
+  /// 处理收到的消息（plain JSON）
+  void _onMessage(dynamic data) {
     try {
       Map<String, dynamic> json;
       if (data is String) {
@@ -351,15 +286,6 @@ class MpcWebSocket {
       if (json.containsKey('type') && json['type'] == 'session_expired') {
         _handleSessionExpired();
         return;
-      }
-
-      if (json.containsKey('type') && json['type'] == 'noise_encrypted') {
-        final ciphertextBase64 = json['data'] as String;
-        final plaintext = await native.noiseDecrypt(
-          sessionId: _noiseSessionId!,
-          ciphertextBase64: ciphertextBase64,
-        );
-        json = jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>;
       }
 
       MpcMessage message = MpcMessage.fromJson(json);
@@ -473,106 +399,12 @@ class MpcWebSocket {
     }
   }
 
-  /// Perform Noise_XX handshake over the established WebSocket.
-  /// This is a 3-message handshake:
-  ///   1. Device sends -> e (first message)
-  ///   2. Server sends <- e, ee, s, es (response)
-  ///   3. Device sends -> s, se (final)
-  /// After completion, all messages are encrypted/decrypted via the Noise session.
-  Future<void> _performNoiseHandshake(List<dynamic> rawMessages) async {
-    final staticKey = await _getOrCreateStaticKey();
-
-    // Step 1: Create initiator session and generate first handshake message
-    final startResult = await native.noiseInitiatorStart(
-      staticPrivateKey: Uint8List.fromList(staticKey),
-    );
-    _noiseSessionId = startResult.sessionId;
-
-    // Send step 1 to server
-    final step1Msg = jsonEncode({
-      'type': 'noise_handshake',
-      'step': 1,
-      'data': startResult.messageBase64,
-    });
-    _channel!.sink.add(step1Msg);
-
-    // Wait for server's step 2 response via the shared subscription buffer
-    final step2Response = await _waitForRawMessage(rawMessages);
-    final String step2Text;
-    if (step2Response is String) {
-      step2Text = step2Response;
-    } else {
-      step2Text = utf8.decode(step2Response as List<int>);
-    }
-
-    final step2Json = jsonDecode(step2Text) as Map<String, dynamic>;
-    if (step2Json['type'] != 'noise_handshake' || step2Json['step'] != 2) {
-      throw Exception('Expected noise_handshake step 2, got: ${step2Json['type']} step ${step2Json['step']}');
-    }
-
-    // Step 3: Process server's response and generate final message
-    final finishResult = await native.noiseInitiatorFinish(
-      sessionId: _noiseSessionId!,
-      serverMessageBase64: step2Json['data'] as String,
-    );
-
-    if (!finishResult.isReady) {
-      throw Exception('Noise handshake did not complete after step 3');
-    }
-
-    // Send step 3 to server
-    final step3Msg = jsonEncode({
-      'type': 'noise_handshake',
-      'step': 3,
-      'data': finishResult.messageBase64,
-    });
-    _channel!.sink.add(step3Msg);
-
-    print('[MpcWebSocket] Noise_XX handshake complete, transport encrypted');
-  }
-
-  /// Wait for a raw message to arrive in the buffer (used during handshake).
-  Future<dynamic> _waitForRawMessage(List<dynamic> buffer) async {
-    // Poll until a message arrives (with timeout)
-    final deadline = DateTime.now().add(const Duration(seconds: 10));
-    while (buffer.isEmpty) {
-      if (DateTime.now().isAfter(deadline)) {
-        throw Exception('Noise handshake timeout: no response from server');
-      }
-      await Future.delayed(const Duration(milliseconds: 50));
-    }
-    return buffer.removeAt(0);
-  }
-
-  /// Load the device's Noise static private key from secure storage,
-  /// or generate a new one on first use and persist it.
-  Future<List<int>> _getOrCreateStaticKey() async {
-    final existingKey = await SecureStorage.get(_noiseKeyStorageKey);
-    if (existingKey != null && existingKey.isNotEmpty) {
-      return base64Decode(existingKey);
-    }
-
-    // Generate a new keypair and store the private key
-    final keypair = await native.noiseGenerateKeypair();
-    await SecureStorage.save(
-      _noiseKeyStorageKey,
-      base64Encode(keypair.privateKey),
-    );
-    return keypair.privateKey;
-  }
 
   /// 处理连接错误
   void _onError(dynamic error) {
     print('[MpcWebSocket] Error: $error');
     _state = MpcWebSocketState.disconnected;
     _heartbeatTimer?.cancel();
-
-    // Destroy the old Noise session since it's tied to the dead connection.
-    if (_noiseSessionId != null) {
-      native.noiseSessionDestroy(sessionId: _noiseSessionId!);
-      _noiseSessionId = null;
-    }
-
     _scheduleReconnect();
   }
 
@@ -581,13 +413,6 @@ class MpcWebSocket {
     print('[MpcWebSocket] Connection closed');
     _state = MpcWebSocketState.disconnected;
     _heartbeatTimer?.cancel();
-
-    // Destroy the old Noise session since it's tied to the dead connection.
-    if (_noiseSessionId != null) {
-      native.noiseSessionDestroy(sessionId: _noiseSessionId!);
-      _noiseSessionId = null;
-    }
-
     _scheduleReconnect();
   }
 
@@ -652,8 +477,7 @@ class MpcSessionExpiredException implements Exception {
   String toString() => 'MpcSessionExpiredException: $message';
 }
 
-/// Exception indicating that sending an MPC message failed
-/// (Noise encryption error, connection not ready, etc).
+/// Exception indicating that sending an MPC message failed.
 class MpcSendFailedException implements Exception {
   final String message;
 
