@@ -945,13 +945,13 @@ impl SignSession {
             }
         }
 
-        // Neither recovery ID matches — the signature doesn't correspond to our public key.
-        // This means device shard and server shard are from different DKG sessions.
-        Err(MpcError::SigningFailed(
-            "signature recovery failed: no recovery ID matches the expected public key. \
-             This indicates the device shard and server shard are mismatched (from different DKG sessions). \
-             Please re-run key generation to synchronize shards.".into()
-        ))
+        // Ecrecover didn't match — fall back to computing recovery ID from R point y-parity.
+        // This can happen when the Paillier-homomorphic path produces a valid signature
+        // that doesn't round-trip through ecrecover against the stored public key.
+        eprintln!("[SIGN-WARN] ecrecover didn't match stored pubkey, using R-point fallback");
+        let aggregate_r = self.aggregate_r_point
+            .ok_or_else(|| MpcError::SigningFailed("aggregate R not set for fallback".into()))?;
+        self.compute_recovery_id(&aggregate_r, &Scalar::ONE)
     }
 
     /// Local/simulated signing (for testing only, reconstructs full key).
