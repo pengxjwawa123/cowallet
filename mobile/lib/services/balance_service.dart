@@ -6,6 +6,7 @@ class TokenBalance {
   final String balance;
   final String usd;
   final bool native;
+  final int decimals;
   final String? logoUrl;
   final String? contractAddress;
 
@@ -14,6 +15,7 @@ class TokenBalance {
     required this.balance,
     required this.usd,
     required this.native,
+    this.decimals = 18,
     this.logoUrl,
     this.contractAddress,
   });
@@ -24,6 +26,7 @@ class TokenBalance {
       balance: json['balance'] as String? ?? '0',
       usd: json['usd'] as String? ?? '0.00',
       native: json['native'] as bool? ?? false,
+      decimals: json['decimals'] as int? ?? 18,
       logoUrl: json['logo_url'] as String?,
       contractAddress: json['contract_address'] as String?,
     );

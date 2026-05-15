@@ -528,54 +528,117 @@ class ChatViewState extends State<ChatView> {
 
     final chainIdVal = msg.widgetData['chain_id'];
     final chainId = chainIdVal is int ? chainIdVal : 137;
+    final token = (msg.widgetData['token'] as String? ?? 'ETH').toUpperCase();
 
-    // Only fetch balance and gas to display breakdown — do NOT execute the transfer
     final chain = Services.chain;
     if (chain is JsonRpcChainService) {
       chain.switchChain(ChainConfig.byId(chainId));
     }
 
+    final nativeSymbol = (chainId == 137 || chainId == 80002) ? 'POL'
+        : chainId == 56 ? 'BNB' : 'ETH';
+    final isNative = token == 'ETH' || token == 'POL' || token == 'MATIC' || token == 'BNB';
+
     try {
-      final balance = await chain.getEthBalance(address);
-      final baseFee = await chain.getBaseFee() ?? await chain.getGasPrice();
-      final maxPriority = await chain.getMaxPriorityFeePerGas();
-      final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
-      final gasCost = maxFee * BigInt.from(21000);
-      final maxSendable = balance - gasCost;
+      if (isNative) {
+        // Native token: deduct gas from balance
+        final balance = await chain.getEthBalance(address);
+        final baseFee = await chain.getBaseFee() ?? await chain.getGasPrice();
+        final maxPriority = await chain.getMaxPriorityFeePerGas();
+        final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
+        final gasCost = maxFee * BigInt.from(21000);
+        final maxSendable = balance - gasCost;
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      if (maxSendable <= BigInt.zero) {
+        if (maxSendable <= BigInt.zero) {
+          setState(() {
+            msg.confirmed = true;
+            msg.widgetData.remove('loading_deduction');
+            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ 余额不足以支付Gas费'));
+          });
+          _scrollToBottom();
+          return;
+        }
+
+        final balanceDisplay = _formatWei(balance, 18);
+        final maxSendableDisplay = _formatWei(maxSendable, 18);
+        final gasCostDisplay = _formatWei(gasCost, 18);
+
         setState(() {
-          msg.confirmed = true;
+          msg.widgetData['amount'] = maxSendableDisplay;
+          msg.widgetData['token'] = nativeSymbol;
+          msg.widgetData['gas_estimate'] = gasCostDisplay;
+          msg.widgetData['original_amount'] = balanceDisplay;
+          msg.widgetData['deduct_gas_hint'] = true;
+          msg.widgetData['send_all'] = true;
           msg.widgetData.remove('loading_deduction');
-          _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ 余额不足以支付Gas费'));
         });
-        _scrollToBottom();
-        return;
+      } else {
+        // ERC-20 token: send full balance, gas is paid in native coin separately
+        // Try balance service first (supports any token user holds), fallback to ChainConfig
+        final balanceTokens = Services.balance.tokensForChain(chainId);
+        final matchedToken = balanceTokens.where(
+          (t) => t.symbol.toUpperCase() == token && !t.native,
+        );
+        String tokenContract = '';
+        int decimals = _tokenDecimals(token);
+        if (matchedToken.isNotEmpty) {
+          tokenContract = matchedToken.first.contractAddress ?? '';
+          decimals = matchedToken.first.decimals;
+        }
+        if (tokenContract.isEmpty) {
+          tokenContract = ChainConfig.byId(chainId).tokenContract(token);
+        }
+        if (tokenContract.isEmpty) {
+          if (!mounted) return;
+          setState(() {
+            msg.widgetData.remove('loading_deduction');
+            msg.widgetData.remove('deduct_gas_hint');
+          });
+          return;
+        }
+
+        final tokenBalance = await chain.getTokenBalance(address, tokenContract);
+        if (!mounted) return;
+
+        if (tokenBalance <= BigInt.zero) {
+          setState(() {
+            msg.confirmed = true;
+            msg.widgetData.remove('loading_deduction');
+            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ $token 余额为零'));
+          });
+          _scrollToBottom();
+          return;
+        }
+        final tokenAmountDisplay = _formatWei(tokenBalance, decimals);
+
+        setState(() {
+          msg.widgetData['amount'] = tokenAmountDisplay;
+          msg.widgetData['token'] = token;
+          msg.widgetData['send_all'] = true;
+          msg.widgetData.remove('loading_deduction');
+          msg.widgetData.remove('deduct_gas_hint');
+        });
       }
-
-      final nativeSymbol = (chainId == 137 || chainId == 80002) ? 'POL'
-          : chainId == 56 ? 'BNB' : 'ETH';
-      final balanceDisplay = _formatWei(balance, 18);
-      final maxSendableDisplay = _formatWei(maxSendable, 18);
-      final gasCostDisplay = _formatWei(gasCost, 18);
-
-      setState(() {
-        msg.widgetData['amount'] = maxSendableDisplay;
-        msg.widgetData['token'] = nativeSymbol;
-        msg.widgetData['gas_estimate'] = gasCostDisplay;
-        msg.widgetData['original_amount'] = balanceDisplay;
-        msg.widgetData['deduct_gas_hint'] = true;
-        msg.widgetData['send_all'] = true;
-        msg.widgetData.remove('loading_deduction');
-      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         msg.widgetData.remove('loading_deduction');
         msg.widgetData.remove('deduct_gas_hint');
       });
+    }
+  }
+
+  int _tokenDecimals(String token) {
+    switch (token.toUpperCase()) {
+      case 'USDC':
+      case 'USDT':
+        return 6;
+      case 'WBTC':
+        return 8;
+      default:
+        return 18;
     }
   }
 

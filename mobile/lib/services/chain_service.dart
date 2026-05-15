@@ -6,6 +6,8 @@ class ChainConfig {
   final String rpcUrl;
   final String usdcContract;
   final String usdtContract;
+  final String daiContract;
+  final String wethContract;
 
   const ChainConfig({
     required this.chainId,
@@ -13,6 +15,8 @@ class ChainConfig {
     required this.rpcUrl,
     required this.usdcContract,
     this.usdtContract = '',
+    this.daiContract = '',
+    this.wethContract = '',
   });
 
   static const ethereum = ChainConfig(
@@ -21,6 +25,8 @@ class ChainConfig {
     rpcUrl: 'https://1rpc.io/eth',
     usdcContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     usdtContract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    daiContract: '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    wethContract: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
   );
 
   static const base = ChainConfig(
@@ -29,6 +35,8 @@ class ChainConfig {
     rpcUrl: 'https://mainnet.base.org',
     usdcContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     usdtContract: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+    daiContract: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+    wethContract: '0x4200000000000000000000000000000000000006',
   );
 
   static const arbitrum = ChainConfig(
@@ -37,6 +45,8 @@ class ChainConfig {
     rpcUrl: 'https://arb1.arbitrum.io/rpc',
     usdcContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
     usdtContract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+    daiContract: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',
+    wethContract: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
   );
 
   static const optimism = ChainConfig(
@@ -45,14 +55,17 @@ class ChainConfig {
     rpcUrl: 'https://mainnet.optimism.io',
     usdcContract: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
     usdtContract: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58',
+    daiContract: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',
+    wethContract: '0x4200000000000000000000000000000000000006',
   );
 
   static const bsc = ChainConfig(
     chainId: 56,
-    name: 'BSC',
+    name: 'BNB Chain',
     rpcUrl: 'https://bsc-dataseed.binance.org',
     usdcContract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
     usdtContract: '0x55d398326f99059fF775485246999027B3197955',
+    daiContract: '0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3',
   );
 
   static const polygon = ChainConfig(
@@ -61,6 +74,8 @@ class ChainConfig {
     rpcUrl: 'https://1rpc.io/matic',
     usdcContract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     usdtContract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+    daiContract: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
+    wethContract: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619',
   );
 
   static const all = [ethereum, base, arbitrum, optimism, bsc, polygon];
@@ -72,12 +87,18 @@ class ChainConfig {
     );
   }
 
+  static String chainName(int chainId) => byId(chainId).name;
+
   String tokenContract(String symbol) {
     switch (symbol.toUpperCase()) {
       case 'USDC':
         return usdcContract;
       case 'USDT':
         return usdtContract;
+      case 'DAI':
+        return daiContract;
+      case 'WETH':
+        return wethContract;
       default:
         return '';
     }

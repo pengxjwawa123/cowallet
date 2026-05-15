@@ -1068,13 +1068,21 @@ async fn chat_stream(
             });
         }
 
-        // Stream second response — only clarify tool for follow-up suggestions
-        let clarify_tools: Vec<ToolDefinition> = wallet_tools_meta()
-            .into_iter()
-            .filter(|m| m.definition.function.name == "clarify")
-            .map(|m| m.definition)
-            .collect();
-        let stream_resp2 = ai.stream_chat(&messages, &clarify_tools, None).await;
+        // Determine which tools to provide in the second round.
+        // If the first round only used Read/Meta tools (no Write tools) and the user
+        // has transfer/swap intent, provide all tools so the AI can call send_transaction
+        // after checking balance. Otherwise only provide clarify for follow-up suggestions.
+        let first_round_had_write = parsed_tool_calls.iter().any(|tc| tool_kind(&tc.name) == ToolKind::Write);
+        let second_round_tools: Vec<ToolDefinition> = if !first_round_had_write && has_transfer_intent(&user_message) {
+            wallet_tools()
+        } else {
+            wallet_tools_meta()
+                .into_iter()
+                .filter(|m| m.definition.function.name == "clarify")
+                .map(|m| m.definition)
+                .collect()
+        };
+        let stream_resp2 = ai.stream_chat(&messages, &second_round_tools, None).await;
         match stream_resp2 {
             Ok(resp2) => {
                 let mut byte_stream2 = resp2.bytes_stream();
@@ -1136,18 +1144,78 @@ async fn chat_stream(
                     }
                 }
 
-                // Emit clarify tool calls from second round
+                // Safety net for second round: if AI still refused to call tools
+                // despite having transfer intent, replace its text with fallback
+                if tool_calls_acc2.is_empty() && !first_round_had_write && has_transfer_intent(&user_message) {
+                    let fallback = "抱歉，我无法处理这个转账请求。请用更明确的格式描述，例如：「转0.1 USDT到0x1234...（Polygon链）」";
+                    yield sse_event("replace", &serde_json::json!({"text": fallback}));
+                    if let Some(db) = &state.db {
+                        let _ = ChatStore::save_message(db, db_session_id, "assistant", Some(fallback), None, None).await;
+                    }
+                    yield sse_event("done", &serde_json::json!({"needs_confirmation": needs_confirmation}));
+                    return;
+                }
+
+                // Process tool calls from second round (clarify, send_transaction, etc.)
                 for tc in &tool_calls_acc2 {
-                    if tc.name == "clarify" {
-                        let params: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or(serde_json::json!({}));
+                    let params: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or(serde_json::json!({}));
+                    let kind = tool_kind(&tc.name);
+                    let widget = tool_widget_type(&tc.name);
+
+                    // Emit tool_call event so client renders appropriate UI
+                    yield sse_event("tool_call", &serde_json::json!({
+                        "id": tc.id,
+                        "name": tc.name,
+                        "parameters": params,
+                        "kind": kind,
+                        "widget_type": widget,
+                    }));
+
+                    if kind == ToolKind::Meta {
                         yield sse_event("tool_result", &serde_json::json!({
                             "tool_id": tc.id,
-                            "tool_name": "clarify",
-                            "kind": "meta",
-                            "widget_type": "clarify",
+                            "tool_name": tc.name,
+                            "kind": kind,
+                            "widget_type": widget,
                             "success": true,
                             "result": params,
                             "error": null,
+                        }));
+                    } else if kind == ToolKind::Write {
+                        needs_confirmation.push(tc.id.clone());
+                        let exec_result = tool_ctx.execute_tool(&tc.name, &tc.id, params.clone()).await;
+                        let prepared = if exec_result.success {
+                            let mut result_map = exec_result.result.clone();
+                            if let Some(obj) = result_map.as_object_mut() {
+                                obj.insert("status".into(), serde_json::json!("pending_confirmation"));
+                            }
+                            result_map
+                        } else {
+                            serde_json::json!({
+                                "status": "pending_confirmation",
+                                "parameters": params,
+                            })
+                        };
+                        yield sse_event("tool_result", &serde_json::json!({
+                            "tool_id": tc.id,
+                            "tool_name": tc.name,
+                            "kind": kind,
+                            "widget_type": widget,
+                            "success": true,
+                            "result": prepared,
+                            "error": null,
+                        }));
+                    } else {
+                        // Read tools in second round
+                        let result = tool_ctx.execute_tool(&tc.name, &tc.id, params.clone()).await;
+                        yield sse_event("tool_result", &serde_json::json!({
+                            "tool_id": result.tool_id,
+                            "tool_name": result.tool_name,
+                            "kind": kind,
+                            "widget_type": widget,
+                            "success": result.success,
+                            "result": result.result,
+                            "error": result.error,
                         }));
                     }
                 }

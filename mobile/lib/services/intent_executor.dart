@@ -169,8 +169,26 @@ class IntentExecutor {
             data: {'suggest_deduct_gas': 'true', 'max_sendable': maxSendableDisplay, 'gas_cost': gasCostDisplay, 'symbol': nativeSymbol, 'original_amount': balanceDisplay},
           );
         }
+      } else if (sendAll && !isNativeToken) {
+        // ERC-20 send all: transfer the entire token balance (gas paid in native coin)
+        final tokenInfo = _findTokenInBalance(token, targetChainId);
+        final tokenContract = tokenInfo?.contractAddress
+            ?? ChainConfig.byId(targetChainId).tokenContract(token);
+        if (tokenContract.isEmpty) {
+          return ActionResult.fail(
+            S.lang == Lang.zh
+                ? '未找到代币 $token 的合约地址'
+                : 'Contract address for $token not found',
+          );
+        }
+        amount = await _chain.getTokenBalance(address, tokenContract);
+        if (amount <= BigInt.zero) {
+          return ActionResult.fail(
+            S.lang == Lang.zh ? '$token 余额为零' : '$token balance is zero',
+          );
+        }
       } else {
-        amount = _parseAmount(amountStr, token);
+        amount = _parseAmount(amountStr, token, chainId: targetChainId);
       }
 
       if (amount == BigInt.zero) {
@@ -211,14 +229,15 @@ class IntentExecutor {
       if (isNativeToken) {
         txHash = await _tx.signAndSend(to: to, value: amount, chainId: targetChainId);
       } else {
-        // ERC-20 token transfer (USDC, USDT, etc.)
-        final config = ChainConfig.byId(targetChainId);
-        final tokenContract = config.tokenContract(token);
+        // ERC-20: resolve contract address from user's balance data first
+        final tokenInfo = _findTokenInBalance(token, targetChainId);
+        final tokenContract = tokenInfo?.contractAddress
+            ?? ChainConfig.byId(targetChainId).tokenContract(token);
         if (tokenContract.isEmpty) {
           return ActionResult.fail(
             S.lang == Lang.zh
-                ? '不支持的代币: $token'
-                : 'Unsupported token: $token',
+                ? '未找到代币 $token 的合约地址，请确认你持有该代币'
+                : 'Contract address for $token not found. Make sure you hold this token.',
           );
         }
         txHash = await _tx.sendErc20(
@@ -288,7 +307,11 @@ class IntentExecutor {
         );
       }
 
-      final amount = _parseAmount(amountStr, fromToken);
+      final swapChainId = chainIdStr != null
+          ? (int.tryParse(chainIdStr) ?? _resolveChainId(fromToken))
+          : _resolveChainId(fromToken);
+
+      final amount = _parseAmount(amountStr, fromToken, chainId: swapChainId);
       if (amount == BigInt.zero) {
         return ActionResult.fail(
           S.lang == Lang.zh ? '无效的金额' : 'Invalid amount',
@@ -298,9 +321,7 @@ class IntentExecutor {
       final address = await _wallet.getAddress();
       if (address.isEmpty) return ActionResult.fail(S.noWallet);
 
-      final chainId = chainIdStr != null
-          ? (int.tryParse(chainIdStr) ?? _resolveChainId(fromToken))
-          : _resolveChainId(fromToken);
+      final chainId = swapChainId;
       final slippage = slippageStr != null
           ? (double.tryParse(slippageStr) ?? 0.5)
           : 0.5;
@@ -481,22 +502,52 @@ class IntentExecutor {
     }
   }
 
-  BigInt _parseAmount(String input, String token) {
-    final value = double.tryParse(input) ?? 0;
-    if (token == 'ETH' || token == 'POL' || token == 'MATIC' || token == 'BNB') {
-      return BigInt.from(value * 1e18);
-    }
-    return BigInt.from(value * 1e6); // USDC/USDT 6 decimals
+  /// Look up token from user's balance data by symbol and chain.
+  TokenBalance? _findTokenInBalance(String token, int chainId) {
+    final chainTokens = _balance.tokensForChain(chainId);
+    final match = chainTokens.where(
+      (t) => t.symbol.toUpperCase() == token.toUpperCase() && !t.native,
+    );
+    return match.isEmpty ? null : match.first;
   }
 
-  String _formatWei(BigInt wei, String token) {
-    final decimals = (token == 'USDC' || token == 'USDT') ? 6 : 18;
+  BigInt _parseAmount(String input, String token, {int? chainId}) {
+    final value = double.tryParse(input) ?? 0;
+    final decimals = _resolveDecimals(token, chainId);
+    if (decimals >= 18) {
+      return BigInt.from(value * 1e18);
+    } else if (decimals >= 8) {
+      return BigInt.from(value * 1e8);
+    }
+    return BigInt.from(value * 1e6);
+  }
+
+  int _resolveDecimals(String token, int? chainId) {
+    // Try balance data first (authoritative, from chain)
+    if (chainId != null) {
+      final info = _findTokenInBalance(token, chainId);
+      if (info != null) return info.decimals;
+    }
+    // Fallback to known defaults
+    switch (token.toUpperCase()) {
+      case 'USDC':
+      case 'USDT':
+        return 6;
+      case 'WBTC':
+        return 8;
+      default:
+        return 18;
+    }
+  }
+
+  String _formatWei(BigInt wei, String token, {int? chainId}) {
+    final decimals = _resolveDecimals(token, chainId);
     final divisor = BigInt.from(10).pow(decimals);
     final whole = wei ~/ divisor;
     final frac = wei.remainder(divisor).abs();
     final fracStr = frac.toString().padLeft(decimals, '0');
-    // Show up to 6 significant decimal digits, trim trailing zeros
-    final trimmed = fracStr.substring(0, 6).replaceAll(RegExp(r'0+$'), '');
+    final showDigits = decimals < 6 ? decimals : 6;
+    final trimmed = fracStr.substring(0, showDigits).replaceAll(RegExp(r'0+$'), '');
     if (trimmed.isEmpty) return whole.toString();
     return '$whole.$trimmed';
   }
