@@ -123,23 +123,28 @@ class MpcSessionManager {
   }
 
   /// Run DKG with automatic session persistence and recovery.
-  Future<WalletInfo> runDkgWithRecovery({String? walletId}) async {
-    // Check for existing session
+  /// Retries up to [maxRetries] times on connection failures.
+  Future<WalletInfo> runDkgWithRecovery({String? walletId, int maxRetries = 2}) async {
+    // Clear any stale session first
     final existing = await checkResumableSession();
     if (existing != null && existing.sessionType == 'keygen') {
-      print('[MpcSessionManager] Attempting to resume DKG session ${existing.remoteSessionId}');
-      try {
-        final result = await _resumeDkg(existing);
-        await MpcSessionStore.clearSession();
-        return result;
-      } catch (e) {
-        print('[MpcSessionManager] Resume failed: $e, starting fresh');
-        await MpcSessionStore.clearSession();
-      }
+      print('[MpcSessionManager] Clearing stale DKG session ${existing.remoteSessionId}');
+      await MpcSessionStore.clearSession();
     }
 
-    // Start new session with persistence
-    return await _runDkgWithPersistence(walletId: walletId);
+    // Attempt DKG with retries (each attempt creates a new session)
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await _runDkgWithPersistence(walletId: walletId);
+      } catch (e) {
+        print('[MpcSessionManager] DKG attempt ${attempt + 1}/${maxRetries + 1} failed: $e');
+        await MpcSessionStore.clearSession();
+        if (attempt >= maxRetries) rethrow;
+        // Brief delay before retry
+        await Future.delayed(Duration(seconds: 1));
+      }
+    }
+    throw MpcSessionInterruptedException('DKG failed after ${maxRetries + 1} attempts');
   }
 
   /// Run Sign with automatic session persistence and recovery.

@@ -624,6 +624,9 @@ class FfiNoiseKeypair {
 }
 
 class FfiNoiseHandshakeResult {
+  /// UUID of the Noise session (needed for subsequent operations)
+  final String sessionId;
+
   /// Base64-encoded handshake message to send to the peer
   final String messageBase64;
 
@@ -631,18 +634,21 @@ class FfiNoiseHandshakeResult {
   final bool isReady;
 
   const FfiNoiseHandshakeResult({
+    required this.sessionId,
     required this.messageBase64,
     required this.isReady,
   });
 
   @override
-  int get hashCode => messageBase64.hashCode ^ isReady.hashCode;
+  int get hashCode =>
+      sessionId.hashCode ^ messageBase64.hashCode ^ isReady.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is FfiNoiseHandshakeResult &&
           runtimeType == other.runtimeType &&
+          sessionId == other.sessionId &&
           messageBase64 == other.messageBase64 &&
           isReady == other.isReady;
 }

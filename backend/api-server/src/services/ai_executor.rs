@@ -679,13 +679,14 @@ impl ToolContext {
         let cost_wei = gas_units as u128 * gas_price_wei;
         let cost_eth = cost_wei as f64 / 1e18;
 
-        // Try to get ETH price for USD conversion
+        // Try to get native token price for USD conversion
+        let native_sym = crate::services::covalent::native_symbol(chain_id);
         let cost_usd = self
             .app_state
             .price_cache
-            .get_usd_price(&self.app_state.http, "ETH")
+            .get_usd_price(&self.app_state.http, native_sym)
             .await
-            .map(|eth_price| format!("${:.2}", cost_eth * eth_price));
+            .map(|native_price| format!("${:.2}", cost_eth * native_price));
 
         GasEstimate {
             gas_units,

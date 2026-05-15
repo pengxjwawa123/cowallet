@@ -907,6 +907,8 @@ pub struct FfiNoiseSession {
 }
 
 pub struct FfiNoiseHandshakeResult {
+    /// Session ID for referencing this Noise session in subsequent calls
+    pub session_id: String,
     /// Base64-encoded handshake message to send to the peer
     pub message_base64: String,
     /// Whether the handshake is now complete (transport ready)
@@ -953,6 +955,7 @@ pub fn noise_initiator_start(static_private_key: Vec<u8>) -> Result<FfiNoiseHand
 
     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
     Ok(FfiNoiseHandshakeResult {
+        session_id,
         message_base64: BASE64.encode(&msg1),
         is_ready: false,
     })
@@ -980,6 +983,7 @@ pub fn noise_initiator_finish(
     let is_ready = session.is_transport_ready();
 
     Ok(FfiNoiseHandshakeResult {
+        session_id,
         message_base64: BASE64.encode(&response),
         is_ready,
     })

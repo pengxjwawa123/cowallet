@@ -580,12 +580,13 @@ async fn estimate_gas(
     let estimated_cost_wei = gas_units as u128 * gas_price_wei;
     let estimated_cost_eth = estimated_cost_wei as f64 / 1e18;
 
-    // Try to get ETH price for USD estimate
+    // Try to get native token price for USD estimate
+    let native_sym = crate::services::covalent::native_symbol(chain_id);
     let estimated_cost_usd = state
         .price_cache
-        .get_usd_price(&state.http, "ETH")
+        .get_usd_price(&state.http, native_sym)
         .await
-        .map(|eth_price| format!("${:.2}", estimated_cost_eth * eth_price));
+        .map(|native_price| format!("${:.2}", estimated_cost_eth * native_price));
 
     Ok(Json(EstimateGasResponse {
         gas_units: gas_units.to_string(),

@@ -1926,9 +1926,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     SseDeserializer deserializer,
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_sessionId = sse_decode_String(deserializer);
     var var_messageBase64 = sse_decode_String(deserializer);
     var var_isReady = sse_decode_bool(deserializer);
     return FfiNoiseHandshakeResult(
+      sessionId: var_sessionId,
       messageBase64: var_messageBase64,
       isReady: var_isReady,
     );

@@ -42,7 +42,7 @@ Future<NoiseKeypair> noiseGenerateKeypair() async {
 Future<NoiseHandshakeResult> noiseInitiatorStart({required Uint8List staticPrivateKey}) async {
   final result = await frb.noiseInitiatorStart(staticPrivateKey: staticPrivateKey);
   return NoiseHandshakeResult(
-    sessionId: '',  // session ID is managed internally by Rust; use the returned message
+    sessionId: result.sessionId,
     messageBase64: result.messageBase64,
     isReady: result.isReady,
   );
@@ -58,7 +58,7 @@ Future<NoiseHandshakeResult> noiseInitiatorFinish({
     serverMessageBase64: serverMessageBase64,
   );
   return NoiseHandshakeResult(
-    sessionId: sessionId,
+    sessionId: result.sessionId,
     messageBase64: result.messageBase64,
     isReady: result.isReady,
   );

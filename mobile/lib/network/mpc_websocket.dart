@@ -114,11 +114,16 @@ class MpcWebSocket {
   static const Duration _heartbeatInterval = Duration(seconds: 30);
   static const String _noiseKeyStorageKey = 'noise_static_private_key';
 
+  /// When true, disables auto-reconnect on disconnect. Use for non-resumable
+  /// protocols (DKG, reshare) where reconnection is pointless.
+  final bool disableAutoReconnect;
+
   MpcWebSocket({
     required this.sessionId,
     required this.partyIndex,
     this.onReconnected,
     this.onReconnectFailed,
+    this.disableAutoReconnect = false,
   });
 
   /// 当前连接状态
@@ -551,6 +556,14 @@ class MpcWebSocket {
   void _scheduleReconnect() {
     // Don't reconnect if session is expired or we were explicitly disconnected.
     if (_state == MpcWebSocketState.sessionExpired) {
+      return;
+    }
+
+    if (disableAutoReconnect) {
+      _messageController?.addError(
+        Exception('WebSocket disconnected (auto-reconnect disabled)'),
+      );
+      onReconnectFailed?.call();
       return;
     }
 
