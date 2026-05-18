@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../theme/colors.dart';
+import '../../../l10n/strings.dart';
 
 class ChatSwapConfirmWidget extends StatelessWidget {
   final String fromToken;
@@ -51,7 +52,7 @@ class ChatSwapConfirmWidget extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                resolved ? '兑换已提交' : '兑换确认',
+                resolved ? S.swapSubmitted : S.swapConfirm,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -66,7 +67,7 @@ class ChatSwapConfirmWidget extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: _tokenBox(fromToken, amount, '支付'),
+                child: _tokenBox(fromToken, amount, S.pay),
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -77,15 +78,15 @@ class ChatSwapConfirmWidget extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: _tokenBox(toToken, estimatedOutput, '预计获得'),
+                child: _tokenBox(toToken, estimatedOutput, S.estimatedReceive),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          _infoRow('滑点容忍', '${slippage}%'),
+          _infoRow(S.slippageTolerance, '${slippage}%'),
           if (chainId != null)
-            _infoRow('网络', _chainName(chainId!)),
-          _infoRow('路由', '$fromToken → $toToken'),
+            _infoRow(S.network, _chainName(chainId!)),
+          _infoRow(S.route, '$fromToken → $toToken'),
           if (!resolved) ...[
             const SizedBox(height: 16),
             Row(
@@ -100,7 +101,7 @@ class ChatSwapConfirmWidget extends StatelessWidget {
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    child: const Text('取消'),
+                    child: Text(S.cancel),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -123,7 +124,7 @@ class ChatSwapConfirmWidget extends StatelessWidget {
                               color: Colors.white,
                             ),
                           )
-                        : const Text('确认兑换'),
+                        : Text(S.confirmSwap),
                   ),
                 ),
               ],

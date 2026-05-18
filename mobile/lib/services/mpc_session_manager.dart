@@ -35,8 +35,8 @@ class MpcSessionManager {
       final status = result.data!['status'] as String;
       final backendRound = result.data!['current_round'] as int;
 
-      // Only resume if session is still active
-      if (status == 'active') {
+      // Only resume if session is still active or interrupted
+      if (status == 'active' || status == 'interrupted') {
         // Update local round if backend is ahead
         if (backendRound > session.currentRound) {
           await MpcSessionStore.updateCurrentRound(backendRound);
@@ -44,7 +44,7 @@ class MpcSessionManager {
         }
         return session;
       } else {
-        // Session failed/completed on backend, clear local state
+        // Session failed/completed/expired on backend, clear local state
         await MpcSessionStore.clearSession();
         return null;
       }
@@ -148,10 +148,75 @@ class MpcSessionManager {
     return await _mpcService.runSign(msgHash, walletId: walletId);
   }
 
+  /// Resume an interrupted sign session.
+  ///
+  /// The resume endpoint on the backend clears stale protocol messages and
+  /// re-initializes the server's crypto state. The client then runs the
+  /// normal sign flow against the same session ID (which has been reactivated
+  /// with a fresh expiry window). This avoids the complexity of mid-round
+  /// state reconstruction since the Rust crypto state is ephemeral.
   Future<List<int>> _resumeSign(MpcSessionState session, List<int> msgHash) async {
-    // Sign protocol cannot be resumed from interruption because the Rust state is ephemeral.
-    // Throw to restart the signing session.
-    throw MpcSessionInterruptedException('Sign session cannot be resumed, restart required');
+    // Call the resume endpoint to reactivate and reset the session
+    final resumeResult = await MpcApi.resumeSession(session.remoteSessionId);
+    if (!resumeResult.isSuccess || resumeResult.data == null) {
+      throw MpcSessionInterruptedException(
+        'Failed to resume session on backend: ${resumeResult.errorMessage}',
+      );
+    }
+
+    // Session is now reactivated with fresh state on the server.
+    // Run the sign protocol from scratch using the same session ID.
+    await _mpcService.ensureShardLoaded();
+
+    final round1 = await MpcBridge.signGenerateRound1(msgHash);
+    final localSessionId = round1.sessionId;
+
+    final ws = MpcWebSocket(
+      sessionId: session.remoteSessionId,
+      partyIndex: 0,
+    );
+
+    try {
+      await ws.connect();
+
+      // Send Round 1 + msg_hash
+      final round1WithHash = [...round1.payload, ...msgHash];
+      ws.sendRaw(toParty: 1, round: 1, payload: round1WithHash);
+
+      await MpcSessionStore.updateCurrentRound(1);
+
+      // Wait for server's Round 1 (R_1)
+      final serverR1 = await _waitForServerMessages(ws, expectedCount: 1);
+
+      // Process R_1 and generate Round 2
+      final round2Payload = await MpcBridge.signProcessRound1AndGenerateRound2(
+        localSessionId,
+        serverR1.first.payload,
+      );
+
+      // Send DeviceContribution
+      ws.sendRaw(toParty: 1, round: 2, payload: round2Payload);
+
+      await MpcSessionStore.updateCurrentRound(2);
+
+      // Wait for server's signature response
+      final serverR2 = await _waitForServerMessages(ws, expectedCount: 1);
+
+      final signature = await MpcBridge.signProcessRound2(
+        localSessionId,
+        serverR2.first.payload,
+      );
+
+      if (signature.length != 65) {
+        throw MpcSessionInterruptedException(
+          'Invalid signature length after recovery: ${signature.length}',
+        );
+      }
+
+      return signature;
+    } finally {
+      await ws.disconnect();
+    }
   }
 
   // ==================== Reshare with Persistence ====================
@@ -166,55 +231,37 @@ class MpcSessionManager {
     throw MpcSessionInterruptedException('Reshare session cannot be resumed, restart required');
   }
 
-  /// Fetch missed messages from backend (for message replay).
-  Future<List<MpcMessage>> _fetchMissedMessages({
-    required String sessionId,
-    required int party,
-    required int afterId,
+  // ==================== Helpers ====================
+
+  /// Wait for server messages via WebSocket with timeout.
+  Future<List<MpcMessage>> _waitForServerMessages(
+    MpcWebSocket ws, {
+    required int expectedCount,
   }) async {
-    final result = await MpcApi.receiveMessages(
-      sessionId,
-      party: party,
-      afterId: afterId,
-    );
+    final messages = <MpcMessage>[];
+    final completer = Completer<List<MpcMessage>>();
 
-    if (!result.isSuccess || result.data == null) {
-      return [];
-    }
-
-    return result.data!.map((raw) {
-      final m = Map<String, dynamic>.from(raw as Map);
-      return MpcMessage(
-        fromParty: m['from_party'] as int,
-        toParty: m['to_party'] as int,
-        round: m['round'] as int,
-        payload: (m['payload'] as List<dynamic>).cast<int>(),
-      );
-    }).toList();
-  }
-
-  /// Exponential backoff retry for transient network errors.
-  Future<T> _retryWithBackoff<T>(
-    Future<T> Function() operation, {
-    int maxAttempts = 3,
-    Duration initialDelay = const Duration(seconds: 1),
-  }) async {
-    int attempt = 0;
-    Duration delay = initialDelay;
-
-    while (true) {
-      try {
-        return await operation();
-      } catch (e) {
-        attempt++;
-        if (attempt >= maxAttempts) {
-          rethrow;
+    final subscription = ws.messages.listen((msg) {
+      if (msg.fromParty == 1) {
+        messages.add(msg);
+        if (messages.length >= expectedCount && !completer.isCompleted) {
+          completer.complete(messages);
         }
-
-        print('[MpcSessionManager] Retry $attempt/$maxAttempts after ${delay.inSeconds}s: $e');
-        await Future.delayed(delay);
-        delay *= 2; // Exponential backoff
       }
+    });
+
+    try {
+      return await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw MpcSessionInterruptedException(
+            'Timeout waiting for server response during recovery',
+          );
+        },
+      );
+    } finally {
+      await subscription.cancel();
     }
   }
+
 }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:convert/convert.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../bridge/mpc_bridge.dart';
 import '../platform/cloud_backup.dart';
 import '../utils/secure_storage.dart';
 
@@ -84,11 +85,12 @@ class BackupShardService {
     return _parseBackupPayload(fileContent);
   }
 
-  /// Get the stored backup method (cloud or file).
+  /// Get the stored backup method (cloud, file, or encrypted_file).
   Future<BackupMethod?> getBackupMethod() async {
     final method = await SecureStorage.get(await _getMethodKey());
     if (method == 'cloud') return BackupMethod.cloud;
     if (method == 'file') return BackupMethod.file;
+    if (method == 'encrypted_file') return BackupMethod.encryptedFile;
     return null;
   }
 
@@ -104,6 +106,58 @@ class BackupShardService {
     if (await _cloud.isAvailable()) {
       await _cloud.delete(await _getBackupKey());
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Password-Encrypted Export/Import (via Rust FFI)
+  // ---------------------------------------------------------------------------
+
+  /// Export the backup shard as a password-encrypted base64 string.
+  /// Uses Argon2id KDF + AES-256-GCM in Rust for maximum security.
+  /// The resulting string is safe for QR codes, file storage, or clipboard.
+  ///
+  /// Password must be at least 8 characters.
+  Future<String> exportEncrypted(String password) async {
+    return MpcBridge.exportBackupShard(password: password);
+  }
+
+  /// Import a backup shard from a password-encrypted base64 string.
+  /// Decrypts, validates (must be valid secp256k1 scalar), and stores in memory.
+  ///
+  /// Returns true on success. Throws on wrong password or corrupted data.
+  Future<bool> importEncrypted(String encryptedData, String password) async {
+    return MpcBridge.importBackupShard(
+      encryptedData: encryptedData,
+      password: password,
+    );
+  }
+
+  /// Export the encrypted backup to a file and return the file path.
+  /// Combines password-encrypted export with file storage.
+  Future<String> exportEncryptedToFile(String password) async {
+    final encrypted = await exportEncrypted(password);
+    final dir = await _getExportDirectory();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final suffix = _walletAddress != null ? '_${_walletAddress!.substring(0, 10)}' : '';
+    final file = File('${dir.path}/cowallet_backup${suffix}_$timestamp.enc');
+    await file.writeAsString(encrypted);
+    await SecureStorage.save(await _getMethodKey(), 'encrypted_file');
+    await SecureStorage.save('backup_exported_at', DateTime.now().toIso8601String());
+    return file.path;
+  }
+
+  /// Check if the backup has been exported (any method).
+  Future<bool> hasExportedBackup() async {
+    final method = await getBackupMethod();
+    return method != null;
+  }
+
+  Future<Directory> _getExportDirectory() async {
+    if (Platform.isAndroid) {
+      final dir = Directory('/storage/emulated/0/Download');
+      if (await dir.exists()) return dir;
+    }
+    return getApplicationDocumentsDirectory();
   }
 
   String _buildBackupPayload(String shardHex) {
@@ -147,7 +201,7 @@ class BackupShardService {
   }
 }
 
-enum BackupMethod { cloud, file }
+enum BackupMethod { cloud, file, encryptedFile }
 
 class BackupResult {
   final BackupMethod method;

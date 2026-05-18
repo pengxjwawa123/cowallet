@@ -131,6 +131,18 @@ class MpcApi {
     );
   }
 
+  /// List pending/interrupted sessions that may be resumable.
+  /// GET /api/v1/mpc/sessions/pending
+  static Future<Result<List<dynamic>>> listPendingSessions() async {
+    return await DioClient.get("/mpc/sessions/pending");
+  }
+
+  /// Resume an interrupted session. Returns session state + catch-up messages.
+  /// POST /api/v1/mpc/session/{id}/resume
+  static Future<Result<Map<String, dynamic>>> resumeSession(String sessionId) async {
+    return await DioClient.post("/mpc/session/$sessionId/resume");
+  }
+
   /// 查询服务器端分片状态（心跳）
   /// GET /api/v1/shards/status
   static Future<Result<Map<String, dynamic>>> getServerShardStatus() async {

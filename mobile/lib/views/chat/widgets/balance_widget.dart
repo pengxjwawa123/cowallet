@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../theme/colors.dart';
+import '../../../l10n/strings.dart';
 
 class ChatBalanceWidget extends StatelessWidget {
   final Map<String, dynamic> data;
@@ -28,7 +29,7 @@ class ChatBalanceWidget extends StatelessWidget {
                   size: 16, color: CwColors.accent),
               const SizedBox(width: 6),
               Text(
-                multiChain ? '多链资产总览' : '资产总览',
+                multiChain ? S.multiChainAssets : S.assetsOverview,
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -60,7 +61,7 @@ class ChatBalanceWidget extends StatelessWidget {
   Widget _buildMultiChainView() {
     final chains = (data['chains'] as List<dynamic>?) ?? [];
     if (chains.isEmpty) {
-      return const Text('暂无资产数据', style: TextStyle(color: CwColors.ink3, fontSize: 13));
+      return Text(S.noAssetData, style: TextStyle(color: CwColors.ink3, fontSize: 13));
     }
 
     return Column(

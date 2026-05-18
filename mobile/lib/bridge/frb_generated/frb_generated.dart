@@ -116,6 +116,13 @@ abstract class RustLibApi extends BaseApi {
     required String rpcUrl,
   });
 
+  Future<String> crateApiExportBackupShard({required String password});
+
+  Future<bool> crateApiImportBackupShard({
+    required String encryptedData,
+    required String password,
+  });
+
   Future<Uint8List> crateApiExportDeviceShard();
 
   Future<FfiWalletInfo> crateApiGenerateWallet();
@@ -552,6 +559,66 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     debugName: "estimate_gas",
     argNames: ["from", "to", "valueWei", "data", "rpcUrl"],
   );
+
+  @override
+  Future<String> crateApiExportBackupShard({required String password}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(password, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 30,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiExportBackupShardConstMeta,
+        argValues: [password],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiExportBackupShardConstMeta =>
+      const TaskConstMeta(debugName: "export_backup_shard", argNames: ["password"]);
+
+  @override
+  Future<bool> crateApiImportBackupShard({
+    required String encryptedData,
+    required String password,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(encryptedData, serializer);
+          sse_encode_String(password, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 31,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiImportBackupShardConstMeta,
+        argValues: [encryptedData, password],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiImportBackupShardConstMeta =>
+      const TaskConstMeta(debugName: "import_backup_shard", argNames: ["encryptedData", "password"]);
 
   @override
   Future<Uint8List> crateApiExportDeviceShard() {

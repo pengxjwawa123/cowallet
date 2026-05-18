@@ -20,6 +20,8 @@ pub fn router() -> Router<AppState> {
         .route("/session/{id}/msg", post(send_message))
         .route("/session/{id}/msg", get(recv_messages))
         .route("/session/{id}/backup-contribution", get(get_backup_contribution))
+        .route("/session/{id}/resume", post(resume_session))
+        .route("/sessions/pending", get(list_pending_sessions))
         .route("/presign/status", get(presign_status))
         .route("/presign/generate", post(presign_generate))
 }
@@ -468,6 +470,227 @@ pub async fn get_backup_contribution(
         session_id, user_id
     );
     Err(StatusCode::NOT_FOUND)
+}
+
+// ─── Session Recovery Endpoints ──────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub(crate) struct PendingSessionResponse {
+    session_id: String,
+    session_type: String,
+    status: String,
+    current_round: i32,
+    wallet_id: Option<String>,
+    created_at: String,
+    last_activity: Option<String>,
+}
+
+/// GET /sessions/pending
+/// List active or interrupted sessions for the authenticated user that may be resumable.
+/// Only returns sessions within the 5-minute expiry window.
+pub async fn list_pending_sessions(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<PendingSessionResponse>>, StatusCode> {
+    let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let user_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let rows: Vec<(uuid::Uuid, String, String, i32, Option<uuid::Uuid>, chrono::DateTime<Utc>, Option<chrono::DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT id, session_type, status, current_round, wallet_id, created_at, last_activity
+         FROM mpc_sessions
+         WHERE user_id = $1
+           AND status IN ('active', 'interrupted')
+           AND expires_at > NOW()
+         ORDER BY created_at DESC
+         LIMIT 10"
+    )
+    .bind(user_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to list pending sessions: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let sessions: Vec<PendingSessionResponse> = rows.into_iter().map(|r| {
+        PendingSessionResponse {
+            session_id: r.0.to_string(),
+            session_type: r.1,
+            status: r.2,
+            current_round: r.3,
+            wallet_id: r.4.map(|w| w.to_string()),
+            created_at: r.5.to_rfc3339(),
+            last_activity: r.6.map(|t| t.to_rfc3339()),
+        }
+    }).collect();
+
+    Ok(Json(sessions))
+}
+
+/// POST /session/{id}/resume
+/// Resume an interrupted or active session. Reactivates the session and
+/// extends its expiry. Returns the session state + any missed messages
+/// so the client can replay from where it left off.
+pub async fn resume_session(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(session_id): Path<uuid::Uuid>,
+) -> Result<Json<ResumeSessionResponse>, StatusCode> {
+    let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let user_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Fetch session and verify ownership
+    let session: Option<(String, String, i32, uuid::Uuid, Option<uuid::Uuid>, chrono::DateTime<Utc>)> = sqlx::query_as(
+        "SELECT status, session_type, current_round, user_id, wallet_id, expires_at
+         FROM mpc_sessions WHERE id = $1"
+    )
+    .bind(session_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to query session for resume: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let (status, session_type, current_round, session_user_id, wallet_id, expires_at) =
+        session.ok_or(StatusCode::NOT_FOUND)?;
+
+    // Verify ownership
+    if session_user_id != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    // Only resume active or interrupted sessions
+    if status != "active" && status != "interrupted" {
+        tracing::info!("Cannot resume session {} with status '{}'", session_id, status);
+        return Err(StatusCode::GONE);
+    }
+
+    // Check if session has expired (even if status is still active/interrupted)
+    if expires_at < Utc::now() {
+        // Mark as expired
+        let _ = sqlx::query(
+            "UPDATE mpc_sessions SET status = 'expired', completed_at = NOW() WHERE id = $1"
+        )
+        .bind(session_id)
+        .execute(db)
+        .await;
+        return Err(StatusCode::GONE);
+    }
+
+    // Reactivate: set status to 'active', extend expiry by 5 minutes
+    sqlx::query(
+        "UPDATE mpc_sessions
+         SET status = 'active', last_activity = NOW(), expires_at = NOW() + INTERVAL '5 minutes'
+         WHERE id = $1"
+    )
+    .bind(session_id)
+    .execute(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to reactivate session: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Re-initialize server participant state for sign sessions.
+    // The client will generate fresh crypto state on resume, so the server
+    // must also start fresh to keep k values in sync.
+    if session_type == "sign" {
+        if let Some(participant) = &state.mpc_participant {
+            // Remove stale server state (if any) so both sides restart cleanly
+            participant.remove_session(session_id);
+
+            // Re-initialize the server sign session
+            let parties = vec![0i16, 1i16];
+            if let Err(e) = participant.on_session_created(
+                session_id,
+                user_id,
+                &session_type,
+                &parties,
+                2,
+                wallet_id,
+            ).await {
+                tracing::warn!("Failed to re-init server participant for resume: {}", e);
+                // Don't fail the resume — the client will detect this on message send
+            }
+
+            // Clear old messages so catch-up doesn't include stale protocol data
+            let _ = sqlx::query(
+                "DELETE FROM mpc_messages WHERE session_id = $1"
+            )
+            .bind(session_id)
+            .execute(db)
+            .await;
+
+            // Reset round counter
+            let _ = sqlx::query(
+                "UPDATE mpc_sessions SET current_round = 0 WHERE id = $1"
+            )
+            .bind(session_id)
+            .execute(db)
+            .await;
+        }
+    }
+
+    // Fetch messages for client catch-up (all messages addressed to party 0)
+    let messages: Vec<(i64, i16, i16, i16, Vec<u8>, chrono::DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, from_party, to_party, round, payload, created_at
+         FROM mpc_messages
+         WHERE session_id = $1 AND (to_party = 0 OR to_party = -1)
+         ORDER BY round ASC, created_at ASC"
+    )
+    .bind(session_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch catch-up messages: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let catch_up_messages: Vec<CatchUpMessage> = messages.into_iter().map(|m| CatchUpMessage {
+        id: m.0,
+        from_party: m.1,
+        to_party: m.2,
+        round: m.3,
+        payload: m.4,
+        created_at: m.5.to_rfc3339(),
+    }).collect();
+
+    tracing::info!(
+        "Session {} resumed for user {} (type={}, round={}, {} catch-up messages)",
+        session_id, user_id, session_type, current_round, catch_up_messages.len()
+    );
+
+    Ok(Json(ResumeSessionResponse {
+        session_id: session_id.to_string(),
+        session_type,
+        status: "active".to_string(),
+        current_round,
+        wallet_id: wallet_id.map(|w| w.to_string()),
+        messages: catch_up_messages,
+    }))
+}
+
+#[derive(Serialize)]
+pub(crate) struct ResumeSessionResponse {
+    session_id: String,
+    session_type: String,
+    status: String,
+    current_round: i32,
+    wallet_id: Option<String>,
+    messages: Vec<CatchUpMessage>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct CatchUpMessage {
+    id: i64,
+    from_party: i16,
+    to_party: i16,
+    round: i16,
+    payload: Vec<u8>,
+    created_at: String,
 }
 
 // ─── Presignature Management Endpoints ───────────────────────────────────────

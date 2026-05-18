@@ -222,6 +222,30 @@ Future<bool> verifyBackupShard({
   expectedPublicKey: expectedPublicKey,
 );
 
+/// Export the backup shard (Party 2) as a password-encrypted, base64-encoded string.
+///
+/// Output format: version(1) || salt(16) || nonce(12) || ciphertext(32+16 tag)
+/// The whole blob is then base64-encoded for easy transport (QR code, file, clipboard).
+///
+/// KDF: Argon2id with default params (19 MiB memory, 2 iterations, 1 parallelism).
+/// Cipher: AES-256-GCM with random nonce.
+Future<String> exportBackupShard({required String password}) =>
+    RustLib.instance.api.crateApiExportBackupShard(password: password);
+
+/// Import a backup shard from a password-encrypted, base64-encoded string.
+///
+/// Decrypts the blob and validates the shard is a valid secp256k1 scalar.
+/// On success, stores the shard as Party 2 in memory.
+///
+/// Returns `true` on success.
+Future<bool> importBackupShard({
+  required String encryptedData,
+  required String password,
+}) => RustLib.instance.api.crateApiImportBackupShard(
+  encryptedData: encryptedData,
+  password: password,
+);
+
 /// Legacy: Sign locally for testing (reconstructs full key — NOT for production).
 Future<Uint8List> signHash({required List<int> msgHash}) =>
     RustLib.instance.api.crateApiSignHash(msgHash: msgHash);

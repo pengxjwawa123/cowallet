@@ -2322,9 +2322,12 @@ dependencies = [
 name = "ffi-mobile"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "alloy-primitives",
  "alloy-rpc-types",
  "anyhow",
+ "argon2",
+ "base64",
  "bincode",
  "chain-evm",
  "flutter_rust_bridge",
@@ -2332,6 +2335,7 @@ dependencies = [
  "k256",
  "mpc-core",
  "policy-engine",
+ "rand 0.8.6",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

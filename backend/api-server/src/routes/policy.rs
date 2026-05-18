@@ -18,6 +18,8 @@ pub fn router() -> Router<AppState> {
         .route("/{id}", put(update_policy))
         .route("/{id}", delete(delete_policy))
         .route("/evaluate", post(evaluate_transaction))
+        .route("/limits", get(get_limits))
+        .route("/limits", put(update_limits))
 }
 
 #[derive(Serialize)]
@@ -358,6 +360,77 @@ async fn evaluate_transaction(
 
     let decision = policy_engine::rules::evaluate(&tx_ctx, &policies);
     Ok(Json(decision))
+}
+
+#[derive(Serialize)]
+struct LimitsResponse {
+    single_limit_usd: f64,
+    daily_limit_usd: f64,
+}
+
+async fn get_limits(
+    State(state): State<AppState>,
+    claims: axum::Extension<Claims>,
+) -> Result<Json<LimitsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state.require_db().map_err(|_| err(StatusCode::SERVICE_UNAVAILABLE, "database not available"))?;
+    let user_id: uuid::Uuid = claims.0.sub.parse()
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid user id in token"))?;
+
+    let row: Option<(f64, f64)> = sqlx::query_as(
+        "SELECT single_limit_usd, daily_limit_usd FROM user_policies WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    let (single_limit, daily_limit) = row.unwrap_or((500.0, 2000.0));
+
+    Ok(Json(LimitsResponse {
+        single_limit_usd: single_limit,
+        daily_limit_usd: daily_limit,
+    }))
+}
+
+#[derive(Deserialize)]
+struct UpdateLimitsRequest {
+    single_limit_usd: Option<f64>,
+    daily_limit_usd: Option<f64>,
+}
+
+async fn update_limits(
+    State(state): State<AppState>,
+    claims: axum::Extension<Claims>,
+    Json(body): Json<UpdateLimitsRequest>,
+) -> Result<Json<LimitsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state.require_db().map_err(|_| err(StatusCode::SERVICE_UNAVAILABLE, "database not available"))?;
+    let user_id: uuid::Uuid = claims.0.sub.parse()
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid user id in token"))?;
+
+    let single_limit = body.single_limit_usd.unwrap_or(500.0);
+    let daily_limit = body.daily_limit_usd.unwrap_or(2000.0);
+
+    if single_limit <= 0.0 || daily_limit <= 0.0 {
+        return Err(err(StatusCode::BAD_REQUEST, "limits must be positive"));
+    }
+
+    sqlx::query(
+        "INSERT INTO user_policies (user_id, single_limit_usd, daily_limit_usd, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id)
+         DO UPDATE SET single_limit_usd = $2, daily_limit_usd = $3, updated_at = NOW()",
+    )
+    .bind(user_id)
+    .bind(single_limit)
+    .bind(daily_limit)
+    .execute(db)
+    .await
+    .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    Ok(Json(LimitsResponse {
+        single_limit_usd: single_limit,
+        daily_limit_usd: daily_limit,
+    }))
 }
 
 /// Fetch recent transaction history from Covalent and compute aggregates

@@ -725,7 +725,7 @@ impl MpcParticipant {
             tokio::spawn(async move {
                 let _ = sqlx::query(
                     "UPDATE mpc_sessions SET status = 'expired', completed_at = NOW()
-                     WHERE id = $1 AND status NOT IN ('completed', 'failed')"
+                     WHERE id = $1 AND status NOT IN ('completed', 'failed', 'expired')"
                 )
                 .bind(id)
                 .execute(&db)
@@ -755,6 +755,22 @@ impl MpcParticipant {
 
         // Remove and return the contribution (single-use fetch)
         self.backup_contributions.remove(&session_id).map(|(_, v)| v)
+    }
+
+    /// Check if the participant has an active in-memory session for the given session_id.
+    /// Used by the recovery endpoint to determine if re-initialization is needed.
+    pub fn has_active_session(&self, session_id: Uuid) -> bool {
+        self.session_meta.contains_key(&session_id)
+    }
+
+    /// Remove all in-memory state for a session. Used during recovery to
+    /// clear stale crypto state before re-initializing with fresh parameters.
+    pub fn remove_session(&self, session_id: Uuid) {
+        self.session_meta.remove(&session_id);
+        self.dkg_sessions.remove(&session_id);
+        self.sign_sessions.remove(&session_id);
+        self.reshare_sessions.remove(&session_id);
+        self.reserved_presignatures.remove(&session_id);
     }
 
     /// Graceful shutdown.

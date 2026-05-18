@@ -387,6 +387,45 @@ class MpcBridge {
     }
   }
 
+  /// ===== Backup Shard Export/Import (Password-Encrypted) =====
+
+  /// Export the backup shard (Party 2) as a password-encrypted base64 string.
+  /// The password must be at least 8 characters.
+  /// Returns a portable encrypted blob suitable for QR codes or file storage.
+  static Future<String> exportBackupShard({required String password}) async {
+    if (password.length < 8) {
+      throw MpcException('Password must be at least 8 characters');
+    }
+    try {
+      return await frb.exportBackupShard(password: password);
+    } catch (e) {
+      throw MpcException('Failed to export backup shard: $e');
+    }
+  }
+
+  /// Import a backup shard from a password-encrypted base64 string.
+  /// Decrypts and validates the shard, then stores it as Party 2 in memory.
+  /// Returns true on success.
+  static Future<bool> importBackupShard({
+    required String encryptedData,
+    required String password,
+  }) async {
+    if (password.isEmpty) {
+      throw MpcException('Password cannot be empty');
+    }
+    if (encryptedData.isEmpty) {
+      throw MpcException('Encrypted data cannot be empty');
+    }
+    try {
+      return await frb.importBackupShard(
+        encryptedData: encryptedData,
+        password: password,
+      );
+    } catch (e) {
+      throw MpcException('Failed to import backup shard: $e');
+    }
+  }
+
   /// ===== Backup Shard Combination =====
 
   /// Combine device and server backup share contributions into the final backup shard.

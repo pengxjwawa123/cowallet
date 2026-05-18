@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../theme/colors.dart';
+import '../../../l10n/strings.dart';
 
 class ChatSendConfirmWidget extends StatelessWidget {
   final String toAddress;
@@ -12,6 +13,10 @@ class ChatSendConfirmWidget extends StatelessWidget {
   final bool resolved;
   final bool deductGasHint;
   final String? originalAmount;
+  final bool policyRejected;
+  final String? policyReason;
+  final String? policyLimit;
+  final List<String>? policyWarnings;
   final VoidCallback? onConfirm;
   final VoidCallback? onDeny;
 
@@ -27,6 +32,10 @@ class ChatSendConfirmWidget extends StatelessWidget {
     this.resolved = false,
     this.deductGasHint = false,
     this.originalAmount,
+    this.policyRejected = false,
+    this.policyReason,
+    this.policyLimit,
+    this.policyWarnings,
     this.onConfirm,
     this.onDeny,
   });
@@ -44,7 +53,8 @@ class ChatSendConfirmWidget extends StatelessWidget {
         color: CwColors.bgCard,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: resolved ? CwColors.line
+          color: policyRejected ? CwColors.danger.withValues(alpha: 0.6)
+              : resolved ? CwColors.line
               : deductGasHint ? CwColors.warn.withValues(alpha: 0.4)
               : CwColors.accent.withValues(alpha: 0.4),
         ),
@@ -55,23 +65,27 @@ class ChatSendConfirmWidget extends StatelessWidget {
           Row(
             children: [
               Icon(
-                resolved ? Icons.check_circle
+                policyRejected ? Icons.block
+                    : resolved ? Icons.check_circle
                     : deductGasHint ? Icons.info_outline
                     : Icons.send_rounded,
                 size: 16,
-                color: resolved ? CwColors.success
+                color: policyRejected ? CwColors.danger
+                    : resolved ? CwColors.success
                     : deductGasHint ? CwColors.warn
                     : CwColors.accent,
               ),
               const SizedBox(width: 6),
               Text(
-                resolved ? '转账已提交'
-                    : deductGasHint ? '金额已调整（需预留Gas）'
-                    : '转账确认',
+                policyRejected ? '转账被拒绝'
+                    : resolved ? S.transferSubmitted
+                    : deductGasHint ? S.amountAdjustedGas
+                    : S.transferConfirm,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: resolved ? CwColors.success
+                  color: policyRejected ? CwColors.danger
+                      : resolved ? CwColors.success
                       : deductGasHint ? CwColors.warn
                       : CwColors.accent,
                   letterSpacing: 0.5,
@@ -79,7 +93,47 @@ class ChatSendConfirmWidget extends StatelessWidget {
               ),
             ],
           ),
-          if (deductGasHint && !resolved) ...[
+          if (policyRejected) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: CwColors.danger.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    policyReason ?? '超出转账限额',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: CwColors.danger),
+                  ),
+                  if (policyLimit != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '限额: $policyLimit',
+                      style: const TextStyle(fontSize: 11, color: CwColors.ink3),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  const Text(
+                    '请调整金额或在 设置 > 转账限额 中修改您的限额。',
+                    style: TextStyle(fontSize: 11, color: CwColors.ink3),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$amount $token',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: CwColors.ink1,
+              ),
+            ),
+          ] else if (deductGasHint && !resolved) ...[
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
@@ -89,30 +143,30 @@ class ChatSendConfirmWidget extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: originalAmount == null
-                  ? const Row(
+                  ? Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: CwColors.warn)),
-                        SizedBox(width: 8),
-                        Text('计算费用中...', style: TextStyle(fontSize: 12, color: CwColors.warn)),
+                        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: CwColors.warn)),
+                        const SizedBox(width: 8),
+                        Text(S.calculatingFees, style: const TextStyle(fontSize: 12, color: CwColors.warn)),
                       ],
                     )
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '转出金额+Gas超出余额，已自动调减',
+                        Text(
+                          S.amountPlusGasExceeded,
                           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: CwColors.warn),
                         ),
                         const SizedBox(height: 8),
-                        _breakdownRow('原始金额', '$originalAmount $token'),
+                        _breakdownRow(S.originalAmount, '$originalAmount $token'),
                         const SizedBox(height: 4),
-                        _breakdownRow('Gas 费用', '- ${gasEstimate ?? "..."} $token'),
+                        _breakdownRow(S.gasFee, '- ${gasEstimate ?? "..."} $token'),
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 6),
                           child: Divider(height: 1, color: CwColors.lineStrong),
                         ),
-                        _breakdownRow('实际转出', '$amount $token', bold: true),
+                        _breakdownRow(S.actualSend, '$amount $token', bold: true),
                       ],
                     ),
             ),
@@ -127,24 +181,52 @@ class ChatSendConfirmWidget extends StatelessWidget {
               ),
             ),
           ],
+          // Policy warnings (non-blocking)
+          if (!policyRejected && policyWarnings != null && policyWarnings!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: CwColors.warnSoft,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: policyWarnings!.map((w) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, size: 14, color: CwColors.warn),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(w, style: const TextStyle(fontSize: 11, color: CwColors.warn)),
+                      ),
+                    ],
+                  ),
+                )).toList(),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
-          _infoRow('收款地址', shortTo),
+          _infoRow(S.recipientAddress, shortTo),
           const SizedBox(height: 4),
           if (contractAddress != null && contractAddress!.isNotEmpty) ...[
-            _infoRow('合约', _shortenAddr(contractAddress!)),
+            _infoRow(S.contract, _shortenAddr(contractAddress!)),
             const SizedBox(height: 4),
           ],
           if (chainId != null)
-            _infoRow('网络', _chainName(chainId!)),
+            _infoRow(S.network, _chainName(chainId!)),
           if (chainId != null)
             const SizedBox(height: 4),
-          if (!deductGasHint) ...[
+          if (!deductGasHint && !policyRejected) ...[
             if (gasEstimate != null)
-              _infoRow('预估 Gas', gasEstimate!)
+              _infoRow(S.estimatedGas, gasEstimate!)
             else if (!resolved)
               _gasLoadingRow(),
           ],
-          if (!resolved) ...[
+          if (!resolved && !policyRejected) ...[
             const SizedBox(height: 16),
             Row(
               children: [
@@ -160,7 +242,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      child: const Text('取消'),
+                      child: Text(S.cancel),
                     ),
                   ),
                 ),
@@ -186,7 +268,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
                                 color: Colors.white,
                               ),
                             )
-                          : Text(deductGasHint ? '确认转出' : '确认转账'),
+                          : Text(deductGasHint ? S.confirmSend : S.confirmTransfer),
                     ),
                   ),
                 ),
@@ -257,7 +339,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
   Widget _gasLoadingRow() {
     return Row(
       children: [
-        const Text('预估 Gas', style: TextStyle(fontSize: 12, color: CwColors.ink4)),
+        Text(S.estimatedGas, style: TextStyle(fontSize: 12, color: CwColors.ink4)),
         const SizedBox(width: 8),
         Expanded(
           child: Row(
@@ -272,8 +354,8 @@ class ChatSendConfirmWidget extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              const Text(
-                '估算中...',
+              Text(
+                S.estimating,
                 style: TextStyle(
                   fontSize: 12,
                   color: CwColors.ink4,

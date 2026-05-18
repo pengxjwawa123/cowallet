@@ -331,28 +331,31 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，用户的加密钱包 AI 助手
 - USDC, USDT, DAI, WETH, LINK 以及所有其他非原生代币
 - 即使是最常见的稳定币，也必须传合约地址
 
-**常用合约地址速查**：
-| Token | Chain | contract_address |
-|-------|-------|-----------------|
-| USDC | Ethereum(1) | 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 |
-| USDC | Base(8453) | 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 |
-| USDC | Polygon(137) | 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 |
-| USDC | Arbitrum(42161) | 0xaf88d065e77c8cC2239327C5EDb3A432268e5831 |
-| USDC | Optimism(10) | 0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85 |
-| USDC | BSC(56) | 0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d |
-| USDT | Ethereum(1) | 0xdAC17F958D2ee523a2206206994597C13D831ec7 |
-| USDT | Polygon(137) | 0xc2132D05D31c914a87C6611C10748AEb04B58e8F |
-| USDT | BSC(56) | 0x55d398326f99059fF775485246999027B3197955 |
-| USDT | Arbitrum(42161) | 0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9 |
-| USDT | Optimism(10) | 0x94b008aA00579c1307B0EF2c499aD98a8ce58e58 |
-| DAI | Ethereum(1) | 0x6B175474E89094C44Da98b954EedeAC495271d0F |
-| WETH | Base(8453) | 0x4200000000000000000000000000000000000006 |
+**合约地址查找优先级**：
+1. **首选：从 Portfolio Context 中查找**：用户消息中如果包含 [Portfolio Context]，其中列出了用户持有的所有代币及其 contract_address、chain_id、decimals。当用户要转某个代币时，优先从 Portfolio Context 中匹配 symbol 和 chain_id 来获取 contract_address 和 decimals。
+2. **备选：常用合约地址速查表**（仅当 Portfolio Context 中没有时）：
+   | Token | Chain | contract_address |
+   |-------|-------|-----------------|
+   | USDC | Ethereum(1) | 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 |
+   | USDC | Base(8453) | 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 |
+   | USDC | Polygon(137) | 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 |
+   | USDC | Arbitrum(42161) | 0xaf88d065e77c8cC2239327C5EDb3A432268e5831 |
+   | USDC | Optimism(10) | 0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85 |
+   | USDC | BSC(56) | 0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d |
+   | USDT | Ethereum(1) | 0xdAC17F958D2ee523a2206206994597C13D831ec7 |
+   | USDT | Polygon(137) | 0xc2132D05D31c914a87C6611C10748AEb04B58e8F |
+   | USDT | BSC(56) | 0x55d398326f99059fF775485246999027B3197955 |
+   | USDT | Arbitrum(42161) | 0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9 |
+   | USDT | Optimism(10) | 0x94b008aA00579c1307B0EF2c499aD98a8ce58e58 |
+   | DAI | Ethereum(1) | 0x6B175474E89094C44Da98b954EedeAC495271d0F |
+   | WETH | Base(8453) | 0x4200000000000000000000000000000000000006 |
+3. **如果都没有**：用 clarify 询问用户提供合约地址
 
 **规则**：
 1. 如果 token 是 ETH/POL/MATIC/BNB → 不传 contract_address
-2. 如果 token 是 USDC/USDT/DAI/WETH/LINK 等 → 必须传对应链的 contract_address
-3. 如果你不知道某个代币的合约地址 → 用 clarify 询问用户提供合约地址
-4. decimals: USDC/USDT 是 6 位，ETH/POL/BNB/DAI/WETH 是 18 位
+2. 如果 token 是 ERC-20 代币 → 优先从 Portfolio Context 查找 contract_address，其次从速查表查找
+3. Portfolio Context 中的 native 字段为 true 表示原生代币，false 表示 ERC-20 代币
+4. 如果 Portfolio Context 中有该代币，必须使用其 decimals 值
 
 ## 重要：多链代币必须确认链
 当用户的请求涉及多链代币（USDC, USDT, DAI, WETH, LINK 等存在于多条链上的代币），且无法从上下文判断目标链时，你**必须**使用 clarify 工具询问用户要在哪条链上操作。绝不能自行假设默认链。chain_id 是 send_transaction 和 swap_token 的必填参数。
@@ -515,6 +518,10 @@ pub struct ChatRequest {
     pub user_id: Option<String>,
     #[serde(default)]
     pub wallet_address: Option<String>,
+    #[serde(default)]
+    pub supported_chains: Option<Vec<u64>>,
+    #[serde(default)]
+    pub portfolio: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -757,9 +764,17 @@ async fn chat_stream(
             }
         }
 
+        // Inject portfolio context into user message if provided
+        let user_content = if let Some(portfolio) = &req.portfolio {
+            let portfolio_str = serde_json::to_string_pretty(portfolio).unwrap_or_default();
+            format!("{}\n\n[Portfolio Context]\n{}", user_message, portfolio_str)
+        } else {
+            user_message.clone()
+        };
+
         messages.push(Message {
             role: "user".into(),
-            content: Some(user_message.clone()),
+            content: Some(user_content),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,

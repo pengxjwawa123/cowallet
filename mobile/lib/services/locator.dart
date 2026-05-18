@@ -20,6 +20,8 @@ import 'notification_service.dart';
 import 'push_service.dart';
 import 'tx_history_service.dart';
 import 'mpc_wallet_service.dart';
+import 'mpc_session_manager.dart';
+import 'pending_sign_service.dart';
 import 'policy_service.dart';
 import 'presign_pool_service.dart';
 
@@ -42,6 +44,8 @@ class Services {
   static late SettingsService settings;
   static late PolicyService policy;
   static late PresignPoolService presignPool;
+  static late MpcSessionManager mpcSessionManager;
+  static late PendingSignService pendingSign;
 
   // API clients (stateless, no initialization needed)
   static final mpcApi = MpcApi();
@@ -80,6 +84,8 @@ class Services {
     );
     policy = PolicyService();
     presignPool = PresignPoolService();
+    mpcSessionManager = MpcSessionManager(mpcWallet);
+    pendingSign = PendingSignService();
   }
 
   /// Unified authentication: biometric if user enabled it, otherwise app PIN.

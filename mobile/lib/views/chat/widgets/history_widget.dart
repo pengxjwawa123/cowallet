@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/colors.dart';
 import '../../../widgets/top_toast.dart';
+import '../../../l10n/strings.dart';
 
 class ChatHistoryWidget extends StatelessWidget {
   final List<dynamic> transactions;
@@ -33,7 +34,7 @@ class ChatHistoryWidget extends StatelessWidget {
               const Icon(Icons.receipt_long, size: 16, color: CwColors.accent),
               const SizedBox(width: 6),
               Text(
-                '交易记录',
+                S.txHistory,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -43,18 +44,18 @@ class ChatHistoryWidget extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                '共 $total 笔',
+                S.txCount(total),
                 style: const TextStyle(fontSize: 11, color: CwColors.ink4),
               ),
             ],
           ),
           const SizedBox(height: 12),
           if (transactions.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(
                 child: Text(
-                  '暂无交易记录',
+                  S.noTxHistory,
                   style: TextStyle(fontSize: 13, color: CwColors.ink4),
                 ),
               ),
@@ -66,7 +67,7 @@ class ChatHistoryWidget extends StatelessWidget {
               padding: const EdgeInsets.only(top: 8),
               child: Center(
                 child: Text(
-                  '还有 ${transactions.length - 5} 笔交易...',
+                  S.moreTxCount(transactions.length - 5),
                   style: const TextStyle(fontSize: 11, color: CwColors.ink4),
                 ),
               ),
@@ -101,7 +102,7 @@ class ChatHistoryWidget extends StatelessWidget {
           onTxTap!(map);
         } else if (txHash != null) {
           Clipboard.setData(ClipboardData(text: txHash));
-          showTopToast(context, '交易哈希已复制');
+          showTopToast(context, S.txHashCopied);
         }
       },
       child: Container(
@@ -134,7 +135,7 @@ class ChatHistoryWidget extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '发送至 $shortTo',
+                    S.sendTo(shortTo),
                     style: const TextStyle(fontSize: 13, color: CwColors.ink1),
                   ),
                   const SizedBox(height: 2),
@@ -169,7 +170,7 @@ class ChatHistoryWidget extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  isSuccess ? '已确认' : (isFailed ? '失败' : '待确认'),
+                  isSuccess ? S.confirmed : (isFailed ? S.failed : S.pending),
                   style: TextStyle(
                     fontSize: 10,
                     color: isSuccess

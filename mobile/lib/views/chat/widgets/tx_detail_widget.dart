@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../theme/colors.dart';
 import '../../../widgets/top_toast.dart';
+import '../../../l10n/strings.dart';
 
 class ChatTxDetailWidget extends StatelessWidget {
   final Map<String, dynamic> data;
@@ -71,7 +72,7 @@ class ChatTxDetailWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isIncoming ? '收款' : '转账',
+                      isIncoming ? S.receive : S.transfer,
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -112,14 +113,14 @@ class ChatTxDetailWidget extends StatelessWidget {
           const SizedBox(height: 14),
 
           // Details
-          _detailRow('发送方', _shortAddr(from), from),
+          _detailRow(S.sender, _shortAddr(from), from),
           const SizedBox(height: 10),
-          _detailRow('接收方', _shortAddr(to), to),
+          _detailRow(S.receiver, _shortAddr(to), to),
           const SizedBox(height: 10),
-          _detailRow('网络', _chainName(chainId), null),
+          _detailRow(S.network, _chainName(chainId), null),
           if (blockNumber != null) ...[
             const SizedBox(height: 10),
-            _detailRow('区块', '#$blockNumber', null),
+            _detailRow(S.block, '#$blockNumber', null),
           ],
           if (gasUsed != null) ...[
             const SizedBox(height: 10),
@@ -127,7 +128,7 @@ class ChatTxDetailWidget extends StatelessWidget {
           ],
           if (timestamp != null) ...[
             const SizedBox(height: 10),
-            _detailRow('时间', _formatTime(timestamp), null),
+            _detailRow(S.time, _formatTime(timestamp), null),
           ],
 
           if (txHash.isNotEmpty) ...[
@@ -142,7 +143,7 @@ class ChatTxDetailWidget extends StatelessWidget {
               return GestureDetector(
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: txHash));
-                  showTopToast(ctx, '交易哈希已复制');
+                  showTopToast(ctx, S.txHashCopied);
                 },
                 child: Row(
                   children: [
@@ -180,7 +181,7 @@ class ChatTxDetailWidget extends StatelessWidget {
         onTap: copyValue != null
             ? () {
                 Clipboard.setData(ClipboardData(text: copyValue));
-                showTopToast(ctx, '$label 已复制');
+                showTopToast(ctx, S.labelCopied(label));
               }
             : null,
         child: Row(
@@ -213,16 +214,16 @@ class ChatTxDetailWidget extends StatelessWidget {
     final String label;
     if (isSuccess) {
       color = CwColors.success;
-      label = '已确认';
+      label = S.confirmed;
     } else if (isFailed) {
       color = CwColors.danger;
-      label = '失败';
+      label = S.failed;
     } else if (isPending) {
       color = CwColors.warn;
-      label = '待确认';
+      label = S.pending;
     } else {
       color = CwColors.ink4;
-      label = '未知';
+      label = S.unknown;
     }
 
     return Container(

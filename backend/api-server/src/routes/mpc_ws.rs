@@ -60,9 +60,19 @@ async fn ws_handler(
 
     let (status, parties, session_user_id) = session;
 
-    // Session must be active
-    if status != "active" {
+    // Session must be active or interrupted (interrupted sessions can be resumed)
+    if status != "active" && status != "interrupted" {
         return Err(StatusCode::GONE);
+    }
+
+    // If session was interrupted, reactivate it on reconnection
+    if status == "interrupted" {
+        let _ = sqlx::query(
+            "UPDATE mpc_sessions SET status = 'active', last_activity = NOW(), expires_at = NOW() + INTERVAL '5 minutes' WHERE id = $1"
+        )
+        .bind(session_id)
+        .execute(db)
+        .await;
     }
 
     // Verify party index is part of this session
@@ -220,8 +230,20 @@ async fn handle_ws_connection(
         }
     }
 
-    // Client disconnected: clean up
+    // Client disconnected: mark session as interrupted if still active
     tracing::info!("WS disconnected: session {} party {}", session_id, party_index);
+
+    if let Some(db) = &state.db {
+        // Mark session as interrupted so the client can resume later
+        let _ = sqlx::query(
+            "UPDATE mpc_sessions SET status = 'interrupted', last_activity = NOW()
+             WHERE id = $1 AND status = 'active'"
+        )
+        .bind(session_id)
+        .execute(db)
+        .await;
+    }
+
     sink_task.abort();
     inbound_task.abort();
 }

@@ -181,7 +181,8 @@ class MpcWalletService implements WalletService {
   }
 
   /// 按需加载设备分片到 Rust 内存（签名前调用）
-  Future<void> _ensureShardLoaded() async {
+  /// Public so MpcSessionManager can call it during sign recovery.
+  Future<void> ensureShardLoaded() async {
     final shardBytes = await SecureHardware.loadDeviceShard();
     if (shardBytes == null || shardBytes.isEmpty) {
       throw MpcException('Device shard not found in secure hardware');
@@ -211,7 +212,7 @@ class MpcWalletService implements WalletService {
       throw MpcException('Message hash must be exactly 32 bytes');
     }
 
-    await _ensureShardLoaded();
+    await ensureShardLoaded();
 
     final sessionResult = await MpcApi.createSession(
       sessionType: 'sign',

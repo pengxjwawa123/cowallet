@@ -38,11 +38,7 @@ class IntentExecutor {
   ) async {
     // Block execution when emergency freeze is active
     if (Services.settings.emergencyFreezeActive) {
-      return ActionResult.fail(
-        S.lang == Lang.zh
-            ? '紧急冻结已激活，所有操作已暂停。请先在设置中解除冻结。'
-            : 'Emergency freeze is active. All operations paused. Deactivate in Settings first.',
-      );
+      return ActionResult.fail(S.emergencyFreezeActive);
     }
 
     switch (kind) {
@@ -53,9 +49,7 @@ class IntentExecutor {
       case 'swap':
         return _executeSwap(params);
       default:
-        return ActionResult.ok(
-          S.lang == Lang.zh ? '好,这就办。' : 'On it.',
-        );
+        return ActionResult.ok(S.onIt);
     }
   }
 
@@ -72,9 +66,7 @@ class IntentExecutor {
         );
       }
       return ActionResult.ok(
-        S.lang == Lang.zh
-            ? '你的余额: ${_balance.formattedEth} + ${_balance.formattedUsdc}'
-            : 'Your balance: ${_balance.formattedEth} + ${_balance.formattedUsdc}',
+        S.yourBalance(_balance.formattedEth, _balance.formattedUsdc),
         data: {
           'eth': _balance.formattedEth,
           'usdc': _balance.formattedUsdc,
@@ -82,9 +74,7 @@ class IntentExecutor {
         },
       );
     } catch (e) {
-      return ActionResult.fail(
-        S.lang == Lang.zh ? '出错了: $e' : 'Error: $e',
-      );
+      return ActionResult.fail(S.errorMsg(e.toString()));
     }
   }
 
@@ -108,9 +98,7 @@ class IntentExecutor {
         data: {'gas': estimate.formattedUsd, 'gasEth': estimate.formattedEth},
       );
     } catch (e) {
-      return ActionResult.fail(
-        S.lang == Lang.zh ? 'Gas 估算失败' : 'Gas estimation failed',
-      );
+      return ActionResult.fail(S.gasEstimateFailed);
     }
   }
 
@@ -126,9 +114,7 @@ class IntentExecutor {
       final decimalsParam = params['decimals'] != null ? int.tryParse(params['decimals']!) : null;
 
       if (to.isEmpty || !to.startsWith('0x') || to.length != 42) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '无效的收款地址' : 'Invalid recipient address',
-        );
+        return ActionResult.fail(S.invalidRecipient);
       }
 
       // Check balance before attempting transfer
@@ -154,9 +140,7 @@ class IntentExecutor {
         final gasCost = maxFee * BigInt.from(21000);
         amount = balance - gasCost;
         if (amount <= BigInt.zero) {
-          return ActionResult.fail(
-            S.lang == Lang.zh ? '余额不足以支付Gas费' : 'Insufficient balance for gas',
-          );
+          return ActionResult.fail(S.insufficientGas);
         }
         if (!confirmedDeduct) {
           final nativeSymbol = (targetChainId == 137 || targetChainId == 80002) ? 'POL'
@@ -165,9 +149,7 @@ class IntentExecutor {
           final maxSendableDisplay = _formatWei(amount, token);
           final gasCostDisplay = _formatWei(gasCost, token);
           return ActionResult.fail(
-            S.lang == Lang.zh
-                ? '转出全部余额需扣除Gas费。余额 $balanceDisplay $nativeSymbol，扣除Gas费后实际转出 $maxSendableDisplay $nativeSymbol，是否继续？'
-                : 'Sending all requires gas deduction. Balance: $balanceDisplay $nativeSymbol, actual send: $maxSendableDisplay $nativeSymbol after gas. Continue?',
+            S.sendAllRequiresGasDeduction(balanceDisplay, maxSendableDisplay, nativeSymbol, gasCostDisplay),
             data: {'suggest_deduct_gas': 'true', 'max_sendable': maxSendableDisplay, 'gas_cost': gasCostDisplay, 'symbol': nativeSymbol, 'original_amount': balanceDisplay},
           );
         }
@@ -177,17 +159,11 @@ class IntentExecutor {
             ?? _findTokenInBalance(token, targetChainId)?.contractAddress
             ?? ChainConfig.byId(targetChainId).tokenContract(token);
         if (tokenContract.isEmpty) {
-          return ActionResult.fail(
-            S.lang == Lang.zh
-                ? '未找到代币 $token 的合约地址'
-                : 'Contract address for $token not found',
-          );
+          return ActionResult.fail(S.tokenContractNotFound(token));
         }
         amount = await _chain.getTokenBalance(address, tokenContract);
         if (amount <= BigInt.zero) {
-          return ActionResult.fail(
-            S.lang == Lang.zh ? '$token 余额为零' : '$token balance is zero',
-          );
+          return ActionResult.fail(S.tokenBalanceZero(token));
         }
       } else {
         amount = decimalsParam != null
@@ -196,9 +172,7 @@ class IntentExecutor {
       }
 
       if (amount == BigInt.zero) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '无效的金额' : 'Invalid amount',
-        );
+        return ActionResult.fail(S.invalidAmount);
       }
 
       // Pre-check: verify sufficient balance before signing (skip for sendAll — already validated)
@@ -216,15 +190,11 @@ class IntentExecutor {
             final maxSendableDisplay = _formatWei(maxSendable, token);
             final gasCostDisplay = _formatWei(gasCost, token);
             return ActionResult.fail(
-              S.lang == Lang.zh
-                  ? '余额不足以支付转账金额+Gas费。扣除Gas费后最多可转出 $maxSendableDisplay $nativeSymbol (Gas≈$gasCostDisplay $nativeSymbol)，是否继续？'
-                  : 'Insufficient balance for amount + gas. Max sendable after gas: $maxSendableDisplay $nativeSymbol (gas≈$gasCostDisplay $nativeSymbol). Continue?',
+              S.insufficientForAmountPlusGas(maxSendableDisplay, nativeSymbol, gasCostDisplay),
               data: {'suggest_deduct_gas': 'true', 'max_sendable': maxSendableDisplay, 'gas_cost': gasCostDisplay, 'symbol': nativeSymbol},
             );
           }
-          return ActionResult.fail(
-            S.lang == Lang.zh ? '余额不足以支付Gas费' : 'Insufficient balance for gas',
-          );
+          return ActionResult.fail(S.insufficientGas);
         }
       }
 
@@ -238,11 +208,7 @@ class IntentExecutor {
             ?? _findTokenInBalance(token, targetChainId)?.contractAddress
             ?? ChainConfig.byId(targetChainId).tokenContract(token);
         if (tokenContract.isEmpty) {
-          return ActionResult.fail(
-            S.lang == Lang.zh
-                ? '未找到代币 $token 的合约地址，请确认你持有该代币'
-                : 'Contract address for $token not found. Make sure you hold this token.',
-          );
+          return ActionResult.fail(S.tokenContractNotFoundConfirm(token));
         }
         txHash = await _tx.sendErc20(
           to: to,
@@ -267,9 +233,7 @@ class IntentExecutor {
       final shortHash =
           '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
       return ActionResult.ok(
-        S.lang == Lang.zh
-            ? '转账成功! 交易: $shortHash'
-            : 'Transfer sent! Tx: $shortHash',
+        S.transferSuccess(shortHash),
         data: {'txHash': txHash, 'amount': amountStr, 'token': token},
       );
     } catch (e) {
@@ -278,22 +242,14 @@ class IntentExecutor {
 
       if (msg.contains('authentication') || msg.contains('Biometric')) {
         Services.notifications.showTxFailed(txHash, S.authFailed);
-        return ActionResult.fail(
-          S.lang == Lang.zh
-              ? '身份验证失败，转账已取消'
-              : 'Authentication failed, transfer cancelled',
-        );
+        return ActionResult.fail(S.authFailedTransferCancelled);
       }
       if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {
-        Services.notifications.showTxFailed(txHash, S.lang == Lang.zh ? '余额不足' : 'Insufficient balance');
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
-        );
+        Services.notifications.showTxFailed(txHash, S.insufficientBalance);
+        return ActionResult.fail(S.insufficientBalance);
       }
       Services.notifications.showTxFailed(txHash, msg);
-      return ActionResult.fail(
-        S.lang == Lang.zh ? '转账失败: $msg' : 'Transfer failed: $msg',
-      );
+      return ActionResult.fail(S.transferFailed(msg));
     }
   }
 
@@ -306,9 +262,7 @@ class IntentExecutor {
       final slippageStr = params['slippage'];
 
       if (fromToken.isEmpty || toToken.isEmpty) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '请指定兑换的代币' : 'Please specify swap tokens',
-        );
+        return ActionResult.fail(S.specifySwapTokens);
       }
 
       final swapChainId = chainIdStr != null
@@ -317,9 +271,7 @@ class IntentExecutor {
 
       final amount = _parseAmount(amountStr, fromToken, chainId: swapChainId);
       if (amount == BigInt.zero) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '无效的金额' : 'Invalid amount',
-        );
+        return ActionResult.fail(S.invalidAmount);
       }
 
       final address = await _wallet.getAddress();
@@ -340,9 +292,7 @@ class IntentExecutor {
       if (_isNativeToken(fromToken, chainId)) {
         final balance = await _chain.getEthBalance(address);
         if (balance < amount) {
-          return ActionResult.fail(
-            S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
-          );
+          return ActionResult.fail(S.insufficientBalance);
         }
       } else {
         final config = ChainConfig.byId(chainId);
@@ -350,9 +300,7 @@ class IntentExecutor {
         if (tokenContract.isNotEmpty) {
           final tokenBalance = await _chain.getTokenBalance(address, tokenContract);
           if (tokenBalance < amount) {
-            return ActionResult.fail(
-              S.lang == Lang.zh ? '$fromToken 余额不足' : 'Insufficient $fromToken balance',
-            );
+            return ActionResult.fail(S.insufficientTokenBalance(fromToken));
           }
         }
       }
@@ -369,9 +317,7 @@ class IntentExecutor {
 
       if (!buildResult.isSuccess || buildResult.data == null) {
         return ActionResult.fail(
-          S.lang == Lang.zh
-              ? '获取兑换路由失败: ${buildResult.errorMessage ?? "未知错误"}'
-              : 'Failed to get swap route: ${buildResult.errorMessage ?? "unknown error"}',
+          S.swapRouteFailed(buildResult.errorMessage ?? "unknown error"),
         );
       }
 
@@ -383,9 +329,7 @@ class IntentExecutor {
       final buyAmount = swapData['buy_amount'] as String? ?? '';
 
       if (swapTo.isEmpty || swapCalldata.isEmpty) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '兑换交易数据无效' : 'Invalid swap transaction data',
-        );
+        return ActionResult.fail(S.invalidSwapData);
       }
 
       // Parse the value to send with the swap (for native token sells)
@@ -430,9 +374,7 @@ class IntentExecutor {
       final buyDisplayAmount = _formatBuyAmount(buyAmount, toToken);
 
       return ActionResult.ok(
-        S.lang == Lang.zh
-            ? '兑换成功! $amountStr $fromToken → $buyDisplayAmount $toToken\n交易: $shortHash'
-            : 'Swap successful! $amountStr $fromToken → $buyDisplayAmount $toToken\nTx: $shortHash',
+        S.swapSuccess(amountStr, fromToken, buyDisplayAmount, toToken, shortHash),
         data: {
           'txHash': txHash,
           'fromToken': fromToken,
@@ -444,27 +386,15 @@ class IntentExecutor {
     } catch (e) {
       final msg = e.toString();
       if (msg.contains('authentication') || msg.contains('Biometric')) {
-        return ActionResult.fail(
-          S.lang == Lang.zh
-              ? '身份验证失败，兑换已取消'
-              : 'Authentication failed, swap cancelled',
-        );
+        return ActionResult.fail(S.authFailedSwapCancelled);
       }
       if (msg.contains('insufficient funds') || msg.contains('InsufficientFunds')) {
-        return ActionResult.fail(
-          S.lang == Lang.zh ? '余额不足' : 'Insufficient balance',
-        );
+        return ActionResult.fail(S.insufficientBalance);
       }
       if (msg.contains('allowance') || msg.contains('ALLOWANCE')) {
-        return ActionResult.fail(
-          S.lang == Lang.zh
-              ? '需要先授权代币额度，请稍后重试'
-              : 'Token approval required. Please try again shortly.',
-        );
+        return ActionResult.fail(S.tokenApprovalRequired);
       }
-      return ActionResult.fail(
-        S.lang == Lang.zh ? '兑换失败: $msg' : 'Swap failed: $msg',
-      );
+      return ActionResult.fail(S.swapFailed(msg));
     }
   }
 

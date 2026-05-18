@@ -9,6 +9,7 @@ class TokenBalance {
   final int decimals;
   final String? logoUrl;
   final String? contractAddress;
+  final int? chainId;
 
   TokenBalance({
     required this.symbol,
@@ -18,6 +19,7 @@ class TokenBalance {
     this.decimals = 18,
     this.logoUrl,
     this.contractAddress,
+    this.chainId,
   });
 
   factory TokenBalance.fromJson(Map<String, dynamic> json) {
@@ -29,6 +31,7 @@ class TokenBalance {
       decimals: json['decimals'] as int? ?? 18,
       logoUrl: json['logo_url'] as String?,
       contractAddress: json['contract_address'] as String?,
+      chainId: json['chain_id'] as int?,
     );
   }
 }
@@ -107,7 +110,14 @@ class BalanceService extends ChangeNotifier {
 
           _chainTotals[chainId] = chainTotal;
           _chainTokens[chainId] = tokensList
-              .map((json) => TokenBalance.fromJson(json as Map<String, dynamic>))
+              .map((json) {
+                final tokenJson = json as Map<String, dynamic>;
+                // Ensure chain_id is set on each token
+                if (!tokenJson.containsKey('chain_id')) {
+                  tokenJson['chain_id'] = chainId;
+                }
+                return TokenBalance.fromJson(tokenJson);
+              })
               .toList();
         }
 
@@ -152,7 +162,14 @@ class BalanceService extends ChangeNotifier {
 
         final tokensList = data['tokens'] as List<dynamic>? ?? [];
         final chainTokens = tokensList
-            .map((json) => TokenBalance.fromJson(json as Map<String, dynamic>))
+            .map((json) {
+              final tokenJson = json as Map<String, dynamic>;
+              // Ensure chain_id is set on each token
+              if (!tokenJson.containsKey('chain_id')) {
+                tokenJson['chain_id'] = chainId;
+              }
+              return TokenBalance.fromJson(tokenJson);
+            })
             .toList();
 
         // Update chain-specific data

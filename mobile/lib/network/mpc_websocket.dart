@@ -50,6 +50,10 @@ class MpcWebSocket {
   final String sessionId;
   final int partyIndex;
 
+  /// Optional callback invoked when the connection drops unexpectedly.
+  /// Used by session recovery to persist state on disconnection.
+  final void Function()? onUnexpectedDisconnect;
+
   WebSocketChannel? _channel;
   StreamController<MpcMessage>? _messageController;
   StreamSubscription? _subscription;
@@ -64,6 +68,7 @@ class MpcWebSocket {
   MpcWebSocket({
     required this.sessionId,
     required this.partyIndex,
+    this.onUnexpectedDisconnect,
   });
 
   /// 当前连接状态
@@ -210,14 +215,19 @@ class MpcWebSocket {
     print('[MpcWebSocket] Error: $error');
     _state = MpcWebSocketState.disconnected;
     _heartbeatTimer?.cancel();
+    onUnexpectedDisconnect?.call();
     _scheduleReconnect();
   }
 
   /// 处理连接关闭
   void _onDone() {
     print('[MpcWebSocket] Connection closed');
+    final wasConnected = _state == MpcWebSocketState.connected;
     _state = MpcWebSocketState.disconnected;
     _heartbeatTimer?.cancel();
+    if (wasConnected) {
+      onUnexpectedDisconnect?.call();
+    }
     _scheduleReconnect();
   }
 

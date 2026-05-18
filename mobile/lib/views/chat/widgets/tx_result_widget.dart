@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../../../services/tx_tracker_service.dart';
 import '../../../theme/colors.dart';
 import '../../../widgets/top_toast.dart';
+import '../../../l10n/strings.dart';
 
 class ChatTxResultWidget extends StatefulWidget {
   final String txHash;
@@ -71,15 +72,15 @@ class _ChatTxResultWidgetState extends State<ChatTxResultWidget> {
     if (isConfirmed) {
       statusColor = CwColors.success;
       statusIcon = Icons.check_circle;
-      statusText = _confirmations != null ? '已确认 ($_confirmations blocks)' : '已确认';
+      statusText = _confirmations != null ? S.confirmedWithBlocks(_confirmations!) : S.confirmed;
     } else if (isFailed) {
       statusColor = CwColors.danger;
       statusIcon = Icons.error;
-      statusText = '交易失败';
+      statusText = S.txFailed;
     } else {
       statusColor = CwColors.ink3;
       statusIcon = Icons.schedule;
-      statusText = '确认中...';
+      statusText = S.confirming;
     }
 
     return Container(
@@ -134,7 +135,7 @@ class _ChatTxResultWidgetState extends State<ChatTxResultWidget> {
           GestureDetector(
             onTap: () {
               Clipboard.setData(ClipboardData(text: widget.txHash));
-              showTopToast(context, '交易哈希已复制');
+              showTopToast(context, S.txHashCopied);
             },
             child: Row(
               children: [

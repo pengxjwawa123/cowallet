@@ -61,11 +61,11 @@ class _Suggestion {
   String text(Lang lang) => lang == Lang.zh ? zhText : enText;
 }
 
-const _suggestions = [
-  _Suggestion(zhText: '我的余额是多少', enText: "What's my balance"),
-  _Suggestion(zhText: '最近的交易记录', enText: 'Recent transactions'),
-  _Suggestion(zhText: '安全审计', enText: 'Security audit'),
-  _Suggestion(zhText: '我的收款地址', enText: 'Show my address'),
+List<_Suggestion> get _suggestions => [
+  _Suggestion(zhText: S.suggestBalance.split('\'').join(''), enText: S.suggestBalance),
+  _Suggestion(zhText: S.suggestRecentTx, enText: S.suggestRecentTx),
+  _Suggestion(zhText: S.suggestSecurityAudit, enText: S.suggestSecurityAudit),
+  _Suggestion(zhText: S.suggestAddress, enText: S.suggestAddress),
 ];
 
 // ---------------------------------------------------------------------------
@@ -191,6 +191,16 @@ class ChatViewState extends State<ChatView> {
         return {
           'chain_id': entry.key,
           'total_usd': entry.value,
+        };
+      }).toList(),
+      'tokens': balanceService.allTokens.map((t) {
+        return {
+          'symbol': t.symbol,
+          'chain_id': t.chainId ?? 0,
+          'contract_address': t.contractAddress,
+          'decimals': t.decimals,
+          'balance': t.balance,
+          'native': t.native,
         };
       }).toList(),
     };
@@ -345,29 +355,43 @@ class ChatViewState extends State<ChatView> {
               }
               // Update send widget with gas estimate from backend
               if (toolName == 'send_transaction') {
+                final status = result['status'] as String?;
+                final policyViolation = result['policy_violation'] as Map<String, dynamic>?;
+                final policyWarnings = (result['policy_warnings'] as List<dynamic>?)?.cast<String>();
                 final gasEstimate = result['gas_estimate'] as Map<String, dynamic>?;
                 final needsDeduction = result['needs_deduction'] as Map<String, dynamic>?;
 
                 setState(() {
                   for (int i = _messages.length - 1; i >= 0; i--) {
                     if (_messages[i].widgetType == WidgetType.sendConfirm && !_messages[i].confirmed) {
-                      // If backend detected amount+gas > balance, switch to deduction mode
-                      if (needsDeduction != null) {
-                        _messages[i].widgetData['deduct_gas_hint'] = true;
-                        _messages[i].widgetData['send_all'] = true;
-                        _messages[i].widgetData['original_amount'] = needsDeduction['original_amount'] as String? ?? '';
-                        _messages[i].widgetData['amount'] = needsDeduction['max_sendable'] as String? ?? '0';
-                        _messages[i].widgetData['gas_estimate'] = needsDeduction['gas_cost'] as String? ?? '';
-                      } else if (gasEstimate != null) {
-                        final costEth = gasEstimate['cost_eth'] as String? ?? '';
-                        final costUsd = gasEstimate['cost_usd'] as String?;
-                        final gasChainId = result['chain_id'] as int? ?? 1;
-                        final gasSymbol = _nativeSymbol(gasChainId);
-                        String gasDisplay = '~$costEth $gasSymbol';
-                        if (costUsd != null) {
-                          gasDisplay += ' ($costUsd)';
+                      // Policy violation: block the transaction
+                      if (status == 'policy_rejected' && policyViolation != null) {
+                        _messages[i].widgetData['policy_rejected'] = true;
+                        _messages[i].widgetData['policy_reason'] = policyViolation['reason'] as String? ?? '';
+                        _messages[i].widgetData['policy_limit'] = policyViolation['limit'] as String? ?? '';
+                      } else {
+                        // Add policy warnings if any
+                        if (policyWarnings != null && policyWarnings.isNotEmpty) {
+                          _messages[i].widgetData['policy_warnings'] = policyWarnings;
                         }
-                        _messages[i].widgetData['gas_estimate'] = gasDisplay;
+                        // If backend detected amount+gas > balance, switch to deduction mode
+                        if (needsDeduction != null) {
+                          _messages[i].widgetData['deduct_gas_hint'] = true;
+                          _messages[i].widgetData['send_all'] = true;
+                          _messages[i].widgetData['original_amount'] = needsDeduction['original_amount'] as String? ?? '';
+                          _messages[i].widgetData['amount'] = needsDeduction['max_sendable'] as String? ?? '0';
+                          _messages[i].widgetData['gas_estimate'] = needsDeduction['gas_cost'] as String? ?? '';
+                        } else if (gasEstimate != null) {
+                          final costEth = gasEstimate['cost_eth'] as String? ?? '';
+                          final costUsd = gasEstimate['cost_usd'] as String?;
+                          final gasChainId = result['chain_id'] as int? ?? 1;
+                          final gasSymbol = _nativeSymbol(gasChainId);
+                          String gasDisplay = '~$costEth $gasSymbol';
+                          if (costUsd != null) {
+                            gasDisplay += ' ($costUsd)';
+                          }
+                          _messages[i].widgetData['gas_estimate'] = gasDisplay;
+                        }
                       }
                       break;
                     }
@@ -454,7 +478,7 @@ class ChatViewState extends State<ChatView> {
           case 'error':
             setState(() {
               _messages[aiMsgIndex].text =
-                  event.data['message'] as String? ?? '请求失败，请稍后重试';
+                  event.data['message'] as String? ?? S.requestFailed;
             });
             break;
         }
@@ -462,7 +486,7 @@ class ChatViewState extends State<ChatView> {
       onError: (e) {
         if (!mounted) return;
         setState(() {
-          _messages[aiMsgIndex].text = '网络错误，请稍后重试';
+          _messages[aiMsgIndex].text = S.networkError;
         });
       },
     );
@@ -572,7 +596,7 @@ class ChatViewState extends State<ChatView> {
           setState(() {
             msg.confirmed = true;
             msg.widgetData.remove('loading_deduction');
-            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ 余额不足以支付Gas费'));
+            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: S.insufficientGasWarning));
           });
           _scrollToBottom();
           return;
@@ -625,7 +649,7 @@ class ChatViewState extends State<ChatView> {
           setState(() {
             msg.confirmed = true;
             msg.widgetData.remove('loading_deduction');
-            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '⚠ $token 余额为零'));
+            _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: S.tokenBalanceZeroWarning(token)));
           });
           _scrollToBottom();
           return;
@@ -674,7 +698,7 @@ class ChatViewState extends State<ChatView> {
   void _onSendDeny(int index) {
     setState(() {
       _messages[index].confirmed = true;
-      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '好的，已取消转账。'));
+      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: S.transferCancelled));
     });
     _scrollToBottom();
   }
@@ -719,7 +743,7 @@ class ChatViewState extends State<ChatView> {
   void _onSwapDeny(int index) {
     setState(() {
       _messages[index].confirmed = true;
-      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '好的，已取消兑换。'));
+      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: S.swapCancelled));
     });
     _scrollToBottom();
   }
@@ -1025,7 +1049,9 @@ class ChatViewState extends State<ChatView> {
         final isSendAll = msg.widgetData['send_all'] == true;
         final deductGasHint = msg.widgetData['deduct_gas_hint'] == true;
         final loadingDeduction = msg.widgetData['loading_deduction'] == true;
-        final displayAmount = (isSendAll && !deductGasHint) ? '全部' : (msg.widgetData['amount'] ?? '0');
+        final policyRejected = msg.widgetData['policy_rejected'] == true;
+        final policyWarnings = (msg.widgetData['policy_warnings'] as List<dynamic>?)?.cast<String>();
+        final displayAmount = (isSendAll && !deductGasHint) ? S.sendAll : (msg.widgetData['amount'] ?? '0');
         return ChatSendConfirmWidget(
           toAddress: msg.widgetData['to_address'] ?? '',
           amount: displayAmount,
@@ -1034,9 +1060,13 @@ class ChatViewState extends State<ChatView> {
           chainId: msg.widgetData['chain_id'] as int?,
           contractAddress: msg.widgetData['contract_address'] as String?,
           loading: msg.loading || loadingDeduction,
-          resolved: msg.confirmed,
+          resolved: msg.confirmed || policyRejected,
           deductGasHint: deductGasHint,
           originalAmount: msg.widgetData['original_amount'],
+          policyRejected: policyRejected,
+          policyReason: msg.widgetData['policy_reason'] as String?,
+          policyLimit: msg.widgetData['policy_limit'] as String?,
+          policyWarnings: policyWarnings,
           onConfirm: () => _onSendConfirm(index),
           onDeny: () => _onSendDeny(index),
         );
@@ -1167,7 +1197,7 @@ class _ThinkingDotsState extends State<_ThinkingDots>
   late AnimationController _ctrl;
   int _phraseIndex = 0;
 
-  static const _phrases = ['思考中', '分析中', '处理中', '理解中'];
+  static List<String> get _phrases => [S.thinking, S.thinking, S.thinking, S.thinking];
 
   @override
   void initState() {

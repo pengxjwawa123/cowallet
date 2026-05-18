@@ -890,6 +890,172 @@ pub fn verify_backup_shard(
 }
 
 // ---------------------------------------------------------------------------
+// Backup Shard Export/Import — Password-encrypted portable backup
+// ---------------------------------------------------------------------------
+
+/// Portable backup format version byte.
+const BACKUP_FORMAT_VERSION: u8 = 1;
+/// Argon2id salt length.
+const BACKUP_SALT_LEN: usize = 16;
+/// AES-GCM nonce length.
+const BACKUP_NONCE_LEN: usize = 12;
+
+/// Export the backup shard (Party 2) as a password-encrypted, base64-encoded string.
+///
+/// Output format: version(1) || salt(16) || nonce(12) || ciphertext(32+16 tag)
+/// The whole blob is then base64-encoded for easy transport (QR code, file, clipboard).
+///
+/// KDF: Argon2id with default params (19 MiB memory, 2 iterations, 1 parallelism).
+/// Cipher: AES-256-GCM with random nonce.
+pub fn export_backup_shard(password: String) -> Result<String, String> {
+    use aes_gcm::{Aes256Gcm, Nonce, aead::{Aead, KeyInit}};
+    use argon2::Argon2;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use rand::RngCore;
+
+    if password.len() < 8 {
+        return Err("password must be at least 8 characters".into());
+    }
+
+    // Get the backup shard (Party 2) from state
+    let share = state::get_share(2)
+        .ok_or("backup shard not available — complete DKG first")?;
+
+    let plaintext = share.secret_share.as_bytes();
+    if plaintext.len() != 32 {
+        return Err(format!(
+            "unexpected shard length: expected 32 bytes, got {}",
+            plaintext.len()
+        ));
+    }
+
+    // Generate random salt and nonce
+    let mut salt = [0u8; BACKUP_SALT_LEN];
+    let mut nonce_bytes = [0u8; BACKUP_NONCE_LEN];
+    rand::thread_rng().fill_bytes(&mut salt);
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+
+    // Derive encryption key from password using Argon2id
+    let mut key = [0u8; 32];
+    Argon2::default()
+        .hash_password_into(password.as_bytes(), &salt, &mut key)
+        .map_err(|e| format!("KDF failed: {}", e))?;
+
+    // Encrypt with AES-256-GCM
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| format!("cipher init failed: {}", e))?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|e| format!("encryption failed: {}", e))?;
+
+    // Zeroize key
+    key.iter_mut().for_each(|b| *b = 0);
+
+    // Assemble blob: version || salt || nonce || ciphertext
+    let mut blob = Vec::with_capacity(1 + BACKUP_SALT_LEN + BACKUP_NONCE_LEN + ciphertext.len());
+    blob.push(BACKUP_FORMAT_VERSION);
+    blob.extend_from_slice(&salt);
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+
+    Ok(STANDARD.encode(&blob))
+}
+
+/// Import a backup shard from a password-encrypted, base64-encoded string.
+///
+/// Decrypts the blob and validates the shard is a valid secp256k1 scalar.
+/// On success, stores the shard as Party 2 in memory.
+///
+/// Returns `true` on success.
+pub fn import_backup_shard(encrypted_data: String, password: String) -> Result<bool, String> {
+    use aes_gcm::{Aes256Gcm, Nonce, aead::{Aead, KeyInit}};
+    use argon2::Argon2;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use k256::elliptic_curve::PrimeField;
+    use k256::Scalar;
+
+    if password.is_empty() {
+        return Err("password cannot be empty".into());
+    }
+
+    // Decode base64
+    let blob = STANDARD
+        .decode(encrypted_data.trim())
+        .map_err(|e| format!("invalid base64: {}", e))?;
+
+    // Minimum length: version(1) + salt(16) + nonce(12) + ciphertext(32) + tag(16) = 77
+    let min_len = 1 + BACKUP_SALT_LEN + BACKUP_NONCE_LEN + 32 + 16;
+    if blob.len() < min_len {
+        return Err(format!(
+            "backup data too short: expected at least {} bytes, got {}",
+            min_len,
+            blob.len()
+        ));
+    }
+
+    // Parse format
+    let version = blob[0];
+    if version != BACKUP_FORMAT_VERSION {
+        return Err(format!("unsupported backup format version: {}", version));
+    }
+
+    let salt = &blob[1..1 + BACKUP_SALT_LEN];
+    let nonce_bytes = &blob[1 + BACKUP_SALT_LEN..1 + BACKUP_SALT_LEN + BACKUP_NONCE_LEN];
+    let ciphertext = &blob[1 + BACKUP_SALT_LEN + BACKUP_NONCE_LEN..];
+
+    // Derive decryption key from password using Argon2id
+    let mut key = [0u8; 32];
+    let salt_arr: [u8; 16] = salt.try_into().map_err(|_| "invalid salt length")?;
+    Argon2::default()
+        .hash_password_into(password.as_bytes(), &salt_arr, &mut key)
+        .map_err(|e| format!("KDF failed: {}", e))?;
+
+    // Decrypt with AES-256-GCM
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| format!("cipher init failed: {}", e))?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "decryption failed — wrong password or corrupted data".to_string())?;
+
+    // Zeroize key
+    key.iter_mut().for_each(|b| *b = 0);
+
+    // Validate: must be exactly 32 bytes and a valid secp256k1 scalar
+    if plaintext.len() != 32 {
+        return Err(format!(
+            "decrypted shard has wrong length: expected 32, got {}",
+            plaintext.len()
+        ));
+    }
+
+    let mut scalar_bytes = [0u8; 32];
+    scalar_bytes.copy_from_slice(&plaintext);
+    let _scalar = Option::<Scalar>::from(Scalar::from_repr(scalar_bytes.into()))
+        .ok_or_else(|| "decrypted data is not a valid secp256k1 scalar".to_string())?;
+
+    // Store as Party 2 (backup shard) in state
+    // Get public key from existing device shard if available
+    let public_key = state::get_share(0)
+        .map(|s| s.public_key.clone())
+        .unwrap_or_default();
+
+    let backup_share = mpc_core::dkls23::KeyShare {
+        party: 2,
+        threshold: 2,
+        total_parties: 3,
+        secret_share: plaintext.into(),
+        public_key,
+        paillier_pk: None,
+    };
+
+    state::store_single_share(backup_share);
+
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------------
 // Legacy signing (for testing)
 // ---------------------------------------------------------------------------
 

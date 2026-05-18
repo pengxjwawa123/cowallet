@@ -26,6 +26,13 @@ pub fn get_share(party: PartyIndex) -> Option<KeyShare> {
     SHARDS.lock().unwrap().as_ref()?.get(&party).cloned()
 }
 
+/// Store a single share without replacing others (upsert into the map).
+pub fn store_single_share(share: KeyShare) {
+    let mut guard = SHARDS.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(share.party, share);
+}
+
 pub fn clear_shares() {
     *SHARDS.lock().unwrap() = None;
 }

@@ -8,6 +8,7 @@ import '../views/keys/keys_view.dart';
 import '../views/scan/scan_view.dart';
 import '../views/contacts/contacts_view.dart';
 import '../views/recovery/recovery_view.dart';
+import '../views/settings/backup_shard_view.dart';
 import '../views/wallet/tx_history_view.dart';
 import '../onboarding/onboarding_flow.dart';
 import '../theme/colors.dart';
@@ -21,6 +22,7 @@ class AppRouter {
   static const scan = '/scan';
   static const contacts = '/contacts';
   static const txHistory = '/tx-history';
+  static const backupShard = '/backup-shard';
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -36,6 +38,8 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const ContactsView());
       case txHistory:
         return MaterialPageRoute(builder: (_) => const TxHistoryView());
+      case backupShard:
+        return MaterialPageRoute(builder: (_) => const BackupShardView());
       default:
         return MaterialPageRoute(builder: (_) => const AppShell());
     }

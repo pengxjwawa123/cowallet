@@ -234,7 +234,7 @@ class S {
   static String get txSuccess => _p('转账成功', 'Transfer successful');
   static String get txHashLabel => _p('交易哈希', 'Transaction hash');
   static String get done => _p('完成', 'Done');
-  static String get txFailed => _p('转账失败', 'Transfer failed');
+  static String get txFailed => _p('交易失败', 'Transaction failed');
   static String get blockNumber => _p('区块号', 'Block');
   static String get gasUsed => _p('Gas 消耗', 'Gas used');
   static String get gasEstimating => _p('估算中…', 'Estimating…');
@@ -509,4 +509,133 @@ class S {
   static String get recoveryDoneSub => _p('你的钱包已成功恢复到这台设备。所有资产安全无损。', 'Your wallet has been restored to this device. All assets safe and sound.');
   static String get recoveryGoHome => _p('进入钱包', 'Go to wallet');
   static String get recoverWallet => _p('恢复已有钱包', 'Recover existing wallet');
+
+  // Intent executor / Chat
+  static String get emergencyFreezeActive => _p('紧急冻结已激活，所有操作已暂停。请先在设置中解除冻结。', 'Emergency freeze is active. All operations paused. Deactivate in Settings first.');
+  static String get onIt => _p('好,这就办。', 'On it.');
+  static String yourBalance(String eth, String usdc) => _p('你的余额: $eth + $usdc', 'Your balance: $eth + $usdc');
+  static String errorMsg(String err) => _p('出错了: $err', 'Error: $err');
+  static String get invalidRecipient => _p('无效的收款地址', 'Invalid recipient address');
+  static String get insufficientGas => _p('余额不足以支付Gas费', 'Insufficient balance for gas');
+  static String sendAllRequiresGasDeduction(String balance, String maxSendable, String symbol, String gasCost) => _p(
+    '转出全部余额需扣除Gas费。余额 $balance $symbol，扣除Gas费后实际转出 $maxSendable $symbol，是否继续？',
+    'Sending all requires gas deduction. Balance: $balance $symbol, actual send: $maxSendable $symbol after gas. Continue?',
+  );
+  static String tokenContractNotFound(String token) => _p('未找到代币 $token 的合约地址', 'Contract address for $token not found');
+  static String tokenBalanceZero(String token) => _p('$token 余额为零', '$token balance is zero');
+  static String insufficientForAmountPlusGas(String maxSendable, String symbol, String gasCost) => _p(
+    '余额不足以支付转账金额+Gas费。扣除Gas费后最多可转出 $maxSendable $symbol (Gas≈$gasCost $symbol)，是否继续？',
+    'Insufficient balance for amount + gas. Max sendable after gas: $maxSendable $symbol (gas≈$gasCost $symbol). Continue?',
+  );
+  static String tokenContractNotFoundConfirm(String token) => _p(
+    '未找到代币 $token 的合约地址，请确认你持有该代币',
+    'Contract address for $token not found. Make sure you hold this token.',
+  );
+  static String transferSuccess(String shortHash) => _p('转账成功! 交易: $shortHash', 'Transfer sent! Tx: $shortHash');
+  static String get authFailedTransferCancelled => _p('身份验证失败，转账已取消', 'Authentication failed, transfer cancelled');
+  static String get insufficientBalance => _p('余额不足', 'Insufficient balance');
+  static String transferFailed(String msg) => _p('转账失败: $msg', 'Transfer failed: $msg');
+  static String get specifySwapTokens => _p('请指定兑换的代币', 'Please specify swap tokens');
+  static String insufficientTokenBalance(String token) => _p('$token 余额不足', 'Insufficient $token balance');
+  static String swapRouteFailed(String err) => _p('获取兑换路由失败: $err', 'Failed to get swap route: $err');
+  static String get invalidSwapData => _p('兑换交易数据无效', 'Invalid swap transaction data');
+  static String swapSuccess(String amountFrom, String tokenFrom, String amountTo, String tokenTo, String shortHash) => _p(
+    '兑换成功! $amountFrom $tokenFrom → $amountTo $tokenTo\n交易: $shortHash',
+    'Swap successful! $amountFrom $tokenFrom → $amountTo $tokenTo\nTx: $shortHash',
+  );
+  static String get authFailedSwapCancelled => _p('身份验证失败，兑换已取消', 'Authentication failed, swap cancelled');
+  static String get tokenApprovalRequired => _p('需要先授权代币额度，请稍后重试', 'Token approval required. Please try again shortly.');
+  static String swapFailed(String msg) => _p('兑换失败: $msg', 'Swap failed: $msg');
+
+  // Chat view messages
+  static String get requestFailed => _p('请求失败，请稍后重试', 'Request failed, please try again');
+  static String get networkError => _p('网络错误，请稍后重试', 'Network error, please try again');
+  static String get insufficientGasWarning => _p('⚠ 余额不足以支付Gas费', '⚠ Insufficient balance for gas');
+  static String tokenBalanceZeroWarning(String token) => _p('⚠ $token 余额为零', '⚠ $token balance is zero');
+  static String get transferCancelled => _p('好的，已取消转账。', 'OK, transfer cancelled.');
+  static String get swapCancelled => _p('好的，已取消兑换。', 'OK, swap cancelled.');
+  static String get sendAll => _p('全部', 'All');
+  static String get thinking => _p('思考中', 'Thinking');
+
+  // Widget labels
+  static String get transferSubmitted => _p('转账已提交', 'Transfer submitted');
+  static String get amountAdjustedGas => _p('金额已调整（需预留Gas）', 'Amount adjusted (gas reserved)');
+  static String get transferConfirm => _p('转账确认', 'Confirm transfer');
+  static String get calculatingFees => _p('计算费用中...', 'Calculating fees...');
+  static String get amountPlusGasExceeded => _p('转出金额+Gas超出余额，已自动调减', 'Amount + gas exceeds balance, auto-adjusted');
+  static String get originalAmount => _p('原始金额', 'Original amount');
+  static String get gasFee => _p('Gas 费用', 'Gas fee');
+  static String get actualSend => _p('实际转出', 'Actual send');
+  static String get recipientAddress => _p('收款地址', 'Recipient address');
+  static String get contract => _p('合约', 'Contract');
+  static String get estimatedGas => _p('预估 Gas', 'Est. gas');
+  static String get estimating => _p('估算中...', 'Estimating...');
+  static String get confirmSend => _p('确认转出', 'Confirm send');
+  static String get swapSubmitted => _p('兑换已提交', 'Swap submitted');
+  static String get swapConfirm => _p('兑换确认', 'Swap confirm');
+  static String get pay => _p('支付', 'Pay');
+  static String get estimatedReceive => _p('预计获得', 'Est. receive');
+  static String get slippageTolerance => _p('滑点容忍', 'Slippage tolerance');
+  static String get route => _p('路由', 'Route');
+  static String get confirmSwap => _p('确认兑换', 'Confirm swap');
+
+  // Transaction details
+  static String get transfer => _p('转账', 'Transfer');
+  static String get sender => _p('发送方', 'Sender');
+  static String get receiver => _p('接收方', 'Receiver');
+  static String get block => _p('区块', 'Block');
+  static String get time => _p('时间', 'Time');
+  static String get txHashCopied => _p('交易哈希已复制', 'Transaction hash copied');
+  static String labelCopied(String label) => _p('$label 已复制', '$label copied');
+  static String get confirmed => _p('已确认', 'Confirmed');
+  static String get failed => _p('失败', 'Failed');
+  static String get pending => _p('待确认', 'Pending');
+  static String get unknown => _p('未知', 'Unknown');
+
+  // Transaction history
+  static String get txHistory => _p('交易记录', 'Transaction history');
+  static String txCount(int count) => _p('共 $count 笔', '$count total');
+  static String get noTxHistory => _p('暂无交易记录', 'No transaction history');
+  static String moreTxCount(int count) => _p('还有 $count 笔交易...', '$count more transactions...');
+  static String sendTo(String addr) => _p('发送至 $addr', 'Send to $addr');
+
+  // Transaction result widget
+  static String confirmedWithBlocks(int blocks) => _p('已确认 ($blocks blocks)', 'Confirmed ($blocks blocks)');
+  static String get confirming => _p('确认中...', 'Confirming...');
+
+  // Balance widget
+  static String get multiChainAssets => _p('多链资产总览', 'Multi-chain assets');
+  static String get assetsOverview => _p('资产总览', 'Assets overview');
+  static String get noAssetData => _p('暂无资产数据', 'No asset data');
+
+  // Chat suggestions
+  static String get suggestBalance => _p('我的余额是多少', "What's my balance");
+  static String get suggestRecentTx => _p('最近的交易记录', 'Recent transactions');
+  static String get suggestSecurityAudit => _p('安全审计', 'Security audit');
+  static String get suggestAddress => _p('我的收款地址', 'Show my address');
+
+  // Backup Shard Export/Import
+  static String get backupExport => _p('导出备份钥匙', 'Export backup key');
+  static String get backupImport => _p('导入备份钥匙', 'Import backup key');
+  static String get backupExportSub => _p('用密码加密你的第 3 份钥匙，生成可扫描的二维码或文件', 'Encrypt your 3rd key with a password, generate a scannable QR code or file');
+  static String get backupImportSub => _p('扫描二维码或粘贴加密数据，输入密码解密恢复', 'Scan QR code or paste encrypted data, enter password to decrypt');
+  static String get backupPasswordHint => _p('输入备份密码（至少 8 位）', 'Enter backup password (min 8 characters)');
+  static String get backupPasswordConfirmHint => _p('再次确认密码', 'Confirm password');
+  static String get backupPasswordMismatch => _p('两次密码不一致', 'Passwords do not match');
+  static String get backupPasswordTooShort => _p('密码至少 8 位', 'Password must be at least 8 characters');
+  static String get backupExporting => _p('正在加密导出...', 'Encrypting and exporting...');
+  static String get backupExportSuccess => _p('备份导出成功', 'Backup exported successfully');
+  static String get backupExportFailed => _p('备份导出失败', 'Backup export failed');
+  static String get backupImporting => _p('正在解密导入...', 'Decrypting and importing...');
+  static String get backupImportSuccess => _p('备份导入成功', 'Backup imported successfully');
+  static String get backupImportFailed => _p('备份导入失败', 'Backup import failed');
+  static String get backupWrongPassword => _p('密码错误或数据已损坏', 'Wrong password or data corrupted');
+  static String get backupCopyToClipboard => _p('复制到剪贴板', 'Copy to clipboard');
+  static String get backupCopied => _p('已复制到剪贴板', 'Copied to clipboard');
+  static String get backupSaveToFile => _p('保存到文件', 'Save to file');
+  static String get backupPasteData => _p('粘贴加密数据', 'Paste encrypted data');
+  static String get backupScanQr => _p('扫描二维码', 'Scan QR code');
+  static String get backupEncryptedData => _p('加密备份数据', 'Encrypted backup data');
+  static String get backupNotExported => _p('尚未导出备份', 'Backup not yet exported');
+  static String get backupReminder => _p('请尽快导出你的第 3 份钥匙以确保钱包可恢复', 'Please export your 3rd key to ensure wallet recovery');
 }
