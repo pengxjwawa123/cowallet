@@ -597,6 +597,30 @@ impl ToolContext {
         };
 
         let is_native = contract_address.is_none();
+
+        // Pre-check balance for native token transfers (amount + gas vs balance)
+        let mut needs_deduction = false;
+        let mut max_sendable_str: Option<String> = None;
+        let mut balance_str: Option<String> = None;
+        let mut gas_cost_wei: Option<u128> = None;
+
+        if is_native && !send_all {
+            if let Some(native_balance) = self.get_native_balance(
+                &format!("0x{:x}", from_address), chain_id
+            ).await {
+                let gas_wei = gas_estimate.gas_units as u128
+                    * self.get_gas_price_wei(chain_id).await.unwrap_or(0);
+                let total_needed = value_wei_str.parse::<u128>().unwrap_or(0) + gas_wei;
+                if total_needed > native_balance && native_balance > gas_wei {
+                    needs_deduction = true;
+                    let max_send = native_balance - gas_wei;
+                    max_sendable_str = Some(format_units(alloy_primitives::U256::from(max_send), decimals as u32));
+                    balance_str = Some(format_units(alloy_primitives::U256::from(native_balance), decimals as u32));
+                    gas_cost_wei = Some(gas_wei);
+                }
+            }
+        }
+
         let mut result = serde_json::json!({
             "status": "prepared",
             "from": format!("0x{:x}", from_address),
@@ -627,6 +651,21 @@ impl ToolContext {
             });
         }
 
+        // If amount + gas > balance, include deduction info so frontend shows it directly
+        if needs_deduction {
+            if let (Some(ref max_send), Some(ref balance), Some(gas_cost)) =
+                (&max_sendable_str, &balance_str, gas_cost_wei)
+            {
+                let gas_formatted = format_units(alloy_primitives::U256::from(gas_cost), decimals as u32);
+                result["needs_deduction"] = serde_json::json!({
+                    "original_amount": value_formatted,
+                    "max_sendable": max_send,
+                    "gas_cost": gas_formatted,
+                    "balance": balance,
+                });
+            }
+        }
+
         ToolExecutionResult {
             tool_id: tool_id.to_string(),
             tool_name: "send_transaction".into(),
@@ -634,6 +673,36 @@ impl ToolContext {
             result,
             error: None,
         }
+    }
+
+    /// Query native token balance via RPC eth_getBalance
+    async fn get_native_balance(&self, address: &str, chain_id: u64) -> Option<u128> {
+        let rpc_url = self.app_state.rpc_for_chain(chain_id);
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getBalance",
+            "params": [address, "latest"],
+            "id": 1
+        });
+        let resp = self.app_state.http.post(rpc_url).json(&body).send().await.ok()?;
+        let json = resp.json::<serde_json::Value>().await.ok()?;
+        let hex = json.get("result")?.as_str()?;
+        u128::from_str_radix(hex.strip_prefix("0x").unwrap_or(hex), 16).ok()
+    }
+
+    /// Get current gas price in wei
+    async fn get_gas_price_wei(&self, chain_id: u64) -> Option<u128> {
+        let rpc_url = self.app_state.rpc_for_chain(chain_id);
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_gasPrice",
+            "params": [],
+            "id": 1
+        });
+        let resp = self.app_state.http.post(rpc_url).json(&body).send().await.ok()?;
+        let json = resp.json::<serde_json::Value>().await.ok()?;
+        let hex = json.get("result")?.as_str()?;
+        u128::from_str_radix(hex.strip_prefix("0x").unwrap_or(hex), 16).ok()
     }
 
     /// Estimate gas for an ERC-20 transfer(to, amount) call

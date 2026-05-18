@@ -346,24 +346,33 @@ class ChatViewState extends State<ChatView> {
               // Update send widget with gas estimate from backend
               if (toolName == 'send_transaction') {
                 final gasEstimate = result['gas_estimate'] as Map<String, dynamic>?;
-                if (gasEstimate != null) {
-                  final costEth = gasEstimate['cost_eth'] as String? ?? '';
-                  final costUsd = gasEstimate['cost_usd'] as String?;
-                  final gasChainId = result['chain_id'] as int? ?? 1;
-                  final gasSymbol = _nativeSymbol(gasChainId);
-                  String gasDisplay = '~$costEth $gasSymbol';
-                  if (costUsd != null) {
-                    gasDisplay += ' ($costUsd)';
-                  }
-                  setState(() {
-                    for (int i = _messages.length - 1; i >= 0; i--) {
-                      if (_messages[i].widgetType == WidgetType.sendConfirm && !_messages[i].confirmed) {
+                final needsDeduction = result['needs_deduction'] as Map<String, dynamic>?;
+
+                setState(() {
+                  for (int i = _messages.length - 1; i >= 0; i--) {
+                    if (_messages[i].widgetType == WidgetType.sendConfirm && !_messages[i].confirmed) {
+                      // If backend detected amount+gas > balance, switch to deduction mode
+                      if (needsDeduction != null) {
+                        _messages[i].widgetData['deduct_gas_hint'] = true;
+                        _messages[i].widgetData['send_all'] = true;
+                        _messages[i].widgetData['original_amount'] = needsDeduction['original_amount'] as String? ?? '';
+                        _messages[i].widgetData['amount'] = needsDeduction['max_sendable'] as String? ?? '0';
+                        _messages[i].widgetData['gas_estimate'] = needsDeduction['gas_cost'] as String? ?? '';
+                      } else if (gasEstimate != null) {
+                        final costEth = gasEstimate['cost_eth'] as String? ?? '';
+                        final costUsd = gasEstimate['cost_usd'] as String?;
+                        final gasChainId = result['chain_id'] as int? ?? 1;
+                        final gasSymbol = _nativeSymbol(gasChainId);
+                        String gasDisplay = '~$costEth $gasSymbol';
+                        if (costUsd != null) {
+                          gasDisplay += ' ($costUsd)';
+                        }
                         _messages[i].widgetData['gas_estimate'] = gasDisplay;
-                        break;
                       }
+                      break;
                     }
-                  });
-                }
+                  }
+                });
               }
               break;
             }
