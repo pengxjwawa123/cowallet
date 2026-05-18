@@ -31,8 +31,12 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>CoWallet needs camera access to scan QR codes for wallet addresses and transactions.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>We use Face ID to protect your wallet keys in the Secure Enclave. Your biometric data never leaves your device.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>CoWallet needs photo library access to save or import QR codes and backup files.</string>
 	<key>NSLocalizedDescription</key>
 	<string>Cowallet - AI-Native MPC Wallet</string>
 	<key>UIApplicationSceneManifest</key>
