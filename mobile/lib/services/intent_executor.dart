@@ -122,6 +122,8 @@ class IntentExecutor {
       final chainIdStr = params['chain_id'];
       final chainId = chainIdStr != null ? int.tryParse(chainIdStr) : null;
       final sendAll = params['send_all'] == 'true';
+      final contractAddressParam = params['contract_address'];
+      final decimalsParam = params['decimals'] != null ? int.tryParse(params['decimals']!) : null;
 
       if (to.isEmpty || !to.startsWith('0x') || to.length != 42) {
         return ActionResult.fail(
@@ -140,7 +142,7 @@ class IntentExecutor {
         chain.switchChain(ChainConfig.byId(targetChainId));
       }
 
-      final isNativeToken = _isNativeToken(token, targetChainId);
+      final isNativeToken = contractAddressParam == null && _isNativeToken(token, targetChainId);
 
       BigInt amount;
       final bool confirmedDeduct = params['confirmed_deduct'] == 'true';
@@ -171,8 +173,8 @@ class IntentExecutor {
         }
       } else if (sendAll && !isNativeToken) {
         // ERC-20 send all: transfer the entire token balance (gas paid in native coin)
-        final tokenInfo = _findTokenInBalance(token, targetChainId);
-        final tokenContract = tokenInfo?.contractAddress
+        final tokenContract = contractAddressParam
+            ?? _findTokenInBalance(token, targetChainId)?.contractAddress
             ?? ChainConfig.byId(targetChainId).tokenContract(token);
         if (tokenContract.isEmpty) {
           return ActionResult.fail(
@@ -188,7 +190,9 @@ class IntentExecutor {
           );
         }
       } else {
-        amount = _parseAmount(amountStr, token, chainId: targetChainId);
+        amount = decimalsParam != null
+            ? _parseAmountWithDecimals(amountStr, decimalsParam)
+            : _parseAmount(amountStr, token, chainId: targetChainId);
       }
 
       if (amount == BigInt.zero) {
@@ -229,9 +233,9 @@ class IntentExecutor {
       if (isNativeToken) {
         txHash = await _tx.signAndSend(to: to, value: amount, chainId: targetChainId);
       } else {
-        // ERC-20: resolve contract address from user's balance data first
-        final tokenInfo = _findTokenInBalance(token, targetChainId);
-        final tokenContract = tokenInfo?.contractAddress
+        // ERC-20: use contract address from AI params, or resolve locally
+        final tokenContract = contractAddressParam
+            ?? _findTokenInBalance(token, targetChainId)?.contractAddress
             ?? ChainConfig.byId(targetChainId).tokenContract(token);
         if (tokenContract.isEmpty) {
           return ActionResult.fail(
@@ -509,6 +513,17 @@ class IntentExecutor {
       (t) => t.symbol.toUpperCase() == token.toUpperCase() && !t.native,
     );
     return match.isEmpty ? null : match.first;
+  }
+
+  BigInt _parseAmountWithDecimals(String input, int decimals) {
+    final factor = BigInt.from(10).pow(decimals);
+    final parts = input.split('.');
+    if (parts.length == 1) {
+      return BigInt.parse(parts[0]) * factor;
+    }
+    final fractional = parts[1].padRight(decimals, '0').substring(0, decimals);
+    final whole = BigInt.parse(parts[0]) * factor;
+    return whole + BigInt.parse(fractional);
   }
 
   BigInt _parseAmount(String input, String token, {int? chainId}) {

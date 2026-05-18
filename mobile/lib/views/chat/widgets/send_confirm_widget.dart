@@ -7,6 +7,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
   final String token;
   final String? gasEstimate;
   final int? chainId;
+  final String? contractAddress;
   final bool loading;
   final bool resolved;
   final bool deductGasHint;
@@ -21,6 +22,7 @@ class ChatSendConfirmWidget extends StatelessWidget {
     required this.token,
     this.gasEstimate,
     this.chainId,
+    this.contractAddress,
     this.loading = false,
     this.resolved = false,
     this.deductGasHint = false,
@@ -128,6 +130,10 @@ class ChatSendConfirmWidget extends StatelessWidget {
           const SizedBox(height: 8),
           _infoRow('收款地址', shortTo),
           const SizedBox(height: 4),
+          if (contractAddress != null && contractAddress!.isNotEmpty) ...[
+            _infoRow('合约', _shortenAddr(contractAddress!)),
+            const SizedBox(height: 4),
+          ],
           if (chainId != null)
             _infoRow('网络', _chainName(chainId!)),
           if (chainId != null)
@@ -241,6 +247,11 @@ class ChatSendConfirmWidget extends StatelessWidget {
       case 137: return 'Polygon';
       default: return 'Chain $chainId';
     }
+  }
+
+  String _shortenAddr(String addr) {
+    if (addr.length < 12) return addr;
+    return '${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}';
   }
 
   Widget _gasLoadingRow() {

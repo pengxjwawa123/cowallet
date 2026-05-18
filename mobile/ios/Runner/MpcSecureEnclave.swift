@@ -56,12 +56,12 @@ public class MpcSecureEnclaveHandler: NSObject, FlutterPlugin {
 
       // Store key in keychain with tag
       let keyTag = "com.cowallet.se.\(keyId)".data(using: .utf8)!
-      let privKeyData = privateKey.withUnsafeBytes { Data($0) }
+      let privKeyData = privateKey.dataRepresentation
 
       let query: [String: Any] = [
         kSecClass as String: kSecClassKey,
         kSecAttrApplicationTag as String: keyTag,
-        kSecAttrKeyType as String: kSecAttrKeyTypeECSECPr1,
+        kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
         kSecAttrKeySizeInBits as String: 256,
         kSecValueData as String: privKeyData,
         kSecAttrAccessible as String: kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
@@ -106,9 +106,10 @@ public class MpcSecureEnclaveHandler: NSObject, FlutterPlugin {
       var keyRef: CFTypeRef?
       let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
-      guard status == errSecSuccess, let key = keyRef as? SecKey else {
+      guard status == errSecSuccess, let ref = keyRef else {
         throw NSError(domain: "Keychain", code: Int(status))
       }
+      let key = ref as! SecKey
 
       // Extract public key and compress
       guard let publicKey = SecKeyCopyPublicKey(key) else {
@@ -172,16 +173,17 @@ public class MpcSecureEnclaveHandler: NSObject, FlutterPlugin {
         var keyRef: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &keyRef)
 
-        guard status == errSecSuccess, let key = keyRef as? SecKey else {
+        guard status == errSecSuccess, let ref = keyRef else {
           throw NSError(domain: "Keychain", code: Int(status))
         }
+        let key = ref as! SecKey
 
         // Sign the message
         var sigError: Unmanaged<CFError>?
         guard let signature = SecKeyCreateSignature(
           key,
           .ecdsaSignatureMessageX962SHA256,
-          messageData,
+          messageData as CFData,
           &sigError
         ) as Data? else {
           throw sigError?.takeRetainedValue() as Error? ?? NSError(domain: "Signing", code: -1)

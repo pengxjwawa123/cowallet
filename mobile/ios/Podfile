@@ -30,6 +30,10 @@ target 'Runner' do
   use_frameworks!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # Rust FFI dynamic framework
+  pod 'ffi_mobile', :path => 'Frameworks'
+
   target 'RunnerTests' do
     inherit! :search_paths
   end

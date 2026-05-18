@@ -261,6 +261,10 @@ class ChatViewState extends State<ChatView> {
                     'token': params['token'] ?? 'ETH',
                     'chain_id': params['chain_id'],
                     'send_all': isSendAll,
+                    if (params['contract_address'] != null)
+                      'contract_address': params['contract_address'],
+                    if (params['decimals'] != null)
+                      'decimals': params['decimals'],
                     if (isSendAll) 'deduct_gas_hint': true,
                     if (isSendAll) 'loading_deduction': true,
                   },
@@ -464,6 +468,8 @@ class ChatViewState extends State<ChatView> {
       'amount': msg.widgetData['amount'] as String? ?? '0',
       'token': msg.widgetData['token'] as String? ?? 'ETH',
       if (msg.widgetData['chain_id'] != null) 'chain_id': msg.widgetData['chain_id'].toString(),
+      if (msg.widgetData['contract_address'] != null) 'contract_address': msg.widgetData['contract_address'] as String,
+      if (msg.widgetData['decimals'] != null) 'decimals': msg.widgetData['decimals'].toString(),
       if (msg.widgetData['send_all'] == true) 'send_all': 'true',
       if (msg.widgetData['deduct_gas_hint'] == true) 'confirmed_deduct': 'true',
     };
@@ -537,7 +543,9 @@ class ChatViewState extends State<ChatView> {
 
     final nativeSymbol = (chainId == 137 || chainId == 80002) ? 'POL'
         : chainId == 56 ? 'BNB' : 'ETH';
-    final isNative = token == 'ETH' || token == 'POL' || token == 'MATIC' || token == 'BNB';
+    final contractAddr = msg.widgetData['contract_address'] as String?;
+    final isNative = contractAddr == null &&
+        (token == 'ETH' || token == 'POL' || token == 'MATIC' || token == 'BNB');
 
     try {
       if (isNative) {
@@ -576,16 +584,18 @@ class ChatViewState extends State<ChatView> {
         });
       } else {
         // ERC-20 token: send full balance, gas is paid in native coin separately
-        // Try balance service first (supports any token user holds), fallback to ChainConfig
-        final balanceTokens = Services.balance.tokensForChain(chainId);
-        final matchedToken = balanceTokens.where(
-          (t) => t.symbol.toUpperCase() == token && !t.native,
-        );
-        String tokenContract = '';
-        int decimals = _tokenDecimals(token);
-        if (matchedToken.isNotEmpty) {
-          tokenContract = matchedToken.first.contractAddress ?? '';
-          decimals = matchedToken.first.decimals;
+        // Use contract address from AI params if available, otherwise resolve locally
+        String tokenContract = contractAddr ?? '';
+        int decimals = (msg.widgetData['decimals'] as int?) ?? _tokenDecimals(token);
+        if (tokenContract.isEmpty) {
+          final balanceTokens = Services.balance.tokensForChain(chainId);
+          final matchedToken = balanceTokens.where(
+            (t) => t.symbol.toUpperCase() == token && !t.native,
+          );
+          if (matchedToken.isNotEmpty) {
+            tokenContract = matchedToken.first.contractAddress ?? '';
+            decimals = matchedToken.first.decimals;
+          }
         }
         if (tokenContract.isEmpty) {
           tokenContract = ChainConfig.byId(chainId).tokenContract(token);
@@ -1013,6 +1023,7 @@ class ChatViewState extends State<ChatView> {
           token: msg.widgetData['token'] ?? 'ETH',
           gasEstimate: msg.widgetData['gas_estimate'],
           chainId: msg.widgetData['chain_id'] as int?,
+          contractAddress: msg.widgetData['contract_address'] as String?,
           loading: msg.loading || loadingDeduction,
           resolved: msg.confirmed,
           deductGasHint: deductGasHint,

@@ -21,14 +21,6 @@ import FirebaseMessaging
       UNUserNotificationCenter.current().delegate = self
     }
 
-    // Register MPC platform channels manually
-    let controller = window?.rootViewController as! FlutterViewController
-    let flutterEngine = controller.engine
-
-    MpcSecureEnclaveHandler.register(with: self)
-    MpcSecureStorageHandler.register(with: self)
-    CloudBackupHandler.register(with: self)
-
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -60,9 +52,8 @@ import FirebaseMessaging
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     
     // Also register MPC handlers here
-    let binaryMessenger = engineBridge.pluginRegistry
-    MpcSecureEnclaveHandler.register(with: binaryMessenger)
-    MpcSecureStorageHandler.register(with: binaryMessenger)
-    CloudBackupHandler.register(with: binaryMessenger)
+    MpcSecureEnclaveHandler.register(with: engineBridge.pluginRegistry.registrar(forPlugin: "MpcSecureEnclaveHandler")!)
+    MpcSecureStorageHandler.register(with: engineBridge.pluginRegistry.registrar(forPlugin: "MpcSecureStorageHandler")!)
+    CloudBackupHandler.register(with: engineBridge.pluginRegistry.registrar(forPlugin: "CloudBackupHandler")!)
   }
 }

@@ -171,6 +171,8 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
                             "value": { "type": "string", "description": "Amount to send (human readable, e.g. '0.1'). Set '0' when send_all is true." },
                             "token": { "type": "string", "description": "Token symbol: ETH, USDC, POL, BNB, etc. Default: ETH" },
                             "chain_id": { "type": "integer", "description": "Target chain ID. MUST match the token's native chain: ETH→1, Base ETH→8453, POL/MATIC→137, BNB→56, ARB ETH→42161, OP ETH→10. REQUIRED — you must ask the user if you cannot determine the chain." },
+                            "contract_address": { "type": "string", "description": "ERC-20 token contract address (0x-prefixed). REQUIRED for all non-native token transfers. Native tokens (ETH/POL/BNB) must NOT set this field. For well-known tokens use: USDC on Ethereum=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48, USDC on Base=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, USDC on Polygon=0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, USDT on Ethereum=0xdAC17F958D2ee523a2206206994597C13D831ec7, USDT on Polygon=0xc2132D05D31c914a87C6611C10748AEb04B58e8F, USDT on BSC=0x55d398326f99059fF775485246999027B3197955. If you don't know the contract address for a token, use clarify to ask the user." },
+                            "decimals": { "type": "integer", "description": "Token decimals. Default: 18 for ETH/POL/BNB/DAI/WETH, 6 for USDC/USDT. Only set if you know the token's decimal precision." },
                             "send_all": { "type": "boolean", "description": "Set true when user wants to send entire balance. Client will auto-deduct gas fees." }
                         },
                         "required": ["to_address", "value", "chain_id"]
@@ -316,6 +318,41 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，用户的加密钱包 AI 助手
 - "base链上的eth" = token="ETH", chain_id=8453
 
 **核心规则：当用户说"X链上的Y代币"，token 参数必须是 Y，chain_id 对应 X。绝不能把链名当作 token！**
+
+## 极重要：区分原生代币和合约代币
+转账必须正确区分主链原生代币和 ERC-20 合约代币：
+
+**原生代币（不设 contract_address）**：
+- ETH（chain 1/8453/42161/10）
+- POL/MATIC（chain 137）
+- BNB（chain 56）
+
+**ERC-20 合约代币（必须设 contract_address）**：
+- USDC, USDT, DAI, WETH, LINK 以及所有其他非原生代币
+- 即使是最常见的稳定币，也必须传合约地址
+
+**常用合约地址速查**：
+| Token | Chain | contract_address |
+|-------|-------|-----------------|
+| USDC | Ethereum(1) | 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 |
+| USDC | Base(8453) | 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 |
+| USDC | Polygon(137) | 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359 |
+| USDC | Arbitrum(42161) | 0xaf88d065e77c8cC2239327C5EDb3A432268e5831 |
+| USDC | Optimism(10) | 0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85 |
+| USDC | BSC(56) | 0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d |
+| USDT | Ethereum(1) | 0xdAC17F958D2ee523a2206206994597C13D831ec7 |
+| USDT | Polygon(137) | 0xc2132D05D31c914a87C6611C10748AEb04B58e8F |
+| USDT | BSC(56) | 0x55d398326f99059fF775485246999027B3197955 |
+| USDT | Arbitrum(42161) | 0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9 |
+| USDT | Optimism(10) | 0x94b008aA00579c1307B0EF2c499aD98a8ce58e58 |
+| DAI | Ethereum(1) | 0x6B175474E89094C44Da98b954EedeAC495271d0F |
+| WETH | Base(8453) | 0x4200000000000000000000000000000000000006 |
+
+**规则**：
+1. 如果 token 是 ETH/POL/MATIC/BNB → 不传 contract_address
+2. 如果 token 是 USDC/USDT/DAI/WETH/LINK 等 → 必须传对应链的 contract_address
+3. 如果你不知道某个代币的合约地址 → 用 clarify 询问用户提供合约地址
+4. decimals: USDC/USDT 是 6 位，ETH/POL/BNB/DAI/WETH 是 18 位
 
 ## 重要：多链代币必须确认链
 当用户的请求涉及多链代币（USDC, USDT, DAI, WETH, LINK 等存在于多条链上的代币），且无法从上下文判断目标链时，你**必须**使用 clarify 工具询问用户要在哪条链上操作。绝不能自行假设默认链。chain_id 是 send_transaction 和 swap_token 的必填参数。

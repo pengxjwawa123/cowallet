@@ -13,6 +13,9 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUST_CRATE="$PROJECT_ROOT/crates/ffi-mobile"
 MOBILE_DIR="$PROJECT_ROOT/mobile"
 
+# iOS deployment target (must be >= 12.0 for Flutter and aws-lc-sys)
+export IPHONEOS_DEPLOYMENT_TARGET="12.0"
+
 # iOS targets
 IOS_TARGETS=(
   "aarch64-apple-ios"
@@ -22,6 +25,7 @@ IOS_SIM_TARGETS=(
 )
 
 RUST_LIB_NAME="libffi_mobile"
+FRAMEWORK_NAME="ffi_mobile"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -68,26 +72,65 @@ build_rust() {
     cargo build $cargo_flag --target "$target" --lib
   done
 
-  local target_dir="$RUST_CRATE/target"
+  local target_dir="$PROJECT_ROOT/target"
   local output_dir="$MOBILE_DIR/ios/Frameworks"
   mkdir -p "$output_dir"
 
-  # Create XCFramework from static libs
-  local device_lib="$target_dir/aarch64-apple-ios/$rust_mode/$RUST_LIB_NAME.a"
-  local sim_lib="$target_dir/aarch64-apple-ios-sim/$rust_mode/$RUST_LIB_NAME.a"
+  # Create .framework bundles from dylibs for flutter_rust_bridge
+  local device_dylib="$target_dir/aarch64-apple-ios/$rust_mode/${RUST_LIB_NAME}.dylib"
+  local sim_dylib="$target_dir/aarch64-apple-ios-sim/$rust_mode/${RUST_LIB_NAME}.dylib"
 
-  if [[ ! -f "$device_lib" ]]; then
-    err "Device library not found: $device_lib"
+  if [[ ! -f "$device_dylib" ]]; then
+    err "Device dylib not found: $device_dylib"
   fi
 
-  local xcframework="$output_dir/FfiMobile.xcframework"
+  # Build device framework
+  local device_fw="$target_dir/aarch64-apple-ios/$rust_mode/${FRAMEWORK_NAME}.framework"
+  rm -rf "$device_fw"
+  mkdir -p "$device_fw"
+  cp "$device_dylib" "$device_fw/$FRAMEWORK_NAME"
+  install_name_tool -id "@rpath/${FRAMEWORK_NAME}.framework/$FRAMEWORK_NAME" "$device_fw/$FRAMEWORK_NAME"
+  cat > "$device_fw/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>${FRAMEWORK_NAME}</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.cowallet.ffi-mobile</string>
+  <key>CFBundleName</key>
+  <string>${FRAMEWORK_NAME}</string>
+  <key>CFBundleVersion</key>
+  <string>1.0</string>
+  <key>CFBundlePackageType</key>
+  <string>FMWK</string>
+  <key>MinimumOSVersion</key>
+  <string>12.0</string>
+</dict>
+</plist>
+PLIST
+
+  # Build simulator framework
+  local sim_fw="$target_dir/aarch64-apple-ios-sim/$rust_mode/${FRAMEWORK_NAME}.framework"
+  rm -rf "$sim_fw"
+  mkdir -p "$sim_fw"
+  cp "$sim_dylib" "$sim_fw/$FRAMEWORK_NAME"
+  install_name_tool -id "@rpath/${FRAMEWORK_NAME}.framework/$FRAMEWORK_NAME" "$sim_fw/$FRAMEWORK_NAME"
+  cp "$device_fw/Info.plist" "$sim_fw/Info.plist"
+
+  # Create XCFramework from dynamic frameworks
+  local xcframework="$output_dir/${FRAMEWORK_NAME}.xcframework"
   rm -rf "$xcframework"
 
   log "  Creating XCFramework..."
   xcodebuild -create-xcframework \
-    -library "$device_lib" \
-    -library "$sim_lib" \
+    -framework "$device_fw" \
+    -framework "$sim_fw" \
     -output "$xcframework"
+
+  # Clean up old static xcframework if present
+  rm -rf "$output_dir/FfiMobile.xcframework"
 
   log "  Rust build done: $xcframework"
   cd "$PROJECT_ROOT"

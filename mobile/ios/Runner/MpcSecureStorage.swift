@@ -154,14 +154,24 @@ public class MpcSecureStorageHandler: NSObject, FlutterPlugin {
 
   /// Store device shard encrypted with Secure Enclave key
   private func storeEncryptedShard(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let args = call.arguments as? [String: Any],
-          let dataArray = args["data"] as? [UInt8] else {
+    guard let args = call.arguments as? [String: Any] else {
+      result(FlutterError(code: "INVALID_ARGS", message: "data is required", details: nil))
+      return
+    }
+
+    let shardData: Data
+    if let typedData = args["data"] as? FlutterStandardTypedData {
+      shardData = typedData.data
+    } else if let byteArray = args["data"] as? [UInt8] {
+      shardData = Data(byteArray)
+    } else if let intArray = args["data"] as? [Int] {
+      shardData = Data(intArray.map { UInt8($0 & 0xFF) })
+    } else {
       result(FlutterError(code: "INVALID_ARGS", message: "data is required", details: nil))
       return
     }
 
     do {
-      let shardData = Data(dataArray)
 
       // Get or create encryption key in Secure Enclave
       let encryptionKey = try getOrCreateEncryptionKey()
