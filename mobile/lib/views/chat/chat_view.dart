@@ -614,7 +614,13 @@ class ChatViewState extends State<ChatView> {
         final baseFee = await chain.getBaseFee() ?? await chain.getGasPrice();
         final maxPriority = await chain.getMaxPriorityFeePerGas();
         final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
-        final gasCost = maxFee * BigInt.from(21000);
+        final to = msg.widgetData['to_address'] as String? ?? address;
+        final gasLimit = await chain.estimateGas({
+          'from': address,
+          'to': to,
+          'value': '0x${balance.toRadixString(16)}',
+        });
+        final gasCost = maxFee * gasLimit;
         final maxSendable = balance - gasCost;
 
         if (!mounted) return;

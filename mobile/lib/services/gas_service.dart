@@ -51,19 +51,14 @@ class GasService {
     required BigInt value,
     String? data,
   }) async {
-    final hasCalldata = data != null && data.isNotEmpty;
-
     final results = await Future.wait([
       _getGasPrice(),
-      if (hasCalldata)
-        _chain.estimateGas({
-          'from': from,
-          'to': to,
-          'value': '0x${value.toRadixString(16)}',
-          'data': data,
-        })
-      else
-        Future.value(BigInt.from(21000)),
+      _chain.estimateGas({
+        'from': from,
+        'to': to,
+        'value': '0x${value.toRadixString(16)}',
+        if (data != null && data.isNotEmpty) 'data': data,
+      }),
     ]);
 
     final gasPrice = results[0];

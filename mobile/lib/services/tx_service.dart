@@ -73,16 +73,13 @@ class MpcTxService implements TxService {
 
     final nonce = await _chain.getTransactionCount(address);
 
-    final hasCalldata = data != null && data.isNotEmpty;
     final gas = gasLimit ??
-        (hasCalldata
-            ? await _chain.estimateGas({
-                'from': address,
-                'to': to,
-                'value': '0x${value.toRadixString(16)}',
-                'data': data,
-              })
-            : BigInt.from(21000));
+        await _chain.estimateGas({
+          'from': address,
+          'to': to,
+          'value': '0x${value.toRadixString(16)}',
+          if (data != null && data.isNotEmpty) 'data': data,
+        });
 
     final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
     final maxPriority = maxPriorityFeePerGas ?? await _chain.getMaxPriorityFeePerGas();

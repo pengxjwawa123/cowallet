@@ -137,7 +137,12 @@ class IntentExecutor {
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
         final maxPriority = await _chain.getMaxPriorityFeePerGas();
         final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
-        final gasCost = maxFee * BigInt.from(21000);
+        final gasLimit = await _chain.estimateGas({
+          'from': address,
+          'to': to,
+          'value': '0x${balance.toRadixString(16)}',
+        });
+        final gasCost = maxFee * gasLimit;
         amount = balance - gasCost;
         if (amount <= BigInt.zero) {
           return ActionResult.fail(S.insufficientGas);
@@ -181,7 +186,12 @@ class IntentExecutor {
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
         final maxPriority = await _chain.getMaxPriorityFeePerGas();
         final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
-        final gasCost = maxFee * BigInt.from(21000);
+        final gasLimit = await _chain.estimateGas({
+          'from': address,
+          'to': to,
+          'value': '0x${amount.toRadixString(16)}',
+        });
+        final gasCost = maxFee * gasLimit;
         if (balance < amount + gasCost) {
           final nativeSymbol = (targetChainId == 137 || targetChainId == 80002) ? 'POL'
               : targetChainId == 56 ? 'BNB' : 'ETH';
