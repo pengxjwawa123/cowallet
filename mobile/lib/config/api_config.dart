@@ -1,6 +1,6 @@
 class ApiConfig {
   // 后端API地址
-  static const String baseUrl = "http://52.202.21.161:3000";
+  static const String baseUrl = "https://devapi.cowallet.ai";
 
   // API统一前缀
   static const String apiPrefix = "/api/v1";

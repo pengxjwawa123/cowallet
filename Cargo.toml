@@ -88,9 +88,9 @@ num-integer = "0.1"
 num-traits = "0.2"
 glass_pumpkin = "1"
 
-# AWS (uncomment after cargo can fetch crates.io)
-# aws-config = { version = "1", features = ["behavior-version-latest"] }
-# aws-sdk-sesv2 = "1"
+# AWS
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-sesv2 = "1"
 
 # Testing
 proptest = "1"

@@ -46,5 +46,5 @@ dashmap = "6"
 tokio-tungstenite = "0.24"
 k256 = { version = "0.13", features = ["arithmetic", "ecdsa"] }
 sha3 = "0.10"
-# aws-config = { workspace = true }
-# aws-sdk-sesv2 = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-sesv2 = { workspace = true }

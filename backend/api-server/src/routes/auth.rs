@@ -93,14 +93,15 @@ async fn send_email_otp(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Send OTP via email (AWS SES — uncomment after aws-sdk-sesv2 dependency available)
-    // if let Some(email_service) = &state.email {
-    //     email_service.send_otp(&body.email, &otp).await.map_err(|e| {
-    //         tracing::error!("Failed to send email OTP: {}", e);
-    //         StatusCode::INTERNAL_SERVER_ERROR
-    //     })?;
-    // }
-    tracing::info!("Email verification OTP for {}: {}", body.email, otp);
+    // Send OTP via email (AWS SES)
+    if let Some(email_service) = &state.email {
+        email_service.send_otp(&body.email, &otp).await.map_err(|e| {
+            tracing::error!("Failed to send email OTP: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    } else {
+        tracing::warn!("⚠️  [NO SES] Email OTP for {} => {} (set SES_FROM_ADDRESS to enable)", body.email, otp);
+    }
 
     Ok(Json(SendEmailOtpResponse {
         sent: true,

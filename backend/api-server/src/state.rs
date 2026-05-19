@@ -9,7 +9,7 @@ use crate::retry::{CircuitBreaker, CircuitBreakerConfig};
 use crate::routes::price::PriceCache;
 use crate::routes::yield_::YieldCache;
 use crate::services::claude::AiClient;
-// use crate::services::email::EmailService; // uncomment after aws-sdk-sesv2
+use crate::services::email::EmailService;
 use crate::services::mpc_participant::MpcParticipant;
 use crate::services::presign_manager::PresignManager;
 use crate::services::tx_tracker::TxTracker;
@@ -36,7 +36,7 @@ pub struct AppState {
     pub bundler_url: Option<String>,
     pub paymaster_url: Option<String>,
     pub tx_tracker: Option<Arc<TxTracker>>,
-    // pub email: Option<EmailService>, // uncomment after aws-sdk-sesv2
+    pub email: Option<EmailService>,
 }
 
 impl AppState {
@@ -195,7 +195,7 @@ impl AppState {
             bundler_url,
             paymaster_url,
             tx_tracker: Some(tx_tracker),
-            // email: EmailService::from_env().await, // uncomment after aws-sdk-sesv2
+            email: EmailService::from_env().await,
         })
     }
 
