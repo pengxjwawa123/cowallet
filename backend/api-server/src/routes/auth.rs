@@ -53,9 +53,12 @@ async fn send_email_otp(
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    // Check if email is already registered (inform client, don't block)
+    // Check if email has a completed wallet (user exists AND has at least one wallet with shard)
     let is_registered: bool = sqlx::query_as::<_, (uuid::Uuid,)>(
-        "SELECT id FROM users WHERE email = $1"
+        "SELECT u.id FROM users u
+         INNER JOIN shard_metadata s ON s.user_id = u.id
+         WHERE u.email = $1
+         LIMIT 1"
     )
     .bind(&body.email)
     .fetch_optional(db)
@@ -162,7 +165,7 @@ async fn register(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Check if email is already registered
+    // Check if user exists and whether they have a completed wallet
     let existing: Option<(uuid::Uuid,)> = sqlx::query_as(
         "SELECT id FROM users WHERE email = $1"
     )
@@ -171,18 +174,42 @@ async fn register(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if existing.is_some() {
-        return Err(StatusCode::CONFLICT);
-    }
-
-    let user_id = uuid::Uuid::new_v4();
-    sqlx::query("INSERT INTO users (id, email, device_id) VALUES ($1, $2, $3)")
-        .bind(user_id)
-        .bind(&body.email)
-        .bind(&body.device_id)
-        .execute(db)
+    let user_id = if let Some((existing_id,)) = existing {
+        // User exists — check if they have a completed wallet
+        let has_wallet: bool = sqlx::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM shard_metadata WHERE user_id = $1 LIMIT 1"
+        )
+        .bind(existing_id)
+        .fetch_optional(db)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .is_some();
+
+        if has_wallet {
+            return Err(StatusCode::CONFLICT);
+        }
+
+        // No wallet — update device_id and reuse the user
+        sqlx::query("UPDATE users SET device_id = $1 WHERE id = $2")
+            .bind(&body.device_id)
+            .bind(existing_id)
+            .execute(db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        existing_id
+    } else {
+        // New user
+        let new_id = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO users (id, email, device_id) VALUES ($1, $2, $3)")
+            .bind(new_id)
+            .bind(&body.email)
+            .bind(&body.device_id)
+            .execute(db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        new_id
+    };
 
     let token_pair = issue_token_pair(&user_id.to_string(), &body.device_id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

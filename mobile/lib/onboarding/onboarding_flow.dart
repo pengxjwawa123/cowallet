@@ -817,25 +817,52 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   }
 
   void _showRecoveryDialog() {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: CwColors.bgCard,
-        title: Text(S.emailAlreadyRegistered),
-        content: Text(S.emailAlreadyRegisteredDesc),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(S.cancel),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.pushNamed(context, AppRouter.recovery);
-            },
-            child: Text(S.goRecovery),
-          ),
-        ],
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        decoration: BoxDecoration(
+          color: CwColors.bgCard,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.info_outline_rounded, size: 40, color: CwColors.accent),
+            const SizedBox(height: 16),
+            Text(
+              S.emailAlreadyRegistered,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: CwColors.ink1),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              S.emailAlreadyRegisteredDesc,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: CwColors.ink3),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.pushNamed(context, AppRouter.recovery);
+                },
+                child: Text(S.goRecovery),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(S.cancel, style: TextStyle(color: CwColors.ink3)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1040,9 +1067,18 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                       ?.copyWith(color: CwColors.ink4),
                 ),
                 const SizedBox(height: 32),
-                _primaryButton(
-                  _emailSending ? '...' : S.continueBtn,
-                  _emailSending ? null : _submitEmail,
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _emailSending ? null : _submitEmail,
+                    child: _emailSending
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : Text(S.continueBtn),
+                  ),
                 ),
               ],
             ),
