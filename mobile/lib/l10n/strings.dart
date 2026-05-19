@@ -49,6 +49,19 @@ class S {
   static String get introBullet3s => _p('不用抄 12 个单词。丢了手机，用你的备份 + 服务器就能恢复。', 'No 12 words to write down. Lose your phone, your backup + server recovers everything.');
   static String get introStart => _p('开始创建', 'Start creating');
 
+  // Onboarding — Email
+  static String get emailH1 => _p('绑定恢复邮箱', 'Recovery Email');
+  static String get emailSub => _p('用于账户恢复时验证身份，我们不会发送垃圾邮件。', 'Used to verify your identity during wallet recovery. We won\'t send spam.');
+  static String get emailHint => _p('此邮箱仅用于钱包恢复验证', 'This email is only used for wallet recovery verification');
+  static String get invalidEmail => _p('请输入有效的邮箱地址', 'Please enter a valid email address');
+  static String get emailSendFailed => _p('发送验证码失败，请重试', 'Failed to send code, please try again');
+
+  // Onboarding — Email OTP
+  static String get otpH1 => _p('输入验证码', 'Enter Verification Code');
+  static String otpSub(String email) => _p('验证码已发送至 $email', 'Code sent to $email');
+  static String get otpResend => _p('重新发送验证码', 'Resend code');
+  static String get otpInvalid => _p('验证码错误或已过期', 'Invalid or expired code');
+
   // Onboarding — Creating
   static String get creatingH1 => _p('正在帮你把钥匙分成三份', 'Splitting your key into three pieces');
   static String get creatingSub => _p('动你的钱需要任意两份钥匙。三份分开存放，丢了一份还能恢复。完整的钥匙从不出现在任何地方。', 'Moving your money requires any 2 of 3 keys. Stored separately — lose one, the other two still work. The full key never exists in one place.');

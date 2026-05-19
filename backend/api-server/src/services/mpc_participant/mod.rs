@@ -541,13 +541,51 @@ impl MpcParticipant {
         let key_share = self.shard_store.load_key_share(user_id).await?
             .ok_or_else(|| format!("no server shard for user {}, cannot reshare without existing share", user_id))?;
 
-        let mut reshare = ReshareSession::new(config.clone(), key_share);
+        // Determine participants from the config. If total_parties < 3, this is a
+        // recovery reshare with a subset of old-share holders (e.g. [1, 2]).
+        // In that case, identify which parties are participating and what the target is.
+        let total = key_share.total_parties;
+        let participants_count = config.total_parties as u16;
+
+        let mut reshare = if participants_count < total {
+            // Recovery mode: fewer than all parties are participating.
+            // The parties field from the DB tells us which old-share holders are active.
+            // We look up the session to find the actual party indices.
+            let row: Option<(Vec<i16>,)> = sqlx::query_as(
+                "SELECT parties FROM mpc_sessions WHERE id = $1"
+            )
+            .bind(session_id)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| format!("failed to fetch session parties: {}", e))?;
+
+            let participant_indices: Vec<u16> = row
+                .map(|(p,)| p.into_iter().map(|x| x as u16).collect())
+                .unwrap_or_else(|| (0..total).collect());
+
+            // Target party is the one NOT in the participant list (the one being recovered)
+            let target_party = (0..total)
+                .find(|p| !participant_indices.contains(p))
+                .unwrap_or(0);
+
+            // Adjust config to use the full total_parties (3) for polynomial evaluation
+            let full_config = SessionConfig {
+                session_id: config.session_id.clone(),
+                threshold: config.threshold,
+                total_parties: total,
+                party_index: SERVER_PARTY_INDEX,
+            };
+
+            ReshareSession::new_for_recovery(full_config, key_share, participant_indices, target_party)
+        } else {
+            ReshareSession::new(config.clone(), key_share)
+        };
 
         // Generate server's Round 1 messages (polynomial evaluations for each party)
         let round1_msgs = reshare.generate_round1()
             .map_err(|e| format!("Reshare round 1 generation failed: {}", e))?;
 
-        // Store outbound messages addressed to client (Party 0)
+        // Store outbound messages addressed to target (Party 0 in recovery, or all in normal reshare)
         for msg in &round1_msgs {
             if msg.to == 0 || msg.to == BROADCAST_PARTY {
                 self.store_outbound_message(

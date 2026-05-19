@@ -16,8 +16,8 @@ import '../utils/device_id.dart';
 import '../utils/secure_storage.dart';
 import '../services/backup_shard_service.dart';
 
-/// The 10 stages of the cowallet onboarding, matching the H5 prototype.
-enum _Stage { hero, intro, creating, bio, pin, name, backup, ready, persona }
+/// The onboarding stages of cowallet.
+enum _Stage { hero, intro, email, emailOtp, creating, bio, pin, name, backup, ready, persona }
 
 class OnboardingFlow extends StatefulWidget {
   const OnboardingFlow({super.key});
@@ -43,6 +43,16 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   bool _bioAuthenticating = false;
   bool _bioDone = false;
   bool _bioError = false;
+
+  // --- Email stage state ---
+  final _emailCtrl = TextEditingController();
+  String? _emailError;
+  bool _emailSending = false;
+
+  // --- Email OTP stage state ---
+  String _otpInput = '';
+  String? _otpError;
+  bool _otpVerifying = false;
 
   // --- Name stage state ---
   final _nameCtrl = TextEditingController();
@@ -92,6 +102,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   @override
   void dispose() {
     _createTimer?.cancel();
+    _emailCtrl.dispose();
     _nameCtrl.dispose();
     _pageCtrl.dispose();
     super.dispose();
@@ -151,10 +162,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
     // Step 1 → 2 → 3 顺序执行，确保 token 在 MPC 请求之前已保存
     () async {
-      // Step 1: 设备注册/认证
+      // Step 1: 设备注册/认证（含邮箱 + OTP 验证）
       try {
         final deviceId = await DeviceIdGenerator.getOrGenerate();
-        final authResult = await AuthApi.register(deviceId: deviceId);
+        final authResult = await AuthApi.register(
+          deviceId: deviceId,
+          email: _emailCtrl.text.trim(),
+          otp: _otpInput,
+        );
         if (!authResult.isSuccess) throw Exception(authResult.errorMessage);
         if (!mounted) return;
         setState(() => _createChecksDone = 1); // ✅ 设备验证通过
@@ -461,6 +476,10 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       case _Stage.hero:
       case _Stage.intro:
         return _heroStage();
+      case _Stage.email:
+        return _emailStage();
+      case _Stage.emailOtp:
+        return _emailOtpStage();
       case _Stage.creating:
         return _creatingStage();
       case _Stage.bio:
@@ -612,7 +631,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                         duration: const Duration(milliseconds: 300),
                         curve: Curves.easeInOut);
                   } else {
-                    _goTo(_Stage.creating);
+                    _goTo(_Stage.email);
                   }
                 },
               ),
@@ -754,6 +773,252 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           ),
         ),
       ],
+    );
+  }
+
+  // ===================== STAGE 2.5: EMAIL =====================
+
+  Future<void> _submitEmail() async {
+    final email = _emailCtrl.text.trim();
+    if (email.isEmpty || !email.contains('@') || !email.contains('.')) {
+      setState(() => _emailError = S.invalidEmail);
+      return;
+    }
+    setState(() {
+      _emailError = null;
+      _emailSending = true;
+    });
+
+    try {
+      final result = await AuthApi.sendEmailOtp(email: email);
+      if (!mounted) return;
+      if (result.isSuccess) {
+        setState(() => _emailSending = false);
+        _goTo(_Stage.emailOtp);
+      } else {
+        setState(() {
+          _emailSending = false;
+          _emailError = result.errorMessage ?? S.emailSendFailed;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _emailSending = false;
+        _emailError = S.emailSendFailed;
+      });
+    }
+  }
+
+  // ===================== STAGE 2.6: EMAIL OTP =====================
+
+  void _onOtpDigit(String digit) {
+    if (_otpInput.length >= 6) return;
+    setState(() {
+      _otpInput += digit;
+      _otpError = null;
+    });
+    if (_otpInput.length == 6) {
+      _verifyEmailOtp();
+    }
+  }
+
+  void _onOtpBackspace() {
+    if (_otpInput.isEmpty) return;
+    setState(() {
+      _otpInput = _otpInput.substring(0, _otpInput.length - 1);
+      _otpError = null;
+    });
+  }
+
+  Future<void> _verifyEmailOtp() async {
+    // OTP will be verified during register — just proceed to creating
+    setState(() => _otpVerifying = false);
+    _goTo(_Stage.creating);
+  }
+
+  Future<void> _resendOtp() async {
+    setState(() => _otpInput = '');
+    final result = await AuthApi.sendEmailOtp(email: _emailCtrl.text.trim());
+    if (!mounted) return;
+    if (!result.isSuccess) {
+      setState(() => _otpError = S.emailSendFailed);
+    }
+  }
+
+  Widget _emailOtpStage() {
+    return SingleChildScrollView(
+      key: const ValueKey('emailOtp'),
+      child: Column(
+        children: [
+          _topBar(showBack: true, step: 0, total: 3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              children: [
+                const SizedBox(height: 40),
+                Icon(Icons.mark_email_read_outlined, size: 56, color: CwColors.accent),
+                const SizedBox(height: 24),
+                _heading(S.otpH1),
+                const SizedBox(height: 8),
+                _subtitle(S.otpSub(_emailCtrl.text.trim())),
+                const SizedBox(height: 32),
+                // OTP dots
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(6, (i) {
+                    final filled = i < _otpInput.length;
+                    return Container(
+                      width: 16,
+                      height: 16,
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: filled ? CwColors.accent : Colors.transparent,
+                        border: Border.all(
+                          color: filled ? CwColors.accent : CwColors.ink4,
+                          width: 2,
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+                if (_otpError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_otpError!, style: TextStyle(fontSize: 13, color: CwColors.danger)),
+                ],
+                const SizedBox(height: 32),
+                if (_otpVerifying)
+                  const CircularProgressIndicator()
+                else
+                  _buildOtpNumPad(),
+                const SizedBox(height: 24),
+                _secondaryLink(S.otpResend, _resendOtp),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOtpNumPad() {
+    return Column(
+      children: [
+        for (final row in [['1','2','3'], ['4','5','6'], ['7','8','9'], ['','0','⌫']])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: row.map((key) {
+                if (key.isEmpty) return const SizedBox(width: 72, height: 56);
+                return GestureDetector(
+                  onTap: () {
+                    if (key == '⌫') {
+                      _onOtpBackspace();
+                    } else {
+                      _onOtpDigit(key);
+                    }
+                  },
+                  child: Container(
+                    width: 72,
+                    height: 56,
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: CwColors.bgCard,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: CwColors.line),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      key,
+                      style: TextStyle(
+                        fontSize: key == '⌫' ? 20 : 24,
+                        fontWeight: FontWeight.w500,
+                        color: CwColors.ink1,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _emailStage() {
+    return SingleChildScrollView(
+      key: const ValueKey('email'),
+      child: Column(
+        children: [
+          _topBar(showBack: true, step: 0, total: 3),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 40),
+                Center(
+                  child: Icon(Icons.email_outlined, size: 56, color: CwColors.accent),
+                ),
+                const SizedBox(height: 24),
+                Center(child: _heading(S.emailH1)),
+                const SizedBox(height: 8),
+                Center(child: _subtitle(S.emailSub)),
+                const SizedBox(height: 32),
+                Container(
+                  decoration: BoxDecoration(
+                    color: CwColors.bgCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _emailError != null ? CwColors.danger : CwColors.line,
+                    ),
+                  ),
+                  child: TextField(
+                    controller: _emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
+                    style: const TextStyle(fontSize: 16, color: CwColors.ink1),
+                    decoration: InputDecoration(
+                      hintText: 'your@email.com',
+                      hintStyle: TextStyle(fontSize: 16, color: CwColors.ink4),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 16),
+                      border: InputBorder.none,
+                      prefixIcon: Icon(Icons.mail_outline, color: CwColors.ink3),
+                    ),
+                    onSubmitted: (_) => _submitEmail(),
+                    onChanged: (_) {
+                      if (_emailError != null) setState(() => _emailError = null);
+                    },
+                  ),
+                ),
+                if (_emailError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _emailError!,
+                    style: TextStyle(fontSize: 13, color: CwColors.danger),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Text(
+                  S.emailHint,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: CwColors.ink4),
+                ),
+                const SizedBox(height: 32),
+                _primaryButton(
+                  _emailSending ? '...' : S.continueBtn,
+                  _emailSending ? null : _submitEmail,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

@@ -688,8 +688,9 @@ pub fn recovery_reconstruct_device_shard(
     let mut backup_share = backup_share;
     backup_share.public_key = public_key.clone();
 
-    // Create a special reshare session using the backup shard
-    // This simulates Party 2 participating in a reshare to generate Party 0
+    // Create a recovery reshare session using the backup shard.
+    // Participants: Party 1 (server) and Party 2 (backup) — the two available shards.
+    // Target: Party 0 (device) — the shard being reconstructed.
     let config = SessionConfig {
         session_id: session_id.clone(),
         threshold: 2,
@@ -697,21 +698,30 @@ pub fn recovery_reconstruct_device_shard(
         party_index: 2, // We're acting as Party 2 (backup)
     };
 
-    let mut reshare = ReshareSession::new(config, backup_share);
+    let participants = vec![1u16, 2u16]; // Server + Backup
+    let target_party = 0u16; // Reconstruct device shard
 
-    // Generate our (Party 2) contribution
+    let mut reshare = ReshareSession::new_for_recovery(
+        config,
+        backup_share,
+        participants,
+        target_party,
+    );
+
+    // Generate our (Party 2) contribution (self-evaluation is stored internally)
     let _our_messages = reshare.generate_round1()
         .map_err(|e| format!("recovery reshare round1 failed: {}", e))?;
 
-    // Process server's reshare messages
-    let mut messages = Vec::new();
+    // Collect server's reshare messages addressed to Party 0
+    let mut server_msgs: Vec<ProtocolMessage> = Vec::new();
     for msg_json in server_messages_json {
         let msg: ProtocolMessage = serde_json::from_str(&msg_json)
             .map_err(|e| format!("failed to deserialize server message: {}", e))?;
-        messages.push(msg);
+        server_msgs.push(msg);
     }
 
-    reshare.process_round1(messages)
+    // process_round1 automatically includes our own evaluation for the target
+    reshare.process_round1(server_msgs)
         .map_err(|e| format!("recovery reshare process_round1 failed: {}", e))?;
 
     // Finalize to get the new device shard (Party 0)

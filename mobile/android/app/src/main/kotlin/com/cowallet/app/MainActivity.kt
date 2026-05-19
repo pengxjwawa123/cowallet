@@ -1,4 +1,4 @@
-package com.cowallet.cowallet
+package com.cowallet.app
 
 import android.os.Build
 import androidx.annotation.RequiresApi

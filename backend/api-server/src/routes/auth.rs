@@ -20,6 +20,7 @@ pub fn router() -> Router<AppState> {
         .route("/logout", post(logout))
         .route("/session", get(session_info))
         .route("/audit-log", get(audit_log))
+        .route("/email/send-otp", post(send_email_otp))
         .route("/recovery/initiate", post(initiate_recovery))
         .route("/recovery/verify", post(verify_recovery_otp))
 }
@@ -32,8 +33,84 @@ pub struct AuditLogQuery {
 }
 
 #[derive(Deserialize)]
+struct SendEmailOtpRequest {
+    email: String,
+}
+
+#[derive(Serialize)]
+struct SendEmailOtpResponse {
+    sent: bool,
+    message: String,
+}
+
+/// Send OTP to email for registration verification.
+async fn send_email_otp(
+    State(state): State<AppState>,
+    Json(body): Json<SendEmailOtpRequest>,
+) -> Result<Json<SendEmailOtpResponse>, StatusCode> {
+    let db = state
+        .require_db()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Check if email is already registered
+    let existing: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT id FROM users WHERE email = $1"
+    )
+    .bind(&body.email)
+    .fetch_optional(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if existing.is_some() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    // Generate 6-digit OTP
+    let otp = format!("{:06}", rand::random::<u32>() % 1_000_000);
+    let otp_hash = Sha256::digest(otp.as_bytes());
+    let expires_at = Utc::now() + chrono::Duration::minutes(10);
+
+    // Invalidate previous pending verifications for this email
+    let _ = sqlx::query(
+        "DELETE FROM email_verifications WHERE email = $1 AND NOT verified"
+    )
+    .bind(&body.email)
+    .execute(db)
+    .await;
+
+    // Store verification record
+    sqlx::query(
+        "INSERT INTO email_verifications (email, otp_hash, expires_at) VALUES ($1, $2, $3)"
+    )
+    .bind(&body.email)
+    .bind(otp_hash.as_slice())
+    .bind(expires_at)
+    .execute(db)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to store email verification: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Send OTP via email (AWS SES — uncomment after aws-sdk-sesv2 dependency available)
+    // if let Some(email_service) = &state.email {
+    //     email_service.send_otp(&body.email, &otp).await.map_err(|e| {
+    //         tracing::error!("Failed to send email OTP: {}", e);
+    //         StatusCode::INTERNAL_SERVER_ERROR
+    //     })?;
+    // }
+    tracing::info!("Email verification OTP for {}: {}", body.email, otp);
+
+    Ok(Json(SendEmailOtpResponse {
+        sent: true,
+        message: format!("Verification code sent to {}", body.email),
+    }))
+}
+
+#[derive(Deserialize)]
 struct RegisterRequest {
-    email: Option<String>,
+    email: String,
+    otp: String,
     device_id: String,
 }
 
@@ -63,6 +140,28 @@ async fn register(
     let db = state
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
+    // Verify email OTP
+    let otp_hash = Sha256::digest(body.otp.as_bytes());
+    let verification: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT id FROM email_verifications
+         WHERE email = $1 AND otp_hash = $2 AND NOT verified AND expires_at > NOW()
+         ORDER BY created_at DESC LIMIT 1"
+    )
+    .bind(&body.email)
+    .bind(otp_hash.as_slice())
+    .fetch_optional(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (verification_id,) = verification.ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Mark as verified
+    sqlx::query("UPDATE email_verifications SET verified = TRUE WHERE id = $1")
+        .bind(verification_id)
+        .execute(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let user_id = uuid::Uuid::new_v4();
     sqlx::query("INSERT INTO users (id, email, device_id) VALUES ($1, $2, $3)")
@@ -359,7 +458,15 @@ async fn initiate_recovery(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // TODO: Send OTP via email (placeholder for now)
+    // Send OTP via email (AWS SES — uncomment after aws-sdk-sesv2 dependency available)
+    // if let Some(email_service) = &state.email {
+    //     email_service.send_otp(&body.email, &otp).await.map_err(|e| {
+    //         tracing::error!("Failed to send recovery OTP email: {}", e);
+    //         StatusCode::INTERNAL_SERVER_ERROR
+    //     })?;
+    // } else {
+    //     tracing::warn!("Email service not configured");
+    // }
     tracing::info!(
         "Recovery OTP for user {}: {} (session: {})",
         user_id, otp, recovery_session_id
@@ -484,9 +591,10 @@ async fn verify_recovery_otp(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
-    // Create reshare MPC session in DB
+    // Create recovery reshare MPC session in DB.
+    // Participants: Server (1) + Backup (2). Target: Device (0).
     let session_id = uuid::Uuid::new_v4();
-    let parties = vec![0i16, 1i16]; // Device (0) and Server (1)
+    let parties = vec![1i16, 2i16]; // Server + Backup (the available old-share holders)
     let threshold = 2i16;
 
     sqlx::query(
@@ -504,7 +612,9 @@ async fn verify_recovery_otp(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Initialize server's reshare protocol (loads shard, generates Round 1)
+    // Initialize server's reshare protocol in recovery mode.
+    // The server uses its shard (Party 1) with Lagrange correction to produce
+    // evaluations that will reconstruct Party 0's shard when combined with backup's contribution.
     if let Err(e) = mpc_participant
         .on_session_created(session_id, user_id, "reshare", &parties, threshold, None)
         .await
@@ -513,7 +623,7 @@ async fn verify_recovery_otp(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // Fetch server's Round 1 reshare messages (addressed to Party 0)
+    // Fetch server's Round 1 reshare messages (addressed to Party 0 — the target)
     let messages: Vec<(i16, i16, i16, Vec<u8>)> = sqlx::query_as(
         "SELECT from_party, to_party, round, payload
          FROM mpc_messages

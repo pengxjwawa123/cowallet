@@ -5,19 +5,32 @@ import '../utils/secure_storage.dart';
 
 /// 认证API - 匹配后端实际接口
 class AuthApi {
+  /// 发送邮箱验证码（注册前验证邮箱所有权）
+  static Future<Result<Map<String, dynamic>>> sendEmailOtp({
+    required String email,
+  }) async {
+    return await DioClient.post(
+      "/auth/email/send-otp",
+      data: {"email": email},
+    );
+  }
+
   /// 注册新用户
   /// [deviceId] 设备唯一标识
-  /// [email] 可选邮箱
+  /// [email] 恢复邮箱（必填）
+  /// [otp] 邮箱验证码
   /// 返回 token 和 user_id
   static Future<Result<Map<String, dynamic>>> register({
     required String deviceId,
-    String? email,
+    required String email,
+    required String otp,
   }) async {
     Result<Map<String, dynamic>> result = await DioClient.post(
       "/auth/register",
       data: {
         "device_id": deviceId,
-        if (email != null) "email": email,
+        "email": email,
+        "otp": otp,
       },
     );
 
