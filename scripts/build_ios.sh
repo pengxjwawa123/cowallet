@@ -101,6 +101,8 @@ build_rust() {
   <string>com.cowallet.ffi-mobile</string>
   <key>CFBundleName</key>
   <string>${FRAMEWORK_NAME}</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0.0</string>
   <key>CFBundleVersion</key>
   <string>1.0</string>
   <key>CFBundlePackageType</key>
@@ -119,6 +121,11 @@ PLIST
   install_name_tool -id "@rpath/${FRAMEWORK_NAME}.framework/$FRAMEWORK_NAME" "$sim_fw/$FRAMEWORK_NAME"
   cp "$device_fw/Info.plist" "$sim_fw/Info.plist"
 
+  # Generate dSYMs for crash symbolication
+  log "  Generating dSYMs..."
+  dsymutil "$device_fw/$FRAMEWORK_NAME" -o "$device_fw.dSYM"
+  dsymutil "$sim_fw/$FRAMEWORK_NAME" -o "$sim_fw.dSYM"
+
   # Create XCFramework from dynamic frameworks
   local xcframework="$output_dir/${FRAMEWORK_NAME}.xcframework"
   rm -rf "$xcframework"
@@ -126,7 +133,9 @@ PLIST
   log "  Creating XCFramework..."
   xcodebuild -create-xcframework \
     -framework "$device_fw" \
+    -debug-symbols "$device_fw.dSYM" \
     -framework "$sim_fw" \
+    -debug-symbols "$sim_fw.dSYM" \
     -output "$xcframework"
 
   # Clean up old static xcframework if present
