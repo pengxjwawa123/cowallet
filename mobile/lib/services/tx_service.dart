@@ -85,8 +85,9 @@ class MpcTxService implements TxService {
     final maxPriority = maxPriorityFeePerGas ?? await _chain.getMaxPriorityFeePerGas();
     final maxFee = maxFeePerGas ?? baseFee * BigInt.two + maxPriority;
 
-    final dataBytes =
-        hasCalldata ? Uint8List.fromList(hex.decode(data.replaceFirst('0x', ''))) : Uint8List(0);
+    final dataBytes = (data != null && data.isNotEmpty)
+        ? Uint8List.fromList(hex.decode(data.replaceFirst('0x', '')))
+        : Uint8List(0);
 
     // MANDATORY user authentication before signing — never skip
     final authed = await Services.authenticate(reason: S.biometricAuthReason);

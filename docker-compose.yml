@@ -83,6 +83,8 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       SES_FROM_ADDRESS: ${SES_FROM_ADDRESS}
       AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       RUST_LOG: info,api_server=debug
     depends_on:
       postgres:

@@ -93,7 +93,10 @@ impl EmailService {
             )
             .send()
             .await
-            .map_err(|e| format!("SES send failed: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("SES raw error: {:?}", e);
+                format!("SES send failed: {}", e)
+            })?;
 
         tracing::info!("Recovery OTP email sent to {}", to_email);
         Ok(())
