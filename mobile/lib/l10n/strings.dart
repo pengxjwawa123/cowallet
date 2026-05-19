@@ -55,6 +55,9 @@ class S {
   static String get emailHint => _p('此邮箱仅用于钱包恢复验证', 'This email is only used for wallet recovery verification');
   static String get invalidEmail => _p('请输入有效的邮箱地址', 'Please enter a valid email address');
   static String get emailSendFailed => _p('发送验证码失败，请重试', 'Failed to send code, please try again');
+  static String get emailAlreadyRegistered => _p('该邮箱已注册', 'Email already registered');
+  static String get emailAlreadyRegisteredDesc => _p('该邮箱已关联钱包，是否前往恢复流程？', 'This email is linked to an existing wallet. Go to recovery?');
+  static String get goRecovery => _p('去恢复', 'Recover');
 
   // Onboarding — Email OTP
   static String get otpH1 => _p('输入验证码', 'Enter Verification Code');

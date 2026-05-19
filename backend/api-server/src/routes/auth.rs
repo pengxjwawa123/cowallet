@@ -40,6 +40,7 @@ struct SendEmailOtpRequest {
 #[derive(Serialize)]
 struct SendEmailOtpResponse {
     sent: bool,
+    is_registered: bool,
     message: String,
 }
 
@@ -52,18 +53,15 @@ async fn send_email_otp(
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    // Check if email is already registered
-    let existing: Option<(uuid::Uuid,)> = sqlx::query_as(
+    // Check if email is already registered (inform client, don't block)
+    let is_registered: bool = sqlx::query_as::<_, (uuid::Uuid,)>(
         "SELECT id FROM users WHERE email = $1"
     )
     .bind(&body.email)
     .fetch_optional(db)
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    if existing.is_some() {
-        return Err(StatusCode::CONFLICT);
-    }
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .is_some();
 
     // Generate 6-digit OTP
     let otp = format!("{:06}", rand::random::<u32>() % 1_000_000);
@@ -103,6 +101,7 @@ async fn send_email_otp(
 
     Ok(Json(SendEmailOtpResponse {
         sent: true,
+        is_registered,
         message: format!("Verification code sent to {}", body.email),
     }))
 }
@@ -162,6 +161,19 @@ async fn register(
         .execute(db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Check if email is already registered
+    let existing: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT id FROM users WHERE email = $1"
+    )
+    .bind(&body.email)
+    .fetch_optional(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if existing.is_some() {
+        return Err(StatusCode::CONFLICT);
+    }
 
     let user_id = uuid::Uuid::new_v4();
     sqlx::query("INSERT INTO users (id, email, device_id) VALUES ($1, $2, $3)")

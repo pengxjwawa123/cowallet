@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/mac/cat/cowallet/target/aarch64-apple-ios/release/ffi_mobile.framework/ffi_mobile'
+relocations:     []
+...

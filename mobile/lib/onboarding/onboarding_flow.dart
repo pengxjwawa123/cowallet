@@ -15,6 +15,7 @@ import '../platform/sb_manager.dart';
 import '../utils/device_id.dart';
 import '../utils/secure_storage.dart';
 import '../services/backup_shard_service.dart';
+import '../router/app_router.dart';
 
 /// The onboarding stages of cowallet.
 enum _Stage { hero, intro, email, emailOtp, creating, bio, pin, name, backup, ready, persona }
@@ -793,8 +794,13 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
       final result = await AuthApi.sendEmailOtp(email: email);
       if (!mounted) return;
       if (result.isSuccess) {
+        final isRegistered = result.data?["is_registered"] == true;
         setState(() => _emailSending = false);
-        _goTo(_Stage.emailOtp);
+        if (isRegistered) {
+          _showRecoveryDialog();
+        } else {
+          _goTo(_Stage.emailOtp);
+        }
       } else {
         setState(() {
           _emailSending = false;
@@ -808,6 +814,30 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         _emailError = S.emailSendFailed;
       });
     }
+  }
+
+  void _showRecoveryDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: CwColors.bgCard,
+        title: Text(S.emailAlreadyRegistered),
+        content: Text(S.emailAlreadyRegisteredDesc),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(S.cancel),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pushNamed(context, AppRouter.recovery);
+            },
+            child: Text(S.goRecovery),
+          ),
+        ],
+      ),
+    );
   }
 
   // ===================== STAGE 2.6: EMAIL OTP =====================
