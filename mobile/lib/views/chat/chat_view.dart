@@ -20,7 +20,9 @@ import 'widgets/history_widget.dart';
 import 'widgets/audit_widget.dart';
 import 'widgets/token_info_widget.dart';
 import 'widgets/clarify_widget.dart';
+import 'widgets/add_contact_widget.dart';
 import 'widgets/session_list_sheet.dart';
+import '../../models/contact.dart';
 
 // ---------------------------------------------------------------------------
 // Message model
@@ -28,7 +30,7 @@ import 'widgets/session_list_sheet.dart';
 
 enum ChatMsgKind { user, ai, thinking, widget }
 
-enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, txDetail, history, audit, clarify, tokenInfo }
+enum WidgetType { balance, receive, sendConfirm, swapConfirm, txResult, txDetail, history, audit, clarify, tokenInfo, addContact }
 
 class ChatMsg {
   final ChatMsgKind kind;
@@ -215,6 +217,10 @@ class ChatViewState extends State<ChatView> {
       137,   // Polygon
     ];
 
+    final contactsList = Services.contacts.contacts
+        .map((c) => {'name': c.name, 'address': c.address, 'chain': c.chain})
+        .toList();
+
     final stream = AiApi.chatStream(
       message: text,
       sessionId: _sessionId,
@@ -222,6 +228,7 @@ class ChatViewState extends State<ChatView> {
       walletAddress: walletAddress.isNotEmpty ? walletAddress : null,
       supportedChains: supportedChains,
       portfolioContext: portfolioContext,
+      contacts: contactsList,
     );
 
     _streamSub?.cancel();
@@ -302,6 +309,26 @@ class ChatViewState extends State<ChatView> {
                     'amount': params['amount'] ?? '0',
                     'slippage': params['slippage'] ?? 0.5,
                     'chain_id': params['chain_id'],
+                  },
+                  toolCallId: id,
+                ));
+                _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
+                aiMsgIndex = _messages.length - 1;
+              });
+              _scrollToBottom();
+            } else if (kind == 'write' && name == 'add_contact') {
+              setState(() {
+                if (_messages[aiMsgIndex].text.isEmpty) {
+                  _messages.removeAt(aiMsgIndex);
+                }
+                _messages.add(ChatMsg(
+                  kind: ChatMsgKind.widget,
+                  widgetType: WidgetType.addContact,
+                  widgetData: {
+                    'name': params['name'] ?? '',
+                    'address': params['address'] ?? '',
+                    'chain': params['chain'],
+                    'note': params['note'],
                   },
                   toolCallId: id,
                 ));
@@ -748,6 +775,37 @@ class ChatViewState extends State<ChatView> {
     _scrollToBottom();
   }
 
+  Future<void> _onAddContactConfirm(int index) async {
+    final msg = _messages[index];
+    setState(() => msg.loading = true);
+
+    final contact = Contact(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: msg.widgetData['name'] as String? ?? '',
+      address: msg.widgetData['address'] as String? ?? '',
+      chain: msg.widgetData['chain'] as String?,
+      note: msg.widgetData['note'] as String?,
+      createdAt: DateTime.now(),
+    );
+
+    await Services.contacts.add(contact);
+
+    if (!mounted) return;
+    setState(() {
+      msg.loading = false;
+      msg.confirmed = true;
+      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: '✅ 已保存联系人「${contact.name}」'));
+    });
+    _scrollToBottom();
+  }
+
+  void _onAddContactDeny(int index) {
+    setState(() {
+      _messages[index].confirmed = true;
+      _messages.add(ChatMsg(kind: ChatMsgKind.ai, text: ''));
+    });
+  }
+
   void _onClarifySelect(int index, String prompt) {
     setState(() {
       _messages[index].confirmed = true;
@@ -1112,6 +1170,17 @@ class ChatViewState extends State<ChatView> {
           options: options,
           resolved: msg.confirmed,
           onSelect: (prompt) => _onClarifySelect(index, prompt),
+        );
+      case WidgetType.addContact:
+        return AddContactWidget(
+          name: msg.widgetData['name'] ?? '',
+          address: msg.widgetData['address'] ?? '',
+          chain: msg.widgetData['chain'] as String?,
+          note: msg.widgetData['note'] as String?,
+          loading: msg.loading,
+          resolved: msg.confirmed,
+          onConfirm: () => _onAddContactConfirm(index),
+          onDeny: () => _onAddContactDeny(index),
         );
       default:
         return const SizedBox.shrink();

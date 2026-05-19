@@ -208,6 +208,27 @@ fn wallet_tools_meta() -> Vec<ToolMeta> {
             definition: ToolDefinition {
                 tool_type: "function".into(),
                 function: FunctionDefinition {
+                    name: "add_contact".into(),
+                    description: "Save a wallet address to the user's contact list for quick access later. Use this when the user wants to remember or save an address with a name.".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Contact display name" },
+                            "address": { "type": "string", "description": "Wallet address (0x...)" },
+                            "chain": { "type": "string", "description": "Blockchain network (ethereum, base, polygon, etc.)" },
+                            "note": { "type": "string", "description": "Optional note about this contact" }
+                        },
+                        "required": ["name", "address"]
+                    }),
+                },
+            },
+            kind: ToolKind::Write,
+            widget_type: Some("add_contact"),
+        },
+        ToolMeta {
+            definition: ToolDefinition {
+                tool_type: "function".into(),
+                function: FunctionDefinition {
                     name: "clarify".into(),
                     description: "When the user's intent is ambiguous, present options for them to choose from. Use this instead of guessing what the user wants.".into(),
                     parameters: serde_json::json!({
@@ -360,9 +381,15 @@ const SYSTEM_PROMPT: &str = r#"你是 CoWallet，用户的加密钱包 AI 助手
 ## 重要：多链代币必须确认链
 当用户的请求涉及多链代币（USDC, USDT, DAI, WETH, LINK 等存在于多条链上的代币），且无法从上下文判断目标链时，你**必须**使用 clarify 工具询问用户要在哪条链上操作。绝不能自行假设默认链。chain_id 是 send_transaction 和 swap_token 的必填参数。
 
+## 联系人
+用户的联系人列表会在 [Contacts] 中提供。当用户说"转给小明""给Alice打钱"时，从联系人中匹配名称获取地址。
+- 用户说"保存/添加/记住这个地址" → 调用 add_contact
+- 用户说"转给[联系人名]" → 从 [Contacts] 找到地址，调用 send_transaction
+- 如果联系人中没找到 → 用 clarify 询问地址
+
 ## 工具分类
 - **自动执行**：get_balance, get_wallet_address, get_transaction_history, get_supported_chains, security_audit
-- **需确认**：send_transaction, swap_token
+- **需确认**：send_transaction, swap_token, add_contact
 - **对话辅助**：clarify
 
 ## clarify 使用场景
@@ -522,6 +549,8 @@ pub struct ChatRequest {
     pub supported_chains: Option<Vec<u64>>,
     #[serde(default)]
     pub portfolio: Option<serde_json::Value>,
+    #[serde(default)]
+    pub contacts: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -764,13 +793,18 @@ async fn chat_stream(
             }
         }
 
-        // Inject portfolio context into user message if provided
-        let user_content = if let Some(portfolio) = &req.portfolio {
+        // Inject portfolio and contacts context into user message if provided
+        let mut user_content = user_message.clone();
+        if let Some(portfolio) = &req.portfolio {
             let portfolio_str = serde_json::to_string_pretty(portfolio).unwrap_or_default();
-            format!("{}\n\n[Portfolio Context]\n{}", user_message, portfolio_str)
-        } else {
-            user_message.clone()
-        };
+            user_content = format!("{}\n\n[Portfolio Context]\n{}", user_content, portfolio_str);
+        }
+        if let Some(contacts) = &req.contacts {
+            if !contacts.is_empty() {
+                let contacts_str = serde_json::to_string(contacts).unwrap_or_default();
+                user_content = format!("{}\n\n[Contacts]\n{}", user_content, contacts_str);
+            }
+        }
 
         messages.push(Message {
             role: "user".into(),
