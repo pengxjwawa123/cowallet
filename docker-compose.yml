@@ -81,6 +81,8 @@ services:
       COVALENT_API_KEY: ${COVALENT_API_KEY}
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:8080,http://localhost:5173,http://52.202.21.161:3000,https://devapi.cowallet.ai
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      SES_FROM_ADDRESS: ${SES_FROM_ADDRESS}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
       RUST_LOG: info,api_server=debug
     depends_on:
       postgres:
