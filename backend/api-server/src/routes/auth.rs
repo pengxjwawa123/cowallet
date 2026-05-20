@@ -498,15 +498,14 @@ async fn initiate_recovery(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Send OTP via email (AWS SES — uncomment after aws-sdk-sesv2 dependency available)
-    // if let Some(email_service) = &state.email {
-    //     email_service.send_otp(&body.email, &otp).await.map_err(|e| {
-    //         tracing::error!("Failed to send recovery OTP email: {}", e);
-    //         StatusCode::INTERNAL_SERVER_ERROR
-    //     })?;
-    // } else {
-    //     tracing::warn!("Email service not configured");
-    // }
+    if let Some(email_service) = &state.email {
+        email_service.send_otp(&body.email, &otp).await.map_err(|e| {
+            tracing::error!("Failed to send recovery OTP email: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    } else {
+        tracing::warn!("⚠️  [NO SES] Recovery OTP for {} => {} (set SES_FROM_ADDRESS to enable)", body.email, otp);
+    }
     tracing::info!(
         "Recovery OTP for user {}: {} (session: {})",
         user_id, otp, recovery_session_id
