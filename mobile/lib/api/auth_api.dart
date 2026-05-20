@@ -24,6 +24,7 @@ class AuthApi {
     required String deviceId,
     required String email,
     required String otp,
+    bool force = false,
   }) async {
     Result<Map<String, dynamic>> result = await DioClient.post(
       "/auth/register",
@@ -31,6 +32,7 @@ class AuthApi {
         "device_id": deviceId,
         "email": email,
         "otp": otp,
+        if (force) "force": true,
       },
     );
 

@@ -60,6 +60,7 @@ class MpcWebSocket {
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
   int _reconnectAttempts = 0;
+  bool _disposed = false;
   MpcWebSocketState _state = MpcWebSocketState.disconnected;
 
   static const int _maxReconnectAttempts = 5;
@@ -102,6 +103,7 @@ class MpcWebSocket {
   /// 连接WebSocket
   /// 如果已连接则先断开再重连
   Future<void> connect() async {
+    if (_disposed) return;
     if (_state == MpcWebSocketState.connected ||
         _state == MpcWebSocketState.connecting) {
       return;
@@ -116,8 +118,10 @@ class MpcWebSocket {
 
       _channel = WebSocketChannel.connect(uri);
 
-      // 等待连接就绪
-      await _channel!.ready;
+      // 等待连接就绪（with timeout to avoid hanging）
+      await _channel!.ready.timeout(const Duration(seconds: 5));
+
+      if (_disposed) return;
 
       _state = MpcWebSocketState.connected;
       _reconnectAttempts = 0;
@@ -133,6 +137,7 @@ class MpcWebSocket {
       // 启动心跳
       _startHeartbeat();
     } catch (e) {
+      if (_disposed) return;
       print('[MpcWebSocket] Connection failed: $e');
       _state = MpcWebSocketState.disconnected;
       _scheduleReconnect();
@@ -141,6 +146,7 @@ class MpcWebSocket {
 
   /// 断开WebSocket连接
   Future<void> disconnect() async {
+    _disposed = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _heartbeatTimer?.cancel();
@@ -150,7 +156,9 @@ class MpcWebSocket {
     await _subscription?.cancel();
     _subscription = null;
 
-    await _channel?.sink.close();
+    try {
+      await _channel?.sink.close().timeout(const Duration(seconds: 2));
+    } catch (_) {}
     _channel = null;
 
     _state = MpcWebSocketState.disconnected;
@@ -243,6 +251,7 @@ class MpcWebSocket {
 
   /// 安排自动重连（指数退避: 1s, 2s, 4s, 8s, 16s）
   void _scheduleReconnect() {
+    if (_disposed) return;
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       print('[MpcWebSocket] Max reconnect attempts reached');
       _messageController?.addError(
@@ -259,6 +268,7 @@ class MpcWebSocket {
 
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
+      if (_disposed) return;
       await _subscription?.cancel();
       _subscription = null;
       _channel = null;

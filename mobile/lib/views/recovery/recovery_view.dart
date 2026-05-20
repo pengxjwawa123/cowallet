@@ -238,9 +238,10 @@ class _RecoveryViewState extends State<RecoveryView> {
       await SecureStorage.save('backup_status', 'recovered');
       await SecureStorage.save('mpc_address', result.address);
 
-      // Persist public key for key health verification
+      // Persist public key and server commitment for key health verification
       final pubKeyHex = result.publicKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
       await SecureStorage.save('mpc_public_key', pubKeyHex);
+      await SecureStorage.save('mpc_server_commitment', _verifyResult!.serverCommitmentHex);
 
       // Persist backup shard method and last-checked for key health service
       final addrSuffix = result.address.toLowerCase().substring(0, 10);

@@ -71,6 +71,8 @@ class RecoveryService {
       final code = result.errorCode;
       if (code == 401) {
         throw RecoveryException('验证码错误，请重新输入');
+      } else if (code == 404) {
+        throw RecoveryException('验证码错误或账户不存在');
       } else if (code == 410) {
         throw RecoveryException('验证码已过期，请重新发起恢复');
       } else if (code == 429) {

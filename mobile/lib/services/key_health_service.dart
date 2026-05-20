@@ -148,22 +148,6 @@ class KeyHealthService {
     }
   }
 
-  /// Load device shard from hardware storage and public key from secure storage.
-  Future<({List<int> deviceShard, List<int> publicKey})> _loadVerificationData() async {
-    final deviceShard = await SecureHardware.loadDeviceShard();
-    if (deviceShard == null || deviceShard.length != 32) {
-      throw Exception('Device shard not available');
-    }
-
-    final pubKeyHex = await SecureStorage.get('mpc_public_key');
-    if (pubKeyHex == null || pubKeyHex.isEmpty) {
-      throw Exception('Public key not found');
-    }
-
-    final publicKey = _hexToBytes(pubKeyHex);
-    return (deviceShard: deviceShard.toList(), publicKey: publicKey);
-  }
-
   List<int> _hexToBytes(String hex) {
     final cleanHex = hex.startsWith('0x') ? hex.substring(2) : hex;
     final bytes = <int>[];
@@ -171,6 +155,37 @@ class KeyHealthService {
       bytes.add(int.parse(cleanHex.substring(i, i + 2), radix: 16));
     }
     return bytes;
+  }
+
+  /// Verify backup shard using the appropriate method:
+  /// - Feldman (post-recovery): uses server_commitment stored during recovery
+  /// - Lagrange (original wallet): uses device_shard + backup_shard → public_key
+  Future<bool> _verifyBackupShard(List<int> backupBytes) async {
+    final commitmentHex = await SecureStorage.get('mpc_server_commitment');
+    final pubKeyHex = await SecureStorage.get('mpc_public_key');
+    if (pubKeyHex == null || pubKeyHex.isEmpty) {
+      throw Exception('Public key not found');
+    }
+    final publicKey = _hexToBytes(pubKeyHex);
+
+    if (commitmentHex != null && commitmentHex.isNotEmpty) {
+      final serverCommitment = _hexToBytes(commitmentHex);
+      return await MpcBridge.verifyBackupShardFeldman(
+        backupBytes: backupBytes,
+        serverCommitment: serverCommitment,
+        expectedPublicKey: publicKey,
+      );
+    }
+
+    final deviceShard = await SecureHardware.loadDeviceShard();
+    if (deviceShard == null || deviceShard.length != 32) {
+      throw Exception('Device shard not available');
+    }
+    return await MpcBridge.verifyBackupShard(
+      backupBytes: backupBytes,
+      deviceShardBytes: deviceShard.toList(),
+      expectedPublicKey: publicKey,
+    );
   }
 
   Future<bool> testBackupKey() async {
@@ -182,14 +197,7 @@ class KeyHealthService {
       }
       print('[KeyHealth] cloud parsed backup shard: ${shardBytes.length} bytes');
 
-      final vData = await _loadVerificationData();
-      print('[KeyHealth] cloud deviceShard: ${vData.deviceShard.length} bytes, pubKey: ${vData.publicKey.length} bytes');
-
-      final valid = await MpcBridge.verifyBackupShard(
-        backupBytes: shardBytes,
-        deviceShardBytes: vData.deviceShard,
-        expectedPublicKey: vData.publicKey,
-      );
+      final valid = await _verifyBackupShard(shardBytes);
       print('[KeyHealth] cloud verifyBackupShard result: $valid');
       if (!valid) return false;
 
@@ -201,8 +209,6 @@ class KeyHealthService {
     }
   }
 
-  /// Test key 3 (file): validate the user-provided local JSON file by verifying it
-  /// cryptographically against the device shard (Lagrange interpolation → public key match).
   Future<bool> testBackupKeyWithFile(String fileContent) async {
     try {
       final shardBytes = _backupService.parseBackupFile(fileContent);
@@ -212,14 +218,7 @@ class KeyHealthService {
       }
       print('[KeyHealth] parsed backup shard: ${shardBytes.length} bytes');
 
-      final vData = await _loadVerificationData();
-      print('[KeyHealth] deviceShard: ${vData.deviceShard.length} bytes, pubKey: ${vData.publicKey.length} bytes');
-
-      final valid = await MpcBridge.verifyBackupShard(
-        backupBytes: shardBytes,
-        deviceShardBytes: vData.deviceShard,
-        expectedPublicKey: vData.publicKey,
-      );
+      final valid = await _verifyBackupShard(shardBytes);
       print('[KeyHealth] verifyBackupShard result: $valid');
       if (!valid) return false;
 

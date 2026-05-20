@@ -958,6 +958,71 @@ pub fn verify_backup_shard(
     Ok(matches)
 }
 
+/// Verify a backup shard using Feldman commitment (for post-recovery wallets).
+///
+/// After recovery, device shard is on a new polynomial so Lagrange with backup won't work.
+/// Instead verify: server_commitment + G*(lambda_2 * backup_shard) == PublicKey.
+pub fn verify_backup_shard_feldman(
+    backup_bytes: Vec<u8>,
+    server_commitment: Vec<u8>,
+    expected_public_key: Vec<u8>,
+) -> Result<bool, String> {
+    use k256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+    use k256::elliptic_curve::PrimeField;
+    use k256::{AffinePoint, EncodedPoint, ProjectivePoint, Scalar};
+
+    if backup_bytes.len() != 32 {
+        return Err(format!("invalid backup shard length: expected 32, got {}", backup_bytes.len()));
+    }
+    if server_commitment.is_empty() {
+        return Err("server_commitment is required for Feldman verification".into());
+    }
+
+    // Parse backup scalar
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&backup_bytes);
+    let s2 = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
+        .ok_or_else(|| "invalid backup shard scalar".to_string())?;
+
+    // lambda_2 for participants [1, 2]: x1/(x1-x2) = 2/(2-3) = -2
+    let x1 = Scalar::from(2u64);
+    let x2 = Scalar::from(3u64);
+    let den = x1 - x2;
+    let den_inv = Option::<Scalar>::from(den.invert())
+        .ok_or_else(|| "Lagrange denominator zero".to_string())?;
+    let lambda_2 = x1 * den_inv;
+
+    // G * (lambda_2 * s2)
+    let backup_point = ProjectivePoint::GENERATOR * (lambda_2 * s2);
+
+    // Parse server commitment
+    let server_enc = EncodedPoint::from_bytes(&server_commitment)
+        .map_err(|_| "invalid server commitment encoding".to_string())?;
+    let server_affine = AffinePoint::from_encoded_point(&server_enc)
+        .into_option()
+        .ok_or("server commitment decompression failed")?;
+    let server_point = ProjectivePoint::from(server_affine);
+
+    // Sum = server_commitment + backup_commitment
+    let sum_point = server_point + backup_point;
+    let sum_affine: AffinePoint = sum_point.into();
+    let sum_encoded = sum_affine.to_encoded_point(false);
+
+    // Parse expected public key
+    let expected = if expected_public_key.len() == 33 || expected_public_key.len() == 65 {
+        let enc = EncodedPoint::from_bytes(&expected_public_key)
+            .map_err(|_| "invalid public key encoding".to_string())?;
+        AffinePoint::from_encoded_point(&enc)
+            .into_option()
+            .ok_or("public key decompression failed")?
+            .to_encoded_point(false)
+    } else {
+        return Err(format!("unexpected public key length: {}", expected_public_key.len()));
+    };
+
+    Ok(sum_encoded.as_bytes() == expected.as_bytes())
+}
+
 // ---------------------------------------------------------------------------
 // Backup Shard Export/Import — Password-encrypted portable backup
 // ---------------------------------------------------------------------------

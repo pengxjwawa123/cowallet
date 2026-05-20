@@ -226,6 +226,12 @@ abstract class RustLibApi extends BaseApi {
     required List<int> deviceShardBytes,
     required List<int> expectedPublicKey,
   });
+
+  Future<bool> crateApiVerifyBackupShardFeldman({
+    required List<int> backupBytes,
+    required List<int> serverCommitment,
+    required List<int> expectedPublicKey,
+  });
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -1433,6 +1439,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiVerifyBackupShardConstMeta => const TaskConstMeta(
     debugName: "verify_backup_shard",
     argNames: ["backupBytes", "deviceShardBytes", "expectedPublicKey"],
+  );
+
+  @override
+  Future<bool> crateApiVerifyBackupShardFeldman({
+    required List<int> backupBytes,
+    required List<int> serverCommitment,
+    required List<int> expectedPublicKey,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_prim_u_8_loose(backupBytes, serializer);
+          sse_encode_list_prim_u_8_loose(serverCommitment, serializer);
+          sse_encode_list_prim_u_8_loose(expectedPublicKey, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 38,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiVerifyBackupShardFeldmanConstMeta,
+        argValues: [backupBytes, serverCommitment, expectedPublicKey],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiVerifyBackupShardFeldmanConstMeta => const TaskConstMeta(
+    debugName: "verify_backup_shard_feldman",
+    argNames: ["backupBytes", "serverCommitment", "expectedPublicKey"],
   );
 
   @protected

@@ -51,9 +51,10 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   bool _emailSending = false;
 
   // --- Email OTP stage state ---
-  String _otpInput = '';
+  final _otpCtrl = TextEditingController();
   String? _otpError;
   bool _otpVerifying = false;
+  bool _forceRegister = false;
 
   // --- Name stage state ---
   final _nameCtrl = TextEditingController();
@@ -113,6 +114,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
   void dispose() {
     _createTimer?.cancel();
     _emailCtrl.dispose();
+    _otpCtrl.dispose();
     _nameCtrl.dispose();
     _pageCtrl.dispose();
     super.dispose();
@@ -161,48 +163,27 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     String? generatedAddress;
 
     void maybeAdvance() {
+      print('[OnboardingFlow] maybeAdvance: auth=$authDone mpcSession=$mpcSessionDone mpcProto=$mpcProtocolDone wallet=$walletDone anim=$animDone mounted=$mounted addr=$generatedAddress');
       if (!authDone || !mpcSessionDone || !mpcProtocolDone || !walletDone || !animDone || !mounted) return;
-      if (generatedAddress != null) {
+      if (generatedAddress == null) return;
+      print('[OnboardingFlow] All conditions met, advancing to backup stage');
+      try {
         CowalletApp.of(context).setWalletAddress(generatedAddress!);
-        Future.delayed(const Duration(milliseconds: 400), () {
-          if (mounted) _goTo(_Stage.backup);
-        });
-      }
+      } catch (_) {}
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (mounted) _goTo(_Stage.backup);
+      });
     }
 
-    // Step 1 → 2 → 3 顺序执行，确保 token 在 MPC 请求之前已保存
+    // Registration already completed in OTP stage, proceed directly to DKG
     () async {
-      // Step 1: 设备注册/认证（含邮箱 + OTP 验证）
-      try {
-        final deviceId = await DeviceIdGenerator.getOrGenerate();
-        final authResult = await AuthApi.register(
-          deviceId: deviceId,
-          email: _emailCtrl.text.trim(),
-          otp: _otpInput,
-        );
-        if (!authResult.isSuccess) throw Exception(authResult.errorMessage);
-        if (!mounted) return;
-        setState(() => _createChecksDone = 1); // ✅ 设备验证通过
-        authDone = true;
-        maybeAdvance();
-      } catch (e) {
-        if (!mounted) return;
-        _createTimer?.cancel();
-        setState(() {
-          _createError = true;
-          _isResuming = false;
-        });
-        return; // 注册失败，终止后续步骤
-      }
+      authDone = true;
+      mpcSessionDone = true;
+      if (mounted) setState(() => _createChecksDone = 2); // ✅ 设备验证 + MPC 会话
+      maybeAdvance();
 
-      // Step 2+3: 执行完整 DKG 协议（创建会话 + 多轮消息交换）
+      // DKG 协议（多轮消息交换）
       try {
-        if (mounted) {
-          setState(() => _createChecksDone = 2); // ✅ MPC 会话建立
-          mpcSessionDone = true;
-        }
-
-        // Use session manager for recovery support
         final walletInfo = await sessionManager.runDkgWithRecovery();
         generatedAddress = walletInfo.address;
 
@@ -212,7 +193,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
           final base64Shard = base64Encode(backupShard);
           await SecureStorage.save(SecureStorage.keyPendingBackupShard, base64Shard);
           await SecureStorage.save(SecureStorage.keyPendingBackupCreatedAt, DateTime.now().toIso8601String());
-          print('[OnboardingFlow] Saved pending backup shard to SecureStorage');
         }
 
         if (mounted) {
@@ -865,6 +845,70 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showReRegisterConfirm();
+                },
+                child: Text(S.reRegister),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(S.cancel, style: TextStyle(color: CwColors.ink3)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showReRegisterConfirm() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        decoration: BoxDecoration(
+          color: CwColors.bgCard,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 40, color: CwColors.danger),
+            const SizedBox(height: 16),
+            Text(
+              S.reRegister,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: CwColors.ink1),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              S.reRegisterDesc,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: CwColors.ink3),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: CwColors.danger),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  setState(() => _forceRegister = true);
+                  _goTo(_Stage.emailOtp);
+                },
+                child: Text(S.reRegisterConfirm),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
               child: TextButton(
                 onPressed: () => Navigator.pop(ctx),
                 child: Text(S.cancel, style: TextStyle(color: CwColors.ink3)),
@@ -878,33 +922,49 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   // ===================== STAGE 2.6: EMAIL OTP =====================
 
-  void _onOtpDigit(String digit) {
-    if (_otpInput.length >= 6) return;
-    setState(() {
-      _otpInput += digit;
-      _otpError = null;
-    });
-    if (_otpInput.length == 6) {
+  void _onOtpChanged(String value) {
+    if (_otpError != null) setState(() => _otpError = null);
+    if (value.length == 6) {
       _verifyEmailOtp();
     }
   }
 
-  void _onOtpBackspace() {
-    if (_otpInput.isEmpty) return;
-    setState(() {
-      _otpInput = _otpInput.substring(0, _otpInput.length - 1);
-      _otpError = null;
-    });
-  }
-
   Future<void> _verifyEmailOtp() async {
-    // OTP will be verified during register — just proceed to creating
-    setState(() => _otpVerifying = false);
-    _goTo(_Stage.creating);
+    if (_stage == _Stage.creating || _otpVerifying) return;
+    setState(() => _otpVerifying = true);
+
+    try {
+      final deviceId = await DeviceIdGenerator.getOrGenerate();
+      final result = await AuthApi.register(
+        deviceId: deviceId,
+        email: _emailCtrl.text.trim(),
+        otp: _otpCtrl.text.trim(),
+        force: _forceRegister,
+      );
+      if (!mounted) return;
+
+      if (result.isSuccess) {
+        setState(() => _otpVerifying = false);
+        _goTo(_Stage.creating);
+      } else {
+        setState(() {
+          _otpVerifying = false;
+          _otpError = result.errorMessage ?? S.emailSendFailed;
+          _otpCtrl.clear();
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _otpVerifying = false;
+        _otpError = S.emailSendFailed;
+        _otpCtrl.clear();
+      });
+    }
   }
 
   Future<void> _resendOtp() async {
-    setState(() => _otpInput = '');
+    _otpCtrl.clear();
     final result = await AuthApi.sendEmailOtp(email: _emailCtrl.text.trim());
     if (!mounted) return;
     if (!result.isSuccess) {
@@ -929,87 +989,53 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                 const SizedBox(height: 8),
                 _subtitle(S.otpSub(_emailCtrl.text.trim())),
                 const SizedBox(height: 32),
-                // OTP dots
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: List.generate(6, (i) {
-                    final filled = i < _otpInput.length;
-                    return Container(
-                      width: 16,
-                      height: 16,
-                      margin: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: filled ? CwColors.accent : Colors.transparent,
-                        border: Border.all(
-                          color: filled ? CwColors.accent : CwColors.ink4,
-                          width: 2,
-                        ),
-                      ),
-                    );
-                  }),
-                ),
                 if (_otpError != null) ...[
-                  const SizedBox(height: 12),
                   Text(_otpError!, style: TextStyle(fontSize: 13, color: CwColors.danger)),
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 32),
+                Container(
+                  decoration: BoxDecoration(
+                    color: CwColors.bgCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: CwColors.line),
+                  ),
+                  child: TextField(
+                    controller: _otpCtrl,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    maxLength: 6,
+                    autofocus: true,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 8,
+                      color: CwColors.ink1,
+                    ),
+                    decoration: InputDecoration(
+                      counterText: '',
+                      hintText: '------',
+                      hintStyle: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 8,
+                        color: CwColors.ink4,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                      border: InputBorder.none,
+                    ),
+                    onChanged: _onOtpChanged,
+                  ),
+                ),
+                const SizedBox(height: 24),
                 if (_otpVerifying)
                   const CircularProgressIndicator()
                 else
-                  _buildOtpNumPad(),
-                const SizedBox(height: 24),
-                _secondaryLink(S.otpResend, _resendOtp),
+                  _secondaryLink(S.otpResend, _resendOtp),
               ],
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildOtpNumPad() {
-    return Column(
-      children: [
-        for (final row in [['1','2','3'], ['4','5','6'], ['7','8','9'], ['','0','⌫']])
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: row.map((key) {
-                if (key.isEmpty) return const SizedBox(width: 72, height: 56);
-                return GestureDetector(
-                  onTap: () {
-                    if (key == '⌫') {
-                      _onOtpBackspace();
-                    } else {
-                      _onOtpDigit(key);
-                    }
-                  },
-                  child: Container(
-                    width: 72,
-                    height: 56,
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: CwColors.bgCard,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: CwColors.line),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      key,
-                      style: TextStyle(
-                        fontSize: key == '⌫' ? 20 : 24,
-                        fontWeight: FontWeight.w500,
-                        color: CwColors.ink1,
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-      ],
     );
   }
 

@@ -389,6 +389,24 @@ class MpcBridge {
     }
   }
 
+  /// Verify backup shard using Feldman commitment (for recovered wallets).
+  /// Uses server_commitment + G*(lambda_2 * backup) == PublicKey.
+  static Future<bool> verifyBackupShardFeldman({
+    required List<int> backupBytes,
+    required List<int> serverCommitment,
+    required List<int> expectedPublicKey,
+  }) async {
+    try {
+      return await frb.verifyBackupShardFeldman(
+        backupBytes: Uint8List.fromList(backupBytes),
+        serverCommitment: Uint8List.fromList(serverCommitment),
+        expectedPublicKey: Uint8List.fromList(expectedPublicKey),
+      );
+    } catch (e) {
+      throw MpcException('Failed to verify backup shard (Feldman): $e');
+    }
+  }
+
   /// ===== Backup Shard Export/Import (Password-Encrypted) =====
 
   /// Export the backup shard (Party 2) as a password-encrypted base64 string.

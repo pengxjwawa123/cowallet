@@ -58,6 +58,9 @@ class S {
   static String get emailAlreadyRegistered => _p('该邮箱已注册', 'Email already registered');
   static String get emailAlreadyRegisteredDesc => _p('该邮箱已关联钱包，是否前往恢复流程？', 'This email is linked to an existing wallet. Go to recovery?');
   static String get goRecovery => _p('去恢复', 'Recover');
+  static String get reRegister => _p('重新注册', 'Re-register');
+  static String get reRegisterDesc => _p('将创建新钱包，原钱包资产需通过恢复流程找回', 'This will create a new wallet. Original assets can only be recovered via the recovery flow.');
+  static String get reRegisterConfirm => _p('确认重新注册', 'Confirm Re-register');
 
   // Onboarding — Email OTP
   static String get otpH1 => _p('输入验证码', 'Enter Verification Code');

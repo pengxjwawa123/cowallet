@@ -158,6 +158,9 @@ class MpcWalletService implements WalletService {
       await SecureStorage.save('mpc_address', walletInfo.address);
       await SecureStorage.save('mpc_session_id', sessionId);
 
+      // Fresh DKG: clear stale recovery commitment so verification uses Lagrange
+      await SecureStorage.delete('mpc_server_commitment');
+
       // Persist device shard to hardware-backed storage and public key to secure storage
       final deviceShardBytes = await MpcBridge.exportDeviceShard();
       await SecureHardware.storeDeviceShard(Uint8List.fromList(deviceShardBytes));
@@ -184,6 +187,7 @@ class MpcWalletService implements WalletService {
   /// Public so MpcSessionManager can call it during sign recovery.
   Future<void> ensureShardLoaded() async {
     final shardBytes = await SecureHardware.loadDeviceShard();
+
     if (shardBytes == null || shardBytes.isEmpty) {
       throw MpcException('Device shard not found in secure hardware');
     }

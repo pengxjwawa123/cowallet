@@ -171,6 +171,16 @@ Future<void> recoveryImportBackupShard({required List<int> backupBytes}) =>
 /// 2. User provides backup shard (Party 2)
 /// 3. Server initiates a special reshare where Party 0 is reconstructed
 /// 4. The backup + server shards generate a new device shard without changing the public key
+Future<bool> verifyBackupShardFeldman({
+  required List<int> backupBytes,
+  required List<int> serverCommitment,
+  required List<int> expectedPublicKey,
+}) => RustLib.instance.api.crateApiVerifyBackupShardFeldman(
+  backupBytes: backupBytes,
+  serverCommitment: serverCommitment,
+  expectedPublicKey: expectedPublicKey,
+);
+
 Future<FfiDkgComplete> recoveryReconstructDeviceShard({
   required String sessionId,
   required List<String> serverMessagesJson,

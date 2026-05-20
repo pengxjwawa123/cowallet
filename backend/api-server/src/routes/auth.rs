@@ -126,6 +126,8 @@ struct RegisterRequest {
     email: String,
     otp: String,
     device_id: String,
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Serialize)]
@@ -197,11 +199,19 @@ async fn register(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .is_some();
 
-        if has_wallet {
+        if has_wallet && !body.force {
             return Err(StatusCode::CONFLICT);
         }
 
-        // No wallet — update device_id and reuse the user
+        if has_wallet && body.force {
+            sqlx::query("DELETE FROM shard_metadata WHERE user_id = $1")
+                .bind(existing_id)
+                .execute(db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+
+        // Update device_id and reuse the user
         sqlx::query("UPDATE users SET device_id = $1 WHERE id = $2")
             .bind(&body.device_id)
             .bind(existing_id)
