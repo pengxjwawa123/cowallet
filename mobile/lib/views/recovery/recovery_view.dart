@@ -9,6 +9,7 @@ import '../../services/locator.dart';
 import '../../services/recovery_service.dart';
 import '../../theme/colors.dart';
 import '../../utils/device_id.dart';
+import '../../utils/secure_storage.dart';
 import '../../widgets/cw_orb.dart';
 
 /// Multi-step wallet recovery flow.
@@ -226,6 +227,13 @@ class _RecoveryViewState extends State<RecoveryView> {
       final appState = CowalletApp.of(context);
       appState.setWalletAddress(result.address);
       appState.completeOnboarding();
+
+      // Clear persisted onboarding progress so "未完成" banner disappears
+      await SecureStorage.delete(SecureStorage.keyOnboardingStep);
+      await SecureStorage.delete(SecureStorage.keyPendingBackupCreatedAt);
+      await SecureStorage.save('onboarding_completed_at', DateTime.now().toIso8601String());
+      await SecureStorage.save('backup_status', 'recovered');
+      await SecureStorage.save('mpc_address', result.address);
 
       setState(() {
         _loading = false;
