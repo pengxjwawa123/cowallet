@@ -64,6 +64,16 @@ class RecoveryService {
     );
 
     if (!result.isSuccess || result.data == null) {
+      final code = result.errorCode;
+      if (code == 401) {
+        throw RecoveryException('验证码错误，请重新输入');
+      } else if (code == 410) {
+        throw RecoveryException('验证码已过期，请重新发起恢复');
+      } else if (code == 429) {
+        throw RecoveryException('尝试次数过多，请重新发起恢复');
+      } else if (code == 409) {
+        throw RecoveryException('该恢复会话已使用，请重新发起');
+      }
       throw RecoveryException(
         'OTP verification failed: ${result.errorMessage}',
       );
