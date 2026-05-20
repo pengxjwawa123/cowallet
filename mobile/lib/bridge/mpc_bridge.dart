@@ -298,12 +298,14 @@ class MpcBridge {
     required String sessionId,
     required List<String> serverMessagesJson,
     required List<int> publicKey,
+    required List<int> serverCommitment,
   }) async {
     try {
       final result = await frb.recoveryReconstructDeviceShard(
         sessionId: sessionId,
         serverMessagesJson: serverMessagesJson,
         publicKey: Uint8List.fromList(publicKey),
+        serverCommitment: Uint8List.fromList(serverCommitment),
       );
       return WalletInfo(
         address: result.address,

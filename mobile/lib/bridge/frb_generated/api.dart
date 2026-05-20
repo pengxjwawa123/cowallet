@@ -175,10 +175,12 @@ Future<FfiDkgComplete> recoveryReconstructDeviceShard({
   required String sessionId,
   required List<String> serverMessagesJson,
   required List<int> publicKey,
+  required List<int> serverCommitment,
 }) => RustLib.instance.api.crateApiRecoveryReconstructDeviceShard(
   sessionId: sessionId,
   serverMessagesJson: serverMessagesJson,
   publicKey: publicKey,
+  serverCommitment: serverCommitment,
 );
 
 /// Clear the temporary backup shard from recovery state.

@@ -676,13 +676,76 @@ pub fn recovery_import_backup_shard(backup_bytes: Vec<u8>) -> Result<(), String>
 /// 2. User provides backup shard (Party 2)
 /// 3. Server initiates a special reshare where Party 0 is reconstructed
 /// 4. The backup + server shards generate a new device shard without changing the public key
+///
+/// `server_commitment` is G*(lambda_1 * s_1) (compressed SEC1, 33 bytes).
+/// Before resharing, we verify: server_commitment + G*(lambda_2 * backup_shard) == PublicKey.
+/// This ensures the backup shard is correct without revealing any secret.
 pub fn recovery_reconstruct_device_shard(
     session_id: String,
     server_messages_json: Vec<String>,
     public_key: Vec<u8>,
+    server_commitment: Vec<u8>,
 ) -> Result<FfiDkgComplete, String> {
     let backup_share = state::get_recovery_backup_shard()
         .ok_or("backup shard not imported — call recovery_import_backup_shard first")?;
+
+    // --- Feldman commitment verification ---
+    // Verify: server_commitment + G*(lambda_2 * backup_shard) == PublicKey
+    // This proves the backup shard is correct BEFORE running reshare.
+    {
+        use k256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+        use k256::elliptic_curve::PrimeField;
+        use k256::{AffinePoint, EncodedPoint, ProjectivePoint, Scalar};
+
+        // Parse backup secret share
+        let mut scalar_bytes = [0u8; 32];
+        scalar_bytes.copy_from_slice(&backup_share.secret_share.as_bytes()[..32]);
+        let s2 = Option::<Scalar>::from(Scalar::from_repr(scalar_bytes.into()))
+            .ok_or_else(|| "invalid backup shard scalar".to_string())?;
+
+        // Lagrange coefficient for party 2 within participants [1, 2]:
+        // lambda_2 = x_1 / (x_1 - x_2) = 2 / (2 - 3) = -2
+        let x1 = Scalar::from(2u64); // party 1 index + 1
+        let x2 = Scalar::from(3u64); // party 2 index + 1
+        let den = x1 - x2;
+        let den_inv = Option::<Scalar>::from(den.invert())
+            .ok_or_else(|| "Lagrange denominator zero".to_string())?;
+        let lambda_2 = x1 * den_inv;
+
+        // G * (lambda_2 * s2)
+        let weighted_backup = lambda_2 * s2;
+        let backup_point = ProjectivePoint::GENERATOR * weighted_backup;
+
+        // Parse server commitment (compressed SEC1)
+        let server_enc = EncodedPoint::from_bytes(&server_commitment)
+            .map_err(|_| "invalid server commitment encoding".to_string())?;
+        let server_affine = AffinePoint::from_encoded_point(&server_enc)
+            .into_option()
+            .ok_or("server commitment point decompression failed")?;
+        let server_point = ProjectivePoint::from(server_affine);
+
+        // Sum should equal the joint public key
+        let sum_point = server_point + backup_point;
+        let sum_affine: AffinePoint = sum_point.into();
+        let sum_encoded = sum_affine.to_encoded_point(false); // uncompressed
+
+        // Parse expected public key
+        let expected_point = if public_key.len() == 33 || public_key.len() == 65 {
+            let enc = EncodedPoint::from_bytes(&public_key)
+                .map_err(|_| "invalid public key encoding".to_string())?;
+            AffinePoint::from_encoded_point(&enc)
+                .into_option()
+                .ok_or("public key decompression failed")?
+                .to_encoded_point(false)
+        } else {
+            return Err(format!("unexpected public key length: {}", public_key.len()));
+        };
+
+        if sum_encoded.as_bytes() != expected_point.as_bytes() {
+            state::clear_recovery_backup_shard();
+            return Err("recovery failed: backup shard is incorrect — commitment verification failed".into());
+        }
+    }
 
     // Update backup share with the correct public key from server
     let mut backup_share = backup_share;
@@ -728,12 +791,8 @@ pub fn recovery_reconstruct_device_shard(
     let new_device_share = reshare.finalize()
         .map_err(|e| format!("recovery reshare finalization failed: {}", e))?;
 
-    // Verify the public key matches
-    if new_device_share.public_key != public_key {
-        return Err("recovery failed: public key mismatch".into());
-    }
-
     let addr = new_device_share.eth_address();
+
     let address_hex = format!(
         "0x{}",
         addr.iter().map(|b| format!("{b:02x}")).collect::<String>()

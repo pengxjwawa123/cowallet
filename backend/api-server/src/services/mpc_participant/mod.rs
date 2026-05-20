@@ -811,6 +811,43 @@ impl MpcParticipant {
         self.reserved_presignatures.remove(&session_id);
     }
 
+    /// Compute a Feldman-style commitment for recovery verification.
+    ///
+    /// Returns `G * (lambda_1 * s_1)` as compressed SEC1 bytes (33 bytes).
+    /// The client uses this to verify: `server_commitment + G*(lambda_2 * backup_shard) == PublicKey`.
+    /// If the backup shard is wrong, the sum won't equal the public key.
+    pub async fn compute_recovery_commitment(&self, user_id: Uuid) -> Result<Vec<u8>, String> {
+        use k256::elliptic_curve::sec1::ToEncodedPoint;
+        use k256::elliptic_curve::PrimeField;
+        use k256::{AffinePoint, ProjectivePoint, Scalar};
+
+        let key_share = self.shard_store.load_key_share(user_id).await?
+            .ok_or_else(|| format!("no server shard for user {}", user_id))?;
+
+        // Parse server's secret share scalar
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&key_share.secret_share.as_bytes()[..32]);
+        let s1 = Option::<Scalar>::from(Scalar::from_repr(bytes.into()))
+            .ok_or_else(|| "invalid server secret share".to_string())?;
+
+        // Lagrange coefficient for party 1 within participants [1, 2]:
+        // lambda_1 = x_2 / (x_2 - x_1) = 3 / (3 - 2) = 3
+        let x1 = Scalar::from(2u64); // party_index + 1
+        let x2 = Scalar::from(3u64); // party_index + 1
+        let den = x2 - x1;
+        let den_inv = Option::<Scalar>::from(den.invert())
+            .ok_or_else(|| "Lagrange denominator zero".to_string())?;
+        let lambda_1 = x2 * den_inv;
+
+        // Compute G * (lambda_1 * s_1)
+        let weighted = lambda_1 * s1;
+        let point = ProjectivePoint::GENERATOR * weighted;
+        let affine: AffinePoint = point.into();
+        let encoded = affine.to_encoded_point(true); // compressed
+
+        Ok(encoded.as_bytes().to_vec())
+    }
+
     /// Graceful shutdown.
     pub fn shutdown(&self) {
         self.shutdown.notify_one();

@@ -170,6 +170,7 @@ abstract class RustLibApi extends BaseApi {
     required String sessionId,
     required List<String> serverMessagesJson,
     required List<int> publicKey,
+    required List<int> serverCommitment,
   });
 
   Future<FfiReshareComplete> crateApiReshareFinalize({
@@ -1025,6 +1026,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String sessionId,
     required List<String> serverMessagesJson,
     required List<int> publicKey,
+    required List<int> serverCommitment,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1033,6 +1035,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(sessionId, serializer);
           sse_encode_list_String(serverMessagesJson, serializer);
           sse_encode_list_prim_u_8_loose(publicKey, serializer);
+          sse_encode_list_prim_u_8_loose(serverCommitment, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1045,7 +1048,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiRecoveryReconstructDeviceShardConstMeta,
-        argValues: [sessionId, serverMessagesJson, publicKey],
+        argValues: [sessionId, serverMessagesJson, publicKey, serverCommitment],
         apiImpl: this,
       ),
     );
@@ -1054,7 +1057,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiRecoveryReconstructDeviceShardConstMeta =>
       const TaskConstMeta(
         debugName: "recovery_reconstruct_device_shard",
-        argNames: ["sessionId", "serverMessagesJson", "publicKey"],
+        argNames: ["sessionId", "serverMessagesJson", "publicKey", "serverCommitment"],
       );
 
   @override

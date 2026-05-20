@@ -84,6 +84,7 @@ class RecoveryService {
       serverReshareMessagesJson:
           (data['server_reshare_messages_json'] as List<dynamic>)
               .cast<String>(),
+      serverCommitmentHex: data['server_commitment_hex'] as String,
     );
   }
 
@@ -122,6 +123,7 @@ class RecoveryService {
   Future<RecoveryResult> executeRecovery({
     required String publicKeyHex,
     required List<String> serverReshareMessagesJson,
+    required String serverCommitmentHex,
   }) async {
     // Check that backup shard is imported
     final hasBackup = await MpcBridge.recoveryHasBackupShard();
@@ -133,12 +135,14 @@ class RecoveryService {
 
     // Convert public key hex to bytes
     final publicKeyBytes = _hexToBytes(publicKeyHex);
+    final serverCommitmentBytes = _hexToBytes(serverCommitmentHex);
 
-    // Reconstruct device shard via FFI
+    // Reconstruct device shard via FFI (verifies backup shard via Feldman commitment first)
     final walletInfo = await MpcBridge.recoveryReconstructDeviceShard(
       sessionId: _recoverySessionId ?? 'recovery',
       serverMessagesJson: serverReshareMessagesJson,
       publicKey: publicKeyBytes,
+      serverCommitment: serverCommitmentBytes,
     );
 
     // Store recovered wallet address
@@ -176,6 +180,7 @@ class RecoveryService {
     return await executeRecovery(
       publicKeyHex: verifyResult.publicKeyHex,
       serverReshareMessagesJson: verifyResult.serverReshareMessagesJson,
+      serverCommitmentHex: verifyResult.serverCommitmentHex,
     );
   }
 
@@ -222,11 +227,13 @@ class RecoveryVerifyResult {
   final String accessToken;
   final String publicKeyHex;
   final List<String> serverReshareMessagesJson;
+  final String serverCommitmentHex;
 
   RecoveryVerifyResult({
     required this.accessToken,
     required this.publicKeyHex,
     required this.serverReshareMessagesJson,
+    required this.serverCommitmentHex,
   });
 }
 

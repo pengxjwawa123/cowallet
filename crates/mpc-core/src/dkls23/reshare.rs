@@ -459,6 +459,53 @@ mod tests {
         );
     }
 
+    /// Verify that Feldman commitment detects a wrong backup shard.
+    #[test]
+    fn test_feldman_commitment_rejects_wrong_backup() {
+        use k256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+        use k256::{EncodedPoint, ProjectivePoint};
+
+        let shares = create_test_shares();
+        let public_key = shares[0].public_key.clone();
+
+        // Parse public key
+        let pk_enc = EncodedPoint::from_bytes(&public_key).unwrap();
+        let pk_affine = AffinePoint::from_encoded_point(&pk_enc).unwrap();
+        let pk_point = ProjectivePoint::from(pk_affine);
+
+        // Compute server commitment: G * (lambda_1 * s_1)
+        let mut s1_bytes = [0u8; 32];
+        s1_bytes.copy_from_slice(&shares[1].secret_share.as_bytes()[..32]);
+        let s1 = Scalar::from_repr(s1_bytes.into()).unwrap();
+        let lambda_1 = ReshareSession::lagrange_coefficient(1, &[1, 2]).unwrap();
+        let server_commitment = ProjectivePoint::GENERATOR * (lambda_1 * s1);
+
+        // Compute correct backup commitment: G * (lambda_2 * s_2)
+        let mut s2_bytes = [0u8; 32];
+        s2_bytes.copy_from_slice(&shares[2].secret_share.as_bytes()[..32]);
+        let s2 = Scalar::from_repr(s2_bytes.into()).unwrap();
+        let lambda_2 = ReshareSession::lagrange_coefficient(2, &[1, 2]).unwrap();
+        let correct_backup_commitment = ProjectivePoint::GENERATOR * (lambda_2 * s2);
+
+        // Verify: server_commitment + correct_backup_commitment == PublicKey
+        let sum = server_commitment + correct_backup_commitment;
+        assert_eq!(
+            AffinePoint::from(sum).to_encoded_point(false).as_bytes(),
+            pk_affine.to_encoded_point(false).as_bytes(),
+            "correct backup shard should produce matching public key"
+        );
+
+        // Now try a WRONG backup shard (random scalar)
+        let wrong_s2 = Scalar::random(&mut OsRng);
+        let wrong_backup_commitment = ProjectivePoint::GENERATOR * (lambda_2 * wrong_s2);
+        let wrong_sum = server_commitment + wrong_backup_commitment;
+        assert_ne!(
+            AffinePoint::from(wrong_sum).to_encoded_point(false).as_bytes(),
+            pk_affine.to_encoded_point(false).as_bytes(),
+            "wrong backup shard must NOT match public key"
+        );
+    }
+
     /// Verify Lagrange coefficients are correct for known values.
     #[test]
     fn test_lagrange_coefficients() {

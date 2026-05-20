@@ -217,6 +217,7 @@ class _RecoveryViewState extends State<RecoveryView> {
       final result = await _recoveryService.executeRecovery(
         publicKeyHex: _verifyResult!.publicKeyHex,
         serverReshareMessagesJson: _verifyResult!.serverReshareMessagesJson,
+        serverCommitmentHex: _verifyResult!.serverCommitmentHex,
       );
 
       if (!mounted) return;

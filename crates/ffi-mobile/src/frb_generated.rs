@@ -939,6 +939,7 @@ fn wire__crate__api__recovery_reconstruct_device_shard_impl(
             let api_session_id = <String>::sse_decode(&mut deserializer);
             let api_server_messages_json = <Vec<String>>::sse_decode(&mut deserializer);
             let api_public_key = <Vec<u8>>::sse_decode(&mut deserializer);
+            let api_server_commitment = <Vec<u8>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, String>((move || {
@@ -946,6 +947,7 @@ fn wire__crate__api__recovery_reconstruct_device_shard_impl(
                         api_session_id,
                         api_server_messages_json,
                         api_public_key,
+                        api_server_commitment,
                     )?;
                     Ok(output_ok)
                 })())

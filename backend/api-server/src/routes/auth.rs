@@ -558,6 +558,9 @@ struct VerifyRecoveryOtpResponse {
     user_id: String,
     public_key_hex: String,
     server_reshare_messages_json: Vec<String>,
+    /// Feldman commitment: G * (lambda_1 * s_1), compressed SEC1 hex.
+    /// Client verifies: server_commitment + G*(lambda_2 * backup_shard) == PublicKey.
+    server_commitment_hex: String,
 }
 
 /// Verify recovery OTP and return server's reshare contribution.
@@ -719,6 +722,15 @@ async fn verify_recovery_otp(
 
     let public_key_hex = hex::encode(&public_key);
 
+    // Compute Feldman commitment G*(lambda_1 * s_1) for client-side backup shard verification
+    let server_commitment_hex = match mpc_participant.compute_recovery_commitment(user_id).await {
+        Ok(bytes) => hex::encode(&bytes),
+        Err(e) => {
+            tracing::error!("Failed to compute recovery commitment: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
     // Issue JWT token pair
     let token_pair = issue_token_pair(&user_id.to_string(), &body.device_id)
         .map_err(|e| {
@@ -758,5 +770,6 @@ async fn verify_recovery_otp(
         user_id: user_id.to_string(),
         public_key_hex,
         server_reshare_messages_json,
+        server_commitment_hex,
     }))
 }

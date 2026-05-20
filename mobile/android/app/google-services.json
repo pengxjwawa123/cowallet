@@ -7,17 +7,31 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:1040731720258:android:70bd626d614be2a84cbbdb",
+        "android_client_info": {
+          "package_name": "com.cowallet.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBBcg_6DadIeINyTDN2yaMHmTdT5NP-SlU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:1040731720258:android:bf2f888277c98fec4cbbdb",
         "android_client_info": {
           "package_name": "com.cowallet.app"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "1040731720258-p4v0a09858m7si9u99hdt66r6ibqre64.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
           "current_key": "AIzaSyBBcg_6DadIeINyTDN2yaMHmTdT5NP-SlU"

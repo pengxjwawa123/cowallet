@@ -457,10 +457,11 @@ class Api {
     String sessionId,
     List<String> serverMessagesJson,
     Uint8List publicKey,
+    Uint8List serverCommitment,
   ) async {
     return _callNative<FfiDkgComplete>(
       'recovery_reconstruct_device_shard',
-      [sessionId, serverMessagesJson, publicKey],
+      [sessionId, serverMessagesJson, publicKey, serverCommitment],
       (result) => FfiDkgComplete(
         address: result['address'] as String,
         publicKey: Uint8List.fromList(List<int>.from(result['public_key'])),

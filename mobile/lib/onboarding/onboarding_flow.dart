@@ -96,7 +96,16 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     if (stage == _Stage.creating) return;
 
     if (mounted) {
-      setState(() => _stage = stage);
+      // Build history so back button works from restored stage
+      final stageOrder = [_Stage.hero, _Stage.intro, _Stage.email, _Stage.emailOtp, _Stage.creating, _Stage.bio, _Stage.pin, _Stage.name, _Stage.backup, _Stage.ready, _Stage.persona];
+      final targetIdx = stageOrder.indexOf(stage);
+      setState(() {
+        _history.clear();
+        for (int i = 0; i < targetIdx && i < stageOrder.length; i++) {
+          _history.add(stageOrder[i]);
+        }
+        _stage = stage;
+      });
     }
   }
 
