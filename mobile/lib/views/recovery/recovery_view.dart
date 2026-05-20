@@ -151,13 +151,13 @@ class _RecoveryViewState extends State<RecoveryView> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.message;
+        _error = _friendlyRecoveryError(e.message);
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = _friendlyRecoveryError(e.toString());
       });
     }
   }
@@ -190,13 +190,13 @@ class _RecoveryViewState extends State<RecoveryView> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.message;
+        _error = _friendlyRecoveryError(e.message);
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = _friendlyRecoveryError(e.toString());
       });
     }
   }
@@ -239,16 +239,31 @@ class _RecoveryViewState extends State<RecoveryView> {
       setState(() {
         _loading = false;
         _stage = _RecoveryStage.backup;
-        _error = e.message;
+        _error = _friendlyRecoveryError(e.message);
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _stage = _RecoveryStage.backup;
-        _error = e.toString();
+        _error = _friendlyRecoveryError(e.toString());
       });
     }
+  }
+
+  String _friendlyRecoveryError(String raw) {
+    if (raw.contains('commitment verification failed') ||
+        raw.contains('backup shard is incorrect')) {
+      return '备份密钥验证失败，请确认您导入的是注册时备份的正确密钥文件。';
+    }
+    if (raw.contains('not a valid scalar') ||
+        raw.contains('invalid backup shard')) {
+      return '备份密钥格式无效，请检查文件是否完整。';
+    }
+    if (raw.contains('No backup shard found')) {
+      return '未找到云端备份，请尝试从文件导入。';
+    }
+    return raw;
   }
 
   void _navigateHome() {

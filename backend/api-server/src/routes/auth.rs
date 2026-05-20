@@ -109,7 +109,9 @@ async fn send_email_otp(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     } else {
-        tracing::warn!("⚠️  [NO SES] Email OTP for {} => {} (set SES_FROM_ADDRESS to enable)", body.email, otp);
+        tracing::warn!("⚠️  [NO SES] Email OTP not sent for {} (set SES_FROM_ADDRESS to enable)", body.email);
+        #[cfg(debug_assertions)]
+        tracing::debug!("DEV ONLY — OTP: {}", otp);
     }
 
     Ok(Json(SendEmailOtpResponse {
@@ -454,6 +456,7 @@ struct InitiateRecoveryResponse {
 
 /// Initiate wallet recovery process.
 /// Sends OTP to user's email and creates a recovery session.
+/// Returns a consistent response regardless of whether the user exists (prevents enumeration).
 async fn initiate_recovery(
     State(state): State<AppState>,
     Json(body): Json<InitiateRecoveryRequest>,
@@ -462,39 +465,46 @@ async fn initiate_recovery(
         .require_db()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
 
-    // Verify user exists
-    let user_id: Result<(uuid::Uuid,), StatusCode> = sqlx::query_as(
-        "SELECT id FROM users WHERE email = $1"
+    // Always generate a session ID (returned even if user doesn't exist to prevent enumeration)
+    let recovery_session_id = uuid::Uuid::new_v4();
+
+    // Verify user exists and has a server shard
+    let user_row: Option<(uuid::Uuid,)> = sqlx::query_as(
+        "SELECT u.id FROM users u
+         INNER JOIN shard_metadata s ON s.user_id = u.id AND s.location = 'server'
+         WHERE u.email = $1
+         LIMIT 1"
     )
     .bind(&body.email)
-    .fetch_one(db)
-    .await
-    .map_err(|_| StatusCode::NOT_FOUND);
-
-    let (user_id,) = user_id?;
-
-    // Check if user has a server shard
-    let has_server_shard: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM shard_metadata WHERE user_id = $1 AND location = 'server')"
-    )
-    .bind(user_id)
-    .fetch_one(db)
+    .fetch_optional(db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if !has_server_shard {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    // If user doesn't exist or has no shard, return success-like response (anti-enumeration)
+    let Some((user_id,)) = user_row else {
+        return Ok(Json(InitiateRecoveryResponse {
+            recovery_session_id: recovery_session_id.to_string(),
+            otp_sent: true,
+            message: "If an account exists, a recovery code was sent to your email.".into(),
+        }));
+    };
+
+    // Invalidate all previous pending recovery sessions for this user
+    let _ = sqlx::query(
+        "UPDATE recovery_sessions SET status = 'expired' WHERE user_id = $1 AND status = 'pending'"
+    )
+    .bind(user_id)
+    .execute(db)
+    .await;
 
     // Generate OTP (6-digit code)
     let otp = format!("{:06}", rand::random::<u32>() % 1_000_000);
-    let recovery_session_id = uuid::Uuid::new_v4();
     let expires_at = Utc::now() + chrono::Duration::minutes(10);
 
-    // Store recovery session
+    // Store recovery session with attempt counter
     sqlx::query(
-        "INSERT INTO recovery_sessions (id, user_id, otp_hash, expires_at, status)
-         VALUES ($1, $2, $3, $4, 'pending')"
+        "INSERT INTO recovery_sessions (id, user_id, otp_hash, expires_at, status, attempts)
+         VALUES ($1, $2, $3, $4, 'pending', 0)"
     )
     .bind(recovery_session_id)
     .bind(user_id)
@@ -513,12 +523,11 @@ async fn initiate_recovery(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     } else {
-        tracing::warn!("⚠️  [NO SES] Recovery OTP for {} => {} (set SES_FROM_ADDRESS to enable)", body.email, otp);
+        tracing::warn!("⚠️  [NO SES] Recovery OTP not sent for {} (set SES_FROM_ADDRESS to enable)", body.email);
+        #[cfg(debug_assertions)]
+        tracing::debug!("DEV ONLY — OTP: {}", otp);
     }
-    tracing::info!(
-        "Recovery OTP for user {}: {} (session: {})",
-        user_id, otp, recovery_session_id
-    );
+    tracing::info!("Recovery initiated for user {} (session: {})", user_id, recovery_session_id);
 
     // Audit log
     let _ = state
@@ -538,7 +547,7 @@ async fn initiate_recovery(
     Ok(Json(InitiateRecoveryResponse {
         recovery_session_id: recovery_session_id.to_string(),
         otp_sent: true,
-        message: format!("Recovery OTP sent to {}. Please check your email.", body.email),
+        message: "If an account exists, a recovery code was sent to your email.".into(),
     }))
 }
 
@@ -577,29 +586,50 @@ async fn verify_recovery_otp(
     let recovery_session_id = uuid::Uuid::parse_str(&body.recovery_session_id)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Fetch recovery session
-    let session: Result<(uuid::Uuid, Vec<u8>, chrono::DateTime<Utc>, String), _> = sqlx::query_as(
-        "SELECT user_id, otp_hash, expires_at, status FROM recovery_sessions WHERE id = $1"
+    // Fetch recovery session with atomic attempt increment
+    let session: Option<(uuid::Uuid, Vec<u8>, chrono::DateTime<Utc>, String, i32)> = sqlx::query_as(
+        "UPDATE recovery_sessions SET attempts = COALESCE(attempts, 0) + 1
+         WHERE id = $1
+         RETURNING user_id, otp_hash, expires_at, status, attempts"
     )
     .bind(recovery_session_id)
-    .fetch_one(db)
-    .await;
+    .fetch_optional(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (user_id, otp_hash, expires_at, status) = session.map_err(|_| StatusCode::NOT_FOUND)?;
+    let (user_id, otp_hash, expires_at, status, attempts) =
+        session.ok_or(StatusCode::NOT_FOUND)?;
 
     // Check expiration
     if Utc::now() > expires_at {
         return Err(StatusCode::GONE);
     }
 
-    // Check status
+    // Check status (must be pending — blocks reuse after success)
     if status != "pending" {
         return Err(StatusCode::CONFLICT);
     }
 
-    // Verify OTP
+    // Brute-force protection: lock after 5 failed attempts
+    if attempts > 5 {
+        let _ = sqlx::query("UPDATE recovery_sessions SET status = 'locked' WHERE id = $1")
+            .bind(recovery_session_id)
+            .execute(db)
+            .await;
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // Verify OTP with constant-time comparison
     let provided_hash = sha2::Sha256::digest(body.otp.as_bytes());
-    if provided_hash.as_slice() != otp_hash.as_slice() {
+    let otp_valid = provided_hash.as_slice().len() == otp_hash.len()
+        && provided_hash
+            .as_slice()
+            .iter()
+            .zip(otp_hash.iter())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0;
+
+    if !otp_valid {
         // Audit log - failed verification
         let _ = state
             .audit_logger
@@ -618,8 +648,8 @@ async fn verify_recovery_otp(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    // Mark session as verified
-    sqlx::query("UPDATE recovery_sessions SET status = 'verified' WHERE id = $1")
+    // Mark session as completed (single-use, prevents replay)
+    sqlx::query("UPDATE recovery_sessions SET status = 'completed' WHERE id = $1")
         .bind(recovery_session_id)
         .execute(db)
         .await
