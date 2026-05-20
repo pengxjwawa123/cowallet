@@ -848,7 +848,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
               child: FilledButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  Navigator.pushNamed(context, AppRouter.recovery);
+                  Navigator.pushNamed(context, AppRouter.recovery, arguments: _emailCtrl.text.trim());
                 },
                 child: Text(S.goRecovery),
               ),

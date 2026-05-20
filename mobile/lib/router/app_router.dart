@@ -29,7 +29,8 @@ class AppRouter {
       case onboarding:
         return MaterialPageRoute(builder: (_) => const OnboardingFlow());
       case recovery:
-        return MaterialPageRoute(builder: (_) => const RecoveryView());
+        final email = settings.arguments as String?;
+        return MaterialPageRoute(builder: (_) => RecoveryView(initialEmail: email));
       case keys:
         return MaterialPageRoute(builder: (_) => const KeysView());
       case scan:
@@ -113,10 +114,43 @@ class _AppShellState extends State<AppShell> {
               _tabItem(1, Icons.account_balance_wallet_outlined,
                   Icons.account_balance_wallet, S.tabWallet),
               _askPill(),
-              _tabItem(3, Icons.trending_up_outlined, Icons.trending_up, S.tabDefi),
+              _disabledTabItem(3, Icons.trending_up_outlined, S.tabDefi),
               _tabItem(4, Icons.settings_outlined, Icons.settings, S.tabSettings),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _disabledTabItem(int index, IconData icon, String label) {
+    return Expanded(
+      child: Opacity(
+        opacity: 0.4,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon, size: 22, color: CwColors.ink4),
+                Positioned(
+                  right: -14,
+                  top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: CwColors.ink4,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('TD', style: TextStyle(fontSize: 7, color: Colors.white, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(label, style: const TextStyle(fontSize: 10, color: CwColors.ink4)),
+          ],
         ),
       ),
     );

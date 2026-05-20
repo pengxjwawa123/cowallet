@@ -23,7 +23,7 @@ class RecoveryService {
   /// Returns the recovery session ID.
   Future<RecoveryInitiateResult> initiateRecovery(String email) async {
     final result = await DioClient.post<Map<String, dynamic>>(
-      '/api/v1/auth/recovery/initiate',
+      '/auth/recovery/initiate',
       data: {'email': email},
     );
 
@@ -55,7 +55,7 @@ class RecoveryService {
     }
 
     final result = await DioClient.post<Map<String, dynamic>>(
-      '/api/v1/auth/recovery/verify',
+      '/auth/recovery/verify',
       data: {
         'recovery_session_id': _recoverySessionId,
         'otp': otp,

@@ -678,13 +678,14 @@ async fn verify_recovery_otp(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Serialize messages as JSON strings (client expects array of JSON-encoded messages)
+    // Serialize messages as JSON strings matching ProtocolMessage struct
     let server_reshare_messages_json: Vec<String> = messages
         .into_iter()
         .map(|(from, to, round, payload)| {
             serde_json::to_string(&serde_json::json!({
-                "from_party": from,
-                "to_party": to,
+                "session_id": session_id.to_string(),
+                "from": from,
+                "to": to,
                 "round": round,
                 "payload": payload
             }))

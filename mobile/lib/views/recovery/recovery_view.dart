@@ -22,7 +22,9 @@ import '../../widgets/cw_orb.dart';
 enum _RecoveryStage { email, otp, backup, recovering, done }
 
 class RecoveryView extends StatefulWidget {
-  const RecoveryView({super.key});
+  final String? initialEmail;
+
+  const RecoveryView({super.key, this.initialEmail});
 
   @override
   State<RecoveryView> createState() => _RecoveryViewState();
@@ -45,6 +47,9 @@ class _RecoveryViewState extends State<RecoveryView> {
   void initState() {
     super.initState();
     _recoveryService = RecoveryService(Services.backup);
+    if (widget.initialEmail != null && widget.initialEmail!.isNotEmpty) {
+      _emailCtrl.text = widget.initialEmail!;
+    }
   }
 
   @override
