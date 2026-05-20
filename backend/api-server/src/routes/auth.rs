@@ -489,6 +489,22 @@ async fn initiate_recovery(
         }));
     };
 
+    // Check for 30-minute cooldown after locked sessions
+    let has_recent_lock: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM recovery_sessions
+         WHERE user_id = $1 AND status = 'locked'
+         AND created_at > NOW() - INTERVAL '30 minutes')"
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(false);
+
+    if has_recent_lock {
+        // Return 423 Locked — user must wait before retrying
+        return Err(StatusCode::LOCKED);
+    }
+
     // Invalidate all previous pending recovery sessions for this user
     let _ = sqlx::query(
         "UPDATE recovery_sessions SET status = 'expired' WHERE user_id = $1 AND status = 'pending'"

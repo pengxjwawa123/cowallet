@@ -28,6 +28,10 @@ class RecoveryService {
     );
 
     if (!result.isSuccess || result.data == null) {
+      final code = result.errorCode;
+      if (code == 423) {
+        throw RecoveryException('验证码尝试次数过多，请 30 分钟后再试');
+      }
       throw RecoveryException(
         'Failed to initiate recovery: ${result.errorMessage}',
       );
