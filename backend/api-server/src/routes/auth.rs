@@ -66,6 +66,15 @@ async fn send_email_otp(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .is_some();
 
+    // If already registered with wallet, skip OTP — client should redirect to recovery flow
+    if is_registered {
+        return Ok(Json(SendEmailOtpResponse {
+            sent: false,
+            is_registered,
+            message: "Account already registered. Please use recovery flow.".into(),
+        }));
+    }
+
     // Generate 6-digit OTP
     let otp = format!("{:06}", rand::random::<u32>() % 1_000_000);
     let otp_hash = Sha256::digest(otp.as_bytes());
