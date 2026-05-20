@@ -40,6 +40,7 @@ class _RecoveryViewState extends State<RecoveryView> {
   final _otpCtrl = TextEditingController();
 
   // state
+  BackupShardSource? _backupSource;
   bool _loading = false;
   String? _error;
   RecoveryVerifyResult? _verifyResult;
@@ -146,6 +147,7 @@ class _RecoveryViewState extends State<RecoveryView> {
       await _recoveryService.importBackupShard(
         source: BackupShardSource.cloud,
       );
+      _backupSource = BackupShardSource.cloud;
       if (!mounted) return;
       await _executeRecovery();
     } on RecoveryException catch (e) {
@@ -185,6 +187,7 @@ class _RecoveryViewState extends State<RecoveryView> {
         source: BackupShardSource.file,
         fileContent: content,
       );
+      _backupSource = BackupShardSource.file;
       if (!mounted) return;
       await _executeRecovery();
     } on RecoveryException catch (e) {
@@ -234,6 +237,16 @@ class _RecoveryViewState extends State<RecoveryView> {
       await SecureStorage.save('onboarding_completed_at', DateTime.now().toIso8601String());
       await SecureStorage.save('backup_status', 'recovered');
       await SecureStorage.save('mpc_address', result.address);
+
+      // Persist public key for key health verification
+      final pubKeyHex = result.publicKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+      await SecureStorage.save('mpc_public_key', pubKeyHex);
+
+      // Persist backup shard method and last-checked for key health service
+      final addrSuffix = result.address.toLowerCase().substring(0, 10);
+      final methodStr = _backupSource == BackupShardSource.cloud ? 'cloud' : 'file';
+      await SecureStorage.save('backup_shard_method_$addrSuffix', methodStr);
+      await SecureStorage.save('key_backup_last_checked_$addrSuffix', DateTime.now().toIso8601String());
 
       setState(() {
         _loading = false;
