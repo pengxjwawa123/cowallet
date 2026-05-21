@@ -12,6 +12,29 @@ use sha2::{Sha256, Digest};
 use crate::middleware::auth::Claims;
 use crate::state::AppState;
 
+/// Resolve a wallet identifier (UUID string or 0x-address) to a UUID.
+async fn resolve_wallet_id(
+    wid: &str,
+    db: &sqlx::PgPool,
+) -> Result<uuid::Uuid, StatusCode> {
+    if let Ok(uid) = uuid::Uuid::parse_str(wid) {
+        return Ok(uid);
+    }
+    if wid.starts_with("0x") || wid.starts_with("0X") {
+        let addr_bytes = hex::decode(wid.trim_start_matches("0x").trim_start_matches("0X"))
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+        let row: Option<(uuid::Uuid,)> = sqlx::query_as(
+            "SELECT id FROM wallets WHERE eth_address = $1"
+        )
+        .bind(&addr_bytes)
+        .fetch_optional(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Ok(row.ok_or(StatusCode::NOT_FOUND)?.0);
+    }
+    Err(StatusCode::BAD_REQUEST)
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/session", post(create_session))
@@ -31,10 +54,10 @@ pub(crate) struct CreateSessionRequest {
     session_type: String,
     parties: Vec<i16>,
     threshold: Option<i16>,
-    /// Optional wallet ID for multi-wallet support.
+    /// Optional wallet identifier: UUID or 0x-prefixed ETH address.
     /// When provided, the session is associated with a specific wallet
     /// and uses that wallet's key share for signing.
-    wallet_id: Option<uuid::Uuid>,
+    wallet_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -67,6 +90,12 @@ pub async fn create_session(
     let user_id = uuid::Uuid::parse_str(&claims.sub)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
+    // Resolve wallet_id: accept UUID or 0x-prefixed address
+    let wallet_id: Option<uuid::Uuid> = match &body.wallet_id {
+        Some(wid) => Some(resolve_wallet_id(wid, db).await?),
+        None => None,
+    };
+
     sqlx::query(
         "INSERT INTO mpc_sessions (id, user_id, session_type, parties, threshold, status, current_round, wallet_id)
          VALUES ($1, $2, $3, $4, $5, 'active', 0, $6)"
@@ -76,7 +105,7 @@ pub async fn create_session(
     .bind(&body.session_type)
     .bind(&body.parties)
     .bind(threshold)
-    .bind(body.wallet_id)
+    .bind(wallet_id)
     .execute(db)
     .await
     .map_err(|e| {
@@ -97,7 +126,7 @@ pub async fn create_session(
             &body.session_type,
             &body.parties,
             threshold,
-            body.wallet_id,
+            wallet_id,
         ).await {
             tracing::error!("Server participant failed to join session {}: {}", session_id, e);
             let _ = sqlx::query(
@@ -115,7 +144,7 @@ pub async fn create_session(
         status: "active".to_string(),
         current_round: 0,
         last_activity: None,
-        wallet_id: body.wallet_id.map(|w| w.to_string()),
+        wallet_id: wallet_id.map(|w| w.to_string()),
     }))
 }
 
@@ -755,7 +784,7 @@ pub async fn presign_status(
 
 #[derive(Deserialize)]
 pub(crate) struct PresignGenerateRequest {
-    wallet_id: uuid::Uuid,
+    wallet_id: String,
     count: Option<u32>,
 }
 
@@ -776,13 +805,17 @@ pub async fn presign_generate(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
+    let db = state.require_db().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+
     let user_id = uuid::Uuid::parse_str(&claims.sub)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let wallet_id = resolve_wallet_id(&body.wallet_id, db).await?;
 
     let count = body.count.unwrap_or(5).min(50);
 
     let generated = presign_mgr
-        .generate_presignatures(user_id, body.wallet_id, count)
+        .generate_presignatures(user_id, wallet_id, count)
         .await
         .map_err(|e| {
             tracing::error!("presign_generate error: {}", e);
@@ -791,11 +824,11 @@ pub async fn presign_generate(
 
     tracing::info!(
         "User {} generated {} presignatures for wallet {}",
-        user_id, generated, body.wallet_id
+        user_id, generated, wallet_id
     );
 
     Ok(Json(PresignGenerateResponse {
         generated,
-        wallet_id: body.wallet_id.to_string(),
+        wallet_id: wallet_id.to_string(),
     }))
 }
