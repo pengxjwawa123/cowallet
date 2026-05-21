@@ -115,8 +115,8 @@ class _CowalletAppState extends State<CowalletApp> {
       // Re-register push token now that auth is available
       Services.push.reregisterToken();
 
-      // Start presign pool auto-refill monitoring
-      Services.presignPool.start();
+      // Presign pool disabled — signing uses direct sign sessions
+      // Services.presignPool.start();
 
       setState(() => _ready = true);
       _refreshBalanceInBackground(addr);

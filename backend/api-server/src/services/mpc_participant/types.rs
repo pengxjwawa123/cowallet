@@ -22,7 +22,7 @@ impl MpcSessionType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "dkg" | "keygen" => Some(Self::Dkg),
-            "sign" | "presign" => Some(Self::Sign),
+            "sign" => Some(Self::Sign),
             "reshare" => Some(Self::Reshare),
             _ => None,
         }

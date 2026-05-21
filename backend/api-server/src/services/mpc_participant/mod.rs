@@ -97,8 +97,10 @@ impl MpcParticipant {
         threshold: i16,
         wallet_id: Option<Uuid>,
     ) -> Result<(), String> {
-        let mpc_type = MpcSessionType::from_str(session_type)
-            .ok_or_else(|| format!("unsupported session type: {}", session_type))?;
+        let Some(mpc_type) = MpcSessionType::from_str(session_type) else {
+            tracing::debug!("Session {} has type '{}' — server participant not needed, skipping", session_id, session_type);
+            return Ok(());
+        };
 
         // Only participate if Party 1 is in the party list
         if !parties.contains(&(SERVER_PARTY_INDEX as i16)) {
