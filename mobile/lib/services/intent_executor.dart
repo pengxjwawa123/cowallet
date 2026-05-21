@@ -515,8 +515,8 @@ class IntentExecutor {
 
   void _refreshBalanceAfterConfirmation(String txHash) async {
     try {
-      for (var i = 0; i < 15; i++) {
-        await Future.delayed(const Duration(seconds: 3));
+      for (var i = 0; i < 8; i++) {
+        await Future.delayed(const Duration(seconds: 15));
         final receipt = await _chain.getTransactionReceipt(txHash);
         if (receipt != null) {
           final address = await _wallet.getAddress();
