@@ -79,6 +79,7 @@ dependencies:
   # Firebase for push notifications
   firebase_core: ^3.3.0
   firebase_messaging: ^15.0.4
+  fluttertoast: ^9.1.0
 
 flutter_launcher_icons:
   android: true
