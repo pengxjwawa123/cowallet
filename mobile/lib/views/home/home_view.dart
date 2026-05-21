@@ -104,6 +104,16 @@ class _HomeViewState extends State<HomeView> {
     }
   }
 
+  Future<void> _onRefresh() async {
+    final address = CowalletApp.of(context).walletAddress;
+    if (address.isNotEmpty) {
+      await Future.wait([
+        Services.balance.refresh(address),
+        _fetchTransactions(),
+      ]);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -112,18 +122,22 @@ class _HomeViewState extends State<HomeView> {
           _appHeader(context),
           if (_hasIncompleteOnboarding) _pendingBackupBanner(context),
           Expanded(
-            child: CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(child: _statusBar(context)),
-                SliverToBoxAdapter(child: _greeting(context)),
-                SliverToBoxAdapter(child: _slogan(context)),
-                SliverToBoxAdapter(child: _balanceCard(context)),
-                SliverToBoxAdapter(child: _actionButtons(context)),
-                SliverToBoxAdapter(child: _tryTalkingSection(context)),
-                SliverToBoxAdapter(child: _recentActivitySection(context)),
-                SliverToBoxAdapter(child: _showcaseSection(context)),
-                const SliverToBoxAdapter(child: SizedBox(height: 32)),
-              ],
+            child: RefreshIndicator(
+              onRefresh: _onRefresh,
+              color: CwColors.accent,
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(child: _statusBar(context)),
+                  SliverToBoxAdapter(child: _greeting(context)),
+                  SliverToBoxAdapter(child: _slogan(context)),
+                  SliverToBoxAdapter(child: _balanceCard(context)),
+                  SliverToBoxAdapter(child: _actionButtons(context)),
+                  SliverToBoxAdapter(child: _tryTalkingSection(context)),
+                  SliverToBoxAdapter(child: _recentActivitySection(context)),
+                  SliverToBoxAdapter(child: _showcaseSection(context)),
+                  const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                ],
+              ),
             ),
           ),
         ],

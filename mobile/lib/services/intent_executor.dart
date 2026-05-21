@@ -240,6 +240,9 @@ class IntentExecutor {
       // Show local notification for confirmed transaction
       Services.notifications.showTxConfirmed(txHash, amountStr, token);
 
+      // Refresh balance after on-chain confirmation (non-blocking)
+      _refreshBalanceAfterConfirmation(txHash);
+
       final shortHash =
           '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
       return ActionResult.ok(
@@ -377,6 +380,9 @@ class IntentExecutor {
       // Notification
       Services.notifications.showTxConfirmed(txHash, amountStr, '$fromToken>$toToken');
 
+      // Refresh balance after on-chain confirmation (non-blocking)
+      _refreshBalanceAfterConfirmation(txHash);
+
       final shortHash =
           '${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 6)}';
 
@@ -505,5 +511,21 @@ class IntentExecutor {
     final trimmed = fracStr.substring(0, showDigits).replaceAll(RegExp(r'0+$'), '');
     if (trimmed.isEmpty) return whole.toString();
     return '$whole.$trimmed';
+  }
+
+  void _refreshBalanceAfterConfirmation(String txHash) async {
+    try {
+      for (var i = 0; i < 15; i++) {
+        await Future.delayed(const Duration(seconds: 3));
+        final receipt = await _chain.getTransactionReceipt(txHash);
+        if (receipt != null) {
+          final address = await _wallet.getAddress();
+          if (address.isNotEmpty) {
+            await _balance.refresh(address);
+          }
+          return;
+        }
+      }
+    } catch (_) {}
   }
 }
