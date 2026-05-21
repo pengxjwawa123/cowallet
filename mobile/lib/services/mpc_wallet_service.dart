@@ -249,9 +249,15 @@ class MpcWalletService implements WalletService {
         metadata: {'msg_hash': msgHash},
       ));
 
-      // Send Round 1 + msg_hash via WebSocket
+      // Send Round 1 + msg_hash via HTTP (reliable delivery)
       final round1WithHash = [...round1.payload, ...msgHash];
-      ws.sendRaw(toParty: _serverParty, round: 1, payload: round1WithHash);
+      await MpcApi.sendMessage(
+        sessionId: remoteSessionId,
+        fromParty: _deviceParty,
+        toParty: _serverParty,
+        round: 1,
+        payload: round1WithHash,
+      );
 
       await MpcSessionStore.updateCurrentRound(1);
 
@@ -265,8 +271,14 @@ class MpcWalletService implements WalletService {
         serverR1Payload,
       );
 
-      // Send DeviceContribution
-      ws.sendRaw(toParty: _serverParty, round: 2, payload: round2Payload);
+      // Send DeviceContribution via HTTP (reliable delivery)
+      await MpcApi.sendMessage(
+        sessionId: remoteSessionId,
+        fromParty: _deviceParty,
+        toParty: _serverParty,
+        round: 2,
+        payload: round2Payload,
+      );
 
       await MpcSessionStore.updateCurrentRound(2);
 

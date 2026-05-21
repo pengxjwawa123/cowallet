@@ -71,7 +71,7 @@ class ChainConfig {
   static const polygon = ChainConfig(
     chainId: 137,
     name: 'Polygon',
-    rpcUrl: 'https://1rpc.io/matic',
+    rpcUrl: 'https://polygon.drpc.org',
     usdcContract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
     usdtContract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
     daiContract: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
