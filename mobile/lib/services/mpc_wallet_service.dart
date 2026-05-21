@@ -21,6 +21,7 @@ class MpcWalletService implements WalletService {
   String? _currentSessionId;
   BackupResult? _lastBackupResult;
   List<int>? _lastBackupShard;
+  int _lastMessageId = 0;
   static const int _deviceParty = 0;
   static const int _serverParty = 1;
   static const int _backupParty = 2;
@@ -42,6 +43,7 @@ class MpcWalletService implements WalletService {
 
     final sessionId = sessionResult.data!['session_id'] as String;
     _currentSessionId = sessionId;
+    _lastMessageId = 0;
 
     final ws = MpcWebSocket(sessionId: sessionId, partyIndex: _deviceParty);
     try {
@@ -231,6 +233,7 @@ class MpcWalletService implements WalletService {
 
     final remoteSessionId = sessionResult.data!['session_id'] as String;
     _currentSessionId = remoteSessionId;
+    _lastMessageId = 0;
 
     final ws = MpcWebSocket(sessionId: remoteSessionId, partyIndex: _deviceParty);
     try {
@@ -264,6 +267,9 @@ class MpcWalletService implements WalletService {
       // Wait for server's Round 1 (R_1)
       final serverR1 = await _waitForMessages(ws, expectedCount: 1);
       final serverR1Payload = serverR1.first.payload;
+
+      // Sync _lastMessageId so Round 2 fallback skips Round 1 messages
+      await _syncLastMessageId(remoteSessionId);
 
       // Process R_1 and generate Round 2
       final round2Payload = await MpcBridge.signProcessRound1AndGenerateRound2(
@@ -598,10 +604,29 @@ class MpcWalletService implements WalletService {
           sessionId: _currentSessionId!,
           party: _deviceParty,
           expectedCount: expectedCount,
+          afterId: _lastMessageId,
         );
       }
       rethrow;
     }
+  }
+
+  /// Sync _lastMessageId by querying current max message ID from server.
+  Future<void> _syncLastMessageId(String sessionId) async {
+    try {
+      final result = await MpcApi.receiveMessages(
+        sessionId,
+        party: _deviceParty,
+        afterId: 0,
+      );
+      if (result.isSuccess && result.data != null) {
+        for (final raw in result.data!) {
+          final m = Map<String, dynamic>.from(raw as Map);
+          final id = m['id'] as int;
+          if (id > _lastMessageId) _lastMessageId = id;
+        }
+      }
+    } catch (_) {}
   }
 
   /// HTTP 轮询回退（WebSocket 不可用时）
@@ -636,6 +661,7 @@ class MpcWalletService implements WalletService {
             ));
             final id = m['id'] as int;
             if (id > lastId) lastId = id;
+            if (id > _lastMessageId) _lastMessageId = id;
           }
         }
 
