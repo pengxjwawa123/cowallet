@@ -83,7 +83,7 @@ class MpcTxService implements TxService {
 
     final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
     final maxPriority = maxPriorityFeePerGas ?? await _chain.getMaxPriorityFeePerGas();
-    final maxFee = maxFeePerGas ?? baseFee * BigInt.two + maxPriority;
+    final maxFee = maxFeePerGas ?? baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
 
     final dataBytes = (data != null && data.isNotEmpty)
         ? Uint8List.fromList(hex.decode(data.replaceFirst('0x', '')))

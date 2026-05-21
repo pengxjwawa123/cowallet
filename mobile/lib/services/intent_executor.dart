@@ -139,8 +139,8 @@ class IntentExecutor {
         final balance = await _chain.getEthBalance(address);
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
         sendAllMaxPriority = await _chain.getMaxPriorityFeePerGas();
-        // Must match tx_service formula: baseFee * 2 + maxPriority
-        sendAllMaxFee = baseFee * BigInt.two + sendAllMaxPriority;
+        // Must match tx_service formula: baseFee * 1.2 + maxPriority
+        sendAllMaxFee = baseFee + (baseFee ~/ BigInt.from(5)) + sendAllMaxPriority;
         sendAllGasLimit = await _chain.estimateGas({
           'from': address,
           'to': to,
