@@ -6,7 +6,7 @@ void showTopToast(BuildContext context, String message, {Color? backgroundColor}
   Fluttertoast.showToast(
     msg: message,
     toastLength: Toast.LENGTH_SHORT,
-    gravity: ToastGravity.TOP,
+    gravity: ToastGravity.CENTER,
     backgroundColor: backgroundColor ?? CwColors.ink1,
     textColor: CwColors.bgPaper,
     fontSize: 14,
