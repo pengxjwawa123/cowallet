@@ -108,7 +108,7 @@ async fn main() {
     );
     rpc_urls.insert(
         137,
-        std::env::var("POLYGON_MAINNET_RPC_URL").unwrap_or_else(|_| "https://1rpc.io/matic".into()),
+        std::env::var("POLYGON_MAINNET_RPC_URL").unwrap_or_else(|_| "https://polygon.drpc.org".into()),
     );
     rpc_urls.insert(
         11155111,
