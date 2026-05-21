@@ -132,17 +132,21 @@ class IntentExecutor {
 
       BigInt amount;
       final bool confirmedDeduct = params['confirmed_deduct'] == 'true';
+      BigInt? sendAllGasLimit;
+      BigInt? sendAllMaxFee;
+      BigInt? sendAllMaxPriority;
       if (sendAll && isNativeToken) {
         final balance = await _chain.getEthBalance(address);
         final baseFee = await _chain.getBaseFee() ?? await _chain.getGasPrice();
-        final maxPriority = await _chain.getMaxPriorityFeePerGas();
-        final maxFee = baseFee + (baseFee ~/ BigInt.from(5)) + maxPriority;
-        final gasLimit = await _chain.estimateGas({
+        sendAllMaxPriority = await _chain.getMaxPriorityFeePerGas();
+        // Must match tx_service formula: baseFee * 2 + maxPriority
+        sendAllMaxFee = baseFee * BigInt.two + sendAllMaxPriority;
+        sendAllGasLimit = await _chain.estimateGas({
           'from': address,
           'to': to,
           'value': '0x${balance.toRadixString(16)}',
         });
-        final gasCost = maxFee * gasLimit;
+        final gasCost = sendAllMaxFee * sendAllGasLimit;
         amount = balance - gasCost;
         if (amount <= BigInt.zero) {
           return ActionResult.fail(S.insufficientGas);
@@ -211,7 +215,14 @@ class IntentExecutor {
       final String txHash;
 
       if (isNativeToken) {
-        txHash = await _tx.signAndSend(to: to, value: amount, chainId: targetChainId);
+        txHash = await _tx.signAndSend(
+          to: to,
+          value: amount,
+          chainId: targetChainId,
+          gasLimit: sendAllGasLimit,
+          maxFeePerGas: sendAllMaxFee,
+          maxPriorityFeePerGas: sendAllMaxPriority,
+        );
       } else {
         // ERC-20: use contract address from AI params, or resolve locally
         final tokenContract = contractAddressParam
